@@ -3,316 +3,232 @@
 > The next generation open-source messaging platform.
 
 ![Socialize](./assets/banner.png)
-
-Socialize is a modern, highly customizable, privacy-focused real-time messaging application inspired by the freedom users love in chat mods — but rebuilt from scratch with security, performance, and innovation in mind.
-
-Unlike traditional messaging apps, Socialize combines:
-- messaging
-- AI
-- customization
-- communities
-- automation
-- privacy
-- mini apps
-- modern UI/UX
-
-into one unified platform.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-0.0.1--alpha-red)](https://github.com/socialize/socialize)
+[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20Android%20%7C%20Web%20%7C%20Desktop-blue)](https://github.com/socialize/socialize)
+[![Go](https://img.shields.io/badge/Go-1.21-blue)](https://go.dev/)
+[![ReactNative](https://img.shields.io/badge/React%20Native-0.74-blue)](https://reactnative.dev/)
+[![Discord](https://img.shields.io/discord/123456789012345678?logo=discord)](https://discord.gg/socialize)
+[![OpenSource](https://img.shields.io/badge/OpenSource-Hell%20Yeah!-green)](https://github.com/socialize/socialize)
 
 ---
 
-# 🌍 Vision
+## 🌟 Por Que Socialize?
 
-Our goal is simple:
+Socialize é um mensageiro moderno, altamente customizável e focado em privacidade, inspirado na liberdade que usuários adoram em mods de chat — mas reconstruído do zero com segurança, performance e inovação em mente.
 
-> Build the most customizable and innovative messaging app ever made.
+Diferente de mensageiros tradicionais, o Socialize combina:
+- 💬 Mensagens
+- 🤖 Inteligência Artificial
+- 🎨 Customização
+- 🌐 Comunidades
+- ⚙️ Automação
+- 🔒 Privacidade
+- 🎮 Mini Apps
+- ✨ UI/UX Moderna
 
-Socialize is not a clone.  
-It is a fully original open-source communication ecosystem.
-
----
-
-# ✨ Core Features
-
-## 💬 Messaging
-- Real-time chat
-- Group chats
-- Communities
-- Channels
-- Voice notes
-- HD media sharing
-- Reactions
-- Message editing
-- Message scheduling
+Em uma plataforma unificada.
 
 ---
 
-## 🔒 Privacy Features
-- Hide online status
-- Hide typing status
-- Hide recording status
-- Freeze last seen
-- Anonymous status viewing
-- Anti-delete messages
-- App lock
-- Chat lock
-- Fingerprint authentication
+## 🌍 Visão
+
+> Construir o mensageiro mais customizável e inovador já feito.
+
+Socialize não é um clone.
+É um ecossistema de comunicação completamente original e open-source.
 
 ---
 
-## 🎨 Full Customization
-- Custom themes
-- Dynamic themes
-- Custom fonts
-- Custom icons
-- Bubble styles
-- AMOLED mode
-- Animated UI themes
-- Glassmorphism support
+## ⚡ Quick Start
+
+```bash
+# Clone o repositório
+git clone https://github.com/socialize/socialize.git
+
+# Entre no diretório
+cd socialize
+
+# Instale dependências
+npm install
+
+# Execute o servidor de desenvolvimento
+npm run dev
+```
+
+Para instruções detalhadas, veja [Getting Started](./docs/central/getting-started.md).
 
 ---
 
-## 🤖 AI Features
-- AI assistant inside chats
-- Smart replies
-- Chat summarization
-- Real-time translation
-- AI-generated messages
-- Voice-to-text AI
-- AI moderation tools
+## 🏗️ Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| **Mobile** | React Native + Expo + TypeScript + Reanimated |
+| **Backend** | Go + Gin/Echo + gRPC |
+| **Database** | PostgreSQL + MongoDB + Redis |
+| **Real-Time** | WebSockets + WebRTC |
+| **AI** | Dandara AI |
+| **WhatsApp** | Evolution API |
 
 ---
 
-## 🎵 Social Features
-- Music status
-- Story system
-- Social profiles
-- Multiple profile identities
-- Interactive reactions
-- Mini apps inside chats
+## 📱 Plataformas Planned
+
+- ✅ Android
+- ✅ iOS
+- ✅ Web
+- ✅ Desktop (Windows, macOS, Linux)
 
 ---
 
-# 🔥 Exclusive Innovations
+## 🔒 Segurança & Privacidade
 
-## 🕶️ Ghost Mode
-A complete invisible mode:
-- read messages secretly
-- invisible presence
-- stealth community browsing
+Socialize prioriza:
+- 🔐 Criptografia de ponta-a-ponta (E2E)
+- 🛡️ Transparência
+- 🔏 Privacidade real
+- 📋 Código aberto para verificação
 
----
-
-## 🎭 Multi-Identity Profiles
-Different profiles for:
-- friends
-- work
-- gaming
-- family
-
-Each audience sees different profile information.
+**Não suportamos:**
+- Spyware
+- Malware
+- Rastreamento oculto
+- Coleta abusiva de dados
 
 ---
 
-## 🌌 Live Themes Engine
-Animated themes with:
-- neon effects
-- transparent UI
-- weather animations
-- cyberpunk themes
+## 🤝 Como Contribuir
+
+Pull requests são bem-vindos!
+
+Por favor, leia nosso [Guia de Contribuição](./CONTRIBUTING.md) antes de contribuir.
 
 ---
 
-## 🎮 Mini Apps Platform
-Run apps directly inside chats:
-- games
-- notes
-- calculators
-- AI tools
-- music players
-
----
-
-# 🏗️ Tech Stack
-
-## Mobile
-- React Native
-- Expo
-- TypeScript
-- Reanimated
-
-## Backend
-- Node.js
-- Express
-- Socket.IO
-
-## Database
-- PostgreSQL
-- MongoDB
-- Redis
-
-## Real-Time Infrastructure
-- WebSockets
-- WebRTC
-
-## Authentication
-- JWT
-- OAuth2
-- Biometric auth
-
-## AI
-- OpenAI API
-- Local AI models
-
----
-
-# 📱 Planned Platforms
-
-- Android
-- iOS
-- Web
-- Desktop
-
----
-
-# 📂 Project Structure
+## 📂 Estrutura do Projeto
 
 ```bash
 socialize/
 │
 ├── apps/
-│   ├── mobile/
-│   ├── web/
-│   └── desktop/
+│   ├── mobile/      # React Native app
+│   ├── web/       # Web app
+│   └── desktop/   # Desktop app
 │
-├── server/
+├── server/        # Go microservices
 │
-├── packages/
+├── packages/     # Shared packages
 │   ├── ui/
 │   ├── shared/
 │   ├── config/
 │   └── themes/
 │
+├── docs/         # Documentação
 ├── assets/
-├── docs/
 └── README.md
 ```
 
 ---
 
-# ⚡ Installation
+## 🔥 Recursos Principais
 
-## Clone repository
+### 💬 Mensagens
+- Chat em tempo real
+- Grupos e canais
+- Comunidades
+- Notas de voz
+- Compartilhamento de mídia HD
+- Reações
+- Edição de mensagens
+- Agendamento de mensagens
 
-```bash
-git clone https://github.com/socialize/socialize.git
-```
+### 🔒 Privacidade
+- Modo Ghost
+- Anti-delete de mensagens
+- Bloqueio de app
+- Bloqueio de chat
+- Autenticação biométrica
+- Congelar "visto por último"
 
-## Enter project
+### 🎨 Customização
+- Temas dinâmicos
+- Fontes customizadas
+- Ícones customizados
+- Estilos de bolhas
+- Modo AMOLED
+- Temas animados
+- Suporte Glassmorphism
 
-```bash
-cd socialize
-```
+### 🤖 Inteligência Artificial
+- Assistente Dandara AI
+- Respostas inteligentes
+- Sumarização de chats
+- Tradução em tempo real
+- Geração de mensagens por IA
+- Voz para texto IA
+- Moderação IA
 
-## Install dependencies
-
-```bash
-npm install
-```
-
-## Run development server
-
-```bash
-npm run dev
-```
-
----
-
-# 🛡️ Security Philosophy
-
-Socialize prioritizes:
-- transparency
-- privacy
-- encryption
-- open-source verification
-
-We do NOT support:
-- spyware
-- malware
-- hidden tracking
-- abusive data collection
-
----
-
-# 🤝 Open Source
-
-Socialize is fully open source and community-driven.
-
-We welcome:
-- developers
-- designers
-- security researchers
-- translators
-- contributors
+### 🎮 Recursos Divertidos (estilo MSN)
+- Nudges
+- Winks
+- Display pictures
+- Emojis customizados
+- Jogos integrados
 
 ---
 
-# 📌 Roadmap
+## 🧭 Roadmap
 
-## Phase 1
-- Messaging core
-- Authentication
-- Real-time chat
-- Media sharing
+| Fase | Foco |
+|------|------|
+| **Phase 1** | Messaging core, autenticação, chat em tempo real |
+| **Phase 2** | Comunidades, chamadas voz/vídeo, IA, sync na nuvem |
+| **Phase 3** | Loja de temas, mini apps, plugins, app desktop |
 
-## Phase 2
-- Communities
-- Voice/video calls
-- AI assistant
-- Cloud sync
-
-## Phase 3
-- Theme store
-- Mini apps
-- Plugins
-- Desktop app
-
-## Phase 4
-- Public API
-- Bot ecosystem
-- Creator tools
-- Marketplace
+Veja o [Roadmap Detalhado](./docs/roadmap/roadmap.md).
 
 ---
 
-# 🧠 Philosophy
+## 📄 Licença
 
-Modern messaging apps became restrictive.
-
-Socialize exists to give users:
-- freedom
-- control
-- customization
-- innovation
-
-without sacrificing security.
+Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
 ---
 
-# 👨‍💻 Contributing
+## 🧠 Filosofia
 
-Pull requests are welcome.
+Mensageiros modernos se tornaram restritivos.
 
-Please read:
+Socialize existe para Dar aos usuários:
+- Liberdade
+- Controle
+- Customização
+- Inovação
 
-```bash
-CONTRIBUTING.md
-```
-
-before contributing.
+Sem sacrificar segurança.
 
 ---
 
-# 🔥 Socialize
+## 🌐 Links & Recursos
 
-> More than messaging.  
-> A communication ecosystem.
+| Recurso | Link |
+|--------|-----|
+| 📖 Documentação | [docs.socialize.app](https://docs.socialize.app) |
+| 💬 Discord | [discord.gg/socialize](https://discord.gg/socialize) |
+| 🐦 Twitter | [@socialize_app](https://twitter.com/socialize_app) |
+| 🐙 GitHub | [github.com/socialize/socialize](https://github.com/socialize/socialize) |
+
+---
+
+## 🙏 Agradecimentos
+
+Agradecimentos especiais para a comunidade open-source que torna este projeto possível.
+
+---
+
+<p align="center">
+  <strong>🔥 Socialize</strong><br>
+  <em>Mais que mensagens.<br>
+  Um ecossistema de comunicação.</em>
+</p>
