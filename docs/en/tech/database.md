@@ -2,6 +2,8 @@
 
 > Documentation for Socialize database schemas.
 
+For Portuguese version, see [Especificação de Banco de Dados](../tech/database.md).
+
 ---
 
 ## Overview
@@ -20,6 +22,7 @@ CREATE TABLE users (
     phone VARCHAR(20) UNIQUE,
     email VARCHAR(255) UNIQUE,
     username VARCHAR(50) UNIQUE,
+    username_discoverable BOOLEAN DEFAULT TRUE,
     password_hash VARCHAR(255),
     display_name VARCHAR(100),
     avatar_url TEXT,
@@ -30,6 +33,9 @@ CREATE TABLE users (
     is_verified BOOLEAN DEFAULT FALSE,
     is_premium BOOLEAN DEFAULT FALSE
 );
+
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_username_discoverable ON users(username) WHERE username_discoverable = TRUE;
 ```
 
 ### Messages Schema

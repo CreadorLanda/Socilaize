@@ -57,6 +57,7 @@ npm run dev
 ```
 
 For detailed instructions, see [Getting Started](./docs/en/central/getting-started.md).
+For Portuguese version, see [Documentação em Português](./docs/central/getting-started.md).
 
 ---
 

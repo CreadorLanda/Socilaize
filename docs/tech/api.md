@@ -25,15 +25,63 @@ Registrar novo usuário.
   "device_id": "device_123"
 }
 
+// Opcional: Criar username único
+{
+  "phone": "+5511999999999",
+  "password": "senha123",
+  "display_name": "João Silva",
+  "username": "joaosilva",
+  "username_discoverable": true  // Permite outros encontrarem por username
+}
+
 // Response
 {
   "user": {
     "id": "uuid",
     "phone": "+5511999999999",
-    "display_name": "João Silva"
+    "username": "joaosilva",
+    "username_discoverable": true
   },
   "token": "jwt_token_aqui",
   "refresh_token": "refresh_token_aqui"
+}
+```
+
+### PUT /users/me/username
+
+Atualizar configurações de username (ativar/desativar descoberta).
+
+```json
+// Request
+{
+  "username": "joaosilva",
+  "username_discoverable": true  // true = outros podem te encontrar pelo username
+}
+
+// Response
+{
+  "username": "joaosilva",
+  "username_discoverable": true
+}
+```
+
+### GET /users/search
+
+Buscar usuários por username ou nome de exibição.
+
+```json
+// GET /users/search?q=joao
+
+// Response
+{
+  "users": [
+    {
+      "id": "uuid",
+      "username": "joaosilva",
+      "display_name": "João Silva",
+      "username_discoverable": true
+    }
+  ]
 }
 ```
 

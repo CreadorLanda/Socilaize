@@ -18,10 +18,62 @@ Register new user.
   "display_name": "John Doe"
 }
 
+// Optional: Create unique username
+{
+  "phone": "+5511999999999",
+  "password": "password123",
+  "display_name": "John Doe",
+  "username": "johndoe",
+  "username_discoverable": true  // Allow others to find by username
+}
+
 // Response
 {
-  "user": {"id": "uuid", "phone": "+5511999999999"},
+  "user": {
+    "id": "uuid",
+    "phone": "+5511999999999",
+    "username": "johndoe",
+    "username_discoverable": true
+  },
   "token": "jwt_token"
+}
+```
+
+### PUT /users/me/username
+
+Update username settings (enable/disable discovery).
+
+```json
+// Request
+{
+  "username": "johndoe",
+  "username_discoverable": true  // true = others can find you by username
+}
+
+// Response
+{
+  "username": "johndoe",
+  "username_discoverable": true
+}
+```
+
+### GET /users/search
+
+Search users by username or display name.
+
+```json
+// GET /users/search?q=john
+
+// Response
+{
+  "users": [
+    {
+      "id": "uuid",
+      "username": "johndoe",
+      "display_name": "John Doe",
+      "username_discoverable": true
+    }
+  ]
 }
 ```
 

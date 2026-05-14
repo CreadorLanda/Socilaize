@@ -21,6 +21,7 @@ CREATE TABLE users (
     phone VARCHAR(20) UNIQUE,
     email VARCHAR(255) UNIQUE,
     username VARCHAR(50) UNIQUE,
+    username_discoverable BOOLEAN DEFAULT TRUE,
     password_hash VARCHAR(255),
     display_name VARCHAR(100),
     avatar_url TEXT,
@@ -38,6 +39,7 @@ CREATE TABLE users (
 CREATE INDEX idx_users_phone ON users(phone);
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_username_discoverable ON users(username) WHERE username_discoverable = TRUE;
 CREATE INDEX idx_users_status ON users(status);
 ```
 
