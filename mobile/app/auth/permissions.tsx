@@ -1,0 +1,134 @@
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { PrimaryButton } from '@/components/ui/primary-button';
+import { StepHeader } from '@/components/ui/step-header';
+import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { t } from '@/i18n';
+import { useRegistration } from '@/store/registration';
+
+type Toggle = {
+  key: 'contacts' | 'notifications';
+  icon: keyof typeof Ionicons.glyphMap;
+  titleKey: string;
+  subtitleKey: string;
+};
+
+const TOGGLES: Toggle[] = [
+  {
+    key: 'contacts',
+    icon: 'people',
+    titleKey: 'auth.permissions.contacts_title',
+    subtitleKey: 'auth.permissions.contacts_subtitle',
+  },
+  {
+    key: 'notifications',
+    icon: 'notifications',
+    titleKey: 'auth.permissions.notifications_title',
+    subtitleKey: 'auth.permissions.notifications_subtitle',
+  },
+];
+
+export default function PermissionsScreen() {
+  const { data, set, reset } = useRegistration();
+  const [contacts, setContacts] = useState(data.contactsGranted);
+  const [notifications, setNotifications] = useState(data.notificationsGranted);
+
+  const handleFinish = () => {
+    set('contactsGranted', contacts);
+    set('notificationsGranted', notifications);
+    reset();
+    router.replace('/(tabs)');
+  };
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <StatusBar style="dark" />
+
+      <StepHeader
+        step={5}
+        total={5}
+        title={t('auth.permissions.title')}
+        subtitle={t('auth.permissions.subtitle')}
+      />
+
+      <View style={styles.body}>
+        {TOGGLES.map((item) => {
+          const value = item.key === 'contacts' ? contacts : notifications;
+          const onChange = item.key === 'contacts' ? setContacts : setNotifications;
+          return (
+            <Pressable
+              key={item.key}
+              onPress={() => onChange(!value)}
+              style={styles.row}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: value }}
+            >
+              <View style={styles.icon}>
+                <Ionicons name={item.icon} size={20} color={Colors.light.primary} />
+              </View>
+              <View style={styles.text}>
+                <Text style={styles.title}>{t(item.titleKey)}</Text>
+                <Text style={styles.subtitle}>{t(item.subtitleKey)}</Text>
+              </View>
+              <Switch
+                value={value}
+                onValueChange={onChange}
+                trackColor={{ false: Palette.neutral[300], true: Palette.brand[400] }}
+                thumbColor={value ? Colors.light.primary : Palette.neutral[0]}
+                ios_backgroundColor={Palette.neutral[300]}
+              />
+            </Pressable>
+          );
+        })}
+
+        <View style={styles.notice}>
+          <Ionicons name="lock-closed" size={16} color={Colors.light.success} />
+          <Text style={styles.noticeText}>{t('auth.permissions.e2e_notice')}</Text>
+        </View>
+      </View>
+
+      <View style={styles.footer}>
+        <PrimaryButton label={t('auth.permissions.cta')} onPress={handleFinish} />
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: Colors.light.background },
+  body: { flex: 1, paddingHorizontal: Spacing.xl, gap: Spacing.md },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    backgroundColor: Colors.light.surface,
+    borderRadius: Radii.lg,
+    padding: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  icon: {
+    width: 36,
+    height: 36,
+    borderRadius: Radii.pill,
+    backgroundColor: Palette.brand[50],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  text: { flex: 1 },
+  title: { ...Typography.bodyStrong, color: Colors.light.text },
+  subtitle: { ...Typography.caption, color: Colors.light.textSecondary, marginTop: 2 },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+  },
+  noticeText: { ...Typography.caption, color: Colors.light.textSecondary, flex: 1 },
+  footer: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xl },
+});
