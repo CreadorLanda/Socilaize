@@ -1,0 +1,55 @@
+# Socialize — Mobile
+
+The Socialize mobile app, built with [Expo](https://expo.dev) (SDK 54), React Native 0.81, TypeScript and `expo-router` (file-based routing).
+
+## Prerequisites
+
+- [Bun](https://bun.sh) ≥ 1.3
+- iOS Simulator (macOS), Android Studio, or [Expo Go](https://expo.dev/go)
+
+## Get started
+
+```bash
+bun install
+bun run start      # Metro dev server
+bun run android    # launch Android
+bun run ios        # launch iOS (macOS only)
+bun run web        # launch in browser
+```
+
+## Project structure
+
+```
+mobile/
+├── app/                # expo-router file-based routes
+│   ├── (tabs)/
+│   ├── _layout.tsx
+│   └── modal.tsx
+├── components/         # shared components
+│   └── ui/             # primitive UI (built from design tokens)
+├── constants/
+│   └── theme.ts        # design tokens: Palette, Colors, Spacing, Radii, Typography, Fonts
+├── hooks/              # custom hooks (theme, color-scheme, …)
+├── assets/
+└── scripts/
+```
+
+## Design system
+
+All visual decisions flow from `constants/theme.ts`. Read the full spec — palette, themes, spacing, radii, typography, recipes — in [`docs/tech/design-system.md`](../docs/tech/design-system.md).
+
+Quick rule: components must consume **semantic** tokens (`Colors.light.surface`, `Colors.light.primary`), never raw palette values, so dark mode flips automatically.
+
+## Reset to a blank project
+
+```bash
+bun run reset-project
+```
+
+Moves the starter code to `app-example/` and leaves a blank `app/` to build into.
+
+## Learn more
+
+- [Expo docs](https://docs.expo.dev/)
+- [expo-router](https://docs.expo.dev/router/introduction)
+- [React Native](https://reactnative.dev/)
