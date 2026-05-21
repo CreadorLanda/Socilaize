@@ -47,6 +47,13 @@ const message = await chatService.sendMessage({
 🙌 💪 🙏 😇 ❤️‍🔥 💯 ⭐ 🌟 ✨ 🆕
 ```
 
+Para reagir:
+1. Toque e segure na mensagem
+2. Toque na barra de reações
+3. Selecione o emoji
+
+Em canais, o mesmo toque abre um menu flutuante com reações rápidas e a opção **Comentar**.
+
 ### Edição de Mensagens
 
 - Editar dentro de **15 minutos** após enviar
@@ -107,6 +114,21 @@ const message = await chatService.sendMessage({
    - Foto (opcional)
    - Público/Privado
 5. Toque em "Criar"
+
+### Recursos do Canal
+
+- Transmissão para membros ilimitados
+- Modo lento (1 mensagem por X segundos)
+- Apenas publicadores aprovados podem enviar (admins ou membros designados)
+- Membros podem reagir aos posts (reações são anônimas por padrão)
+- Membros podem comentar se aprovados por admins
+
+#### Reações e Comentários do Canal
+
+- Toque e segure um post do canal para abrir um menu flutuante com reações rápidas e **Comentar**.
+- Comentários podem ser anônimos ou identificados; o autor escolhe por comentário.
+- Comentários anônimos nunca revelam identidade para ninguém (nem admins).
+- Postagens continuam limitadas a publicadores aprovados.
 
 ---
 

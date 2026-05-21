@@ -1,6 +1,7 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, type PressableProps } from 'react-native';
 
-import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 type Props = Omit<PressableProps, 'style' | 'children'> & {
   label: string;
@@ -11,6 +12,7 @@ type Props = Omit<PressableProps, 'style' | 'children'> & {
 
 export function PrimaryButton({ label, loading, disabled, variant = 'primary', ...rest }: Props) {
   const isPrimary = variant === 'primary';
+  const { colors } = useTheme();
 
   return (
     <Pressable
@@ -20,16 +22,26 @@ export function PrimaryButton({ label, loading, disabled, variant = 'primary', .
       disabled={!!disabled || !!loading}
       style={({ pressed }) => [
         styles.base,
-        isPrimary ? styles.primary : styles.secondary,
-        pressed && (isPrimary ? styles.primaryPressed : styles.secondaryPressed),
+        isPrimary
+          ? [styles.primary, { backgroundColor: colors.primary, shadowColor: colors.primary }]
+          : [styles.secondary, { borderColor: colors.border }],
+        pressed &&
+          (isPrimary
+            ? [styles.primaryPressed, { backgroundColor: colors.primary }]
+            : { backgroundColor: colors.surfaceMuted }),
         disabled && styles.disabled,
       ]}
       {...rest}
     >
       {loading ? (
-        <ActivityIndicator color={isPrimary ? Colors.light.onPrimary : Colors.light.primary} />
+        <ActivityIndicator color={isPrimary ? colors.onPrimary : colors.primary} />
       ) : (
-        <Text style={[styles.label, isPrimary ? styles.labelPrimary : styles.labelSecondary]}>
+        <Text
+          style={[
+            styles.label,
+            isPrimary ? { color: colors.onPrimary } : { color: colors.text },
+          ]}
+        >
           {label}
         </Text>
       )}
@@ -47,7 +59,6 @@ const styles = StyleSheet.create({
     minHeight: 56,
   },
   primary: {
-    backgroundColor: Colors.light.primary,
     shadowColor: Palette.brand[500],
     shadowOpacity: 0.25,
     shadowRadius: 14,
@@ -55,27 +66,16 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   primaryPressed: {
-    backgroundColor: Palette.brand[600],
     transform: [{ scale: 0.98 }],
   },
   secondary: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: Colors.light.border,
-  },
-  secondaryPressed: {
-    backgroundColor: Palette.neutral[100],
   },
   disabled: {
     opacity: 0.45,
   },
   label: {
     ...Typography.bodyStrong,
-  },
-  labelPrimary: {
-    color: Colors.light.onPrimary,
-  },
-  labelSecondary: {
-    color: Colors.light.text,
   },
 });

@@ -46,7 +46,8 @@
           "photosPermission": "Socialize accesses your photos so you can share them in chats.",
           "cameraPermission": "Socialize accesses your camera so you can take and record photos and videos to share."
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

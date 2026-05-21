@@ -1,46 +1,98 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
-import { withLayoutContext } from 'expo-router';
+import { Image } from 'expo-image';
+import { router, withLayoutContext } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { Radii, Spacing, Typography } from '@/constants/theme';
+import { useProfile } from '@/data/profile-store';
+import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
 const { Navigator } = createMaterialTopTabNavigator();
 const MaterialTopTabs = withLayoutContext(Navigator);
 
 export default function TabLayout() {
+  const { colors, isDark } = useTheme();
+  const profile = useProfile();
+
+  // Light mode keeps the confident royal-blue header. Dark mode drops it for a
+  // calm charcoal bar — a bright blue band at night is the loud part.
+  const headerBg = isDark ? colors.surface : colors.primary;
+  const headerFg = isDark ? colors.text : colors.onPrimary;
+  const headerMuted = isDark ? colors.textMuted : 'rgba(255,255,255,0.65)';
+  const indicatorColor = isDark ? colors.primary : colors.onPrimary;
+
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: headerBg }]} edges={['top']}>
       <StatusBar style="light" />
 
-      <View style={styles.header}>
-        <Text style={styles.brand}>Socialize</Text>
+      <View
+        style={[
+          styles.header,
+          { backgroundColor: headerBg },
+          isDark && { borderBottomWidth: 1, borderBottomColor: colors.divider },
+        ]}
+      >
+        <View style={styles.brandRow}>
+          <Pressable
+            onPress={() => router.push('/profile')}
+            hitSlop={8}
+            accessibilityLabel={t('profile.title')}
+          >
+            <Image
+              source={{ uri: profile.avatarUri }}
+              style={[
+                styles.headerAvatar,
+                { borderColor: isDark ? colors.border : 'rgba(255,255,255,0.35)' },
+              ]}
+              contentFit="cover"
+            />
+          </Pressable>
+          <Text style={[styles.brand, { color: headerFg }]}>Socialize</Text>
+        </View>
         <View style={styles.headerActions}>
-          <Pressable hitSlop={8} style={styles.iconBtn} accessibilityLabel="Camera">
-            <Ionicons name="camera-outline" size={22} color={Colors.light.onPrimary} />
+          <Pressable hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('common.search')}>
+            <Ionicons name="search" size={22} color={headerFg} />
           </Pressable>
-          <Pressable hitSlop={8} style={styles.iconBtn} accessibilityLabel="Search">
-            <Ionicons name="search" size={22} color={Colors.light.onPrimary} />
+          <Pressable
+            hitSlop={8}
+            style={styles.iconBtn}
+            onPress={() => router.push('/calls')}
+            accessibilityLabel={t('calls.title')}
+          >
+            <Ionicons name="call-outline" size={22} color={headerFg} />
           </Pressable>
-          <Pressable hitSlop={8} style={styles.iconBtn} accessibilityLabel="More">
-            <Ionicons name="ellipsis-vertical" size={20} color={Colors.light.onPrimary} />
+          <Pressable
+            hitSlop={8}
+            style={styles.iconBtn}
+            onPress={() => router.push('/settings')}
+            accessibilityLabel={t('settings.title')}
+          >
+            <Ionicons name="settings-outline" size={21} color={headerFg} />
           </Pressable>
         </View>
       </View>
 
       <MaterialTopTabs
         screenOptions={{
-          tabBarStyle: styles.tabBar,
-          tabBarIndicatorStyle: styles.indicator,
+          sceneStyle: { backgroundColor: colors.background },
+          tabBarStyle: [
+            styles.tabBar,
+            { backgroundColor: headerBg },
+            isDark && { borderBottomWidth: 1, borderBottomColor: colors.divider },
+          ],
+          tabBarIndicatorStyle: [styles.indicator, { backgroundColor: indicatorColor }],
           tabBarLabelStyle: styles.tabLabel,
-          tabBarActiveTintColor: Colors.light.onPrimary,
-          tabBarInactiveTintColor: 'rgba(255,255,255,0.65)',
-          tabBarPressColor: 'rgba(255,255,255,0.12)',
+          tabBarActiveTintColor: headerFg,
+          tabBarInactiveTintColor: headerMuted,
+          tabBarPressColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.12)',
           swipeEnabled: true,
           animationEnabled: true,
+          lazy: false,
+          lazyPreloadDistance: 2,
         }}
       >
         <MaterialTopTabs.Screen name="index" options={{ title: t('tabs.chats') }} />
@@ -54,7 +106,6 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: Palette.brand[600],
   },
   header: {
     flexDirection: 'row',
@@ -62,11 +113,20 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.sm,
-    backgroundColor: Palette.brand[600],
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  headerAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
   },
   brand: {
     ...Typography.h2,
-    color: Colors.light.onPrimary,
     letterSpacing: -0.3,
   },
   headerActions: {
@@ -82,13 +142,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tabBar: {
-    backgroundColor: Palette.brand[600],
     elevation: 0,
     shadowOpacity: 0,
     borderBottomWidth: 0,
   },
   indicator: {
-    backgroundColor: Colors.light.onPrimary,
     height: 3,
     borderTopLeftRadius: 2,
     borderTopRightRadius: 2,

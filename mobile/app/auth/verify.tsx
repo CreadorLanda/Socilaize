@@ -14,7 +14,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { StepHeader } from '@/components/ui/step-header';
-import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { Radii, Spacing, Typography } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
 
@@ -26,6 +27,7 @@ export default function VerifyScreen() {
   const [digits, setDigits] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
   const inputs = useRef<Array<TextInput | null>>([]);
+  const { colors } = useTheme();
 
   useEffect(() => {
     if (secondsLeft <= 0) return;
@@ -64,7 +66,7 @@ export default function VerifyScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
       <ScrollView
         style={styles.flex}
@@ -94,17 +96,25 @@ export default function VerifyScreen() {
                 onKeyPress={(e) => handleKeyPress(e, i)}
                 keyboardType="number-pad"
                 maxLength={1}
-                style={[styles.otpCell, !!d && styles.otpCellFilled]}
+                style={[
+                  styles.otpCell,
+                  { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text },
+                  !!d && { borderColor: colors.primary, backgroundColor: colors.surfaceMuted },
+                ]}
                 selectTextOnFocus
               />
             ))}
           </View>
 
           {secondsLeft > 0 ? (
-            <Text style={styles.timer}>{t('auth.verify.resend_in', { seconds: secondsLeft })}</Text>
+            <Text style={[styles.timer, { color: colors.textMuted }]}>
+              {t('auth.verify.resend_in', { seconds: secondsLeft })}
+            </Text>
           ) : (
             <Pressable onPress={handleResend} hitSlop={8}>
-              <Text style={styles.resend}>{t('auth.verify.resend')}</Text>
+              <Text style={[styles.resend, { color: colors.primary }]}>
+                {t('auth.verify.resend')}
+              </Text>
             </Pressable>
           )}
         </View>
@@ -120,7 +130,7 @@ export default function VerifyScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.light.background },
+  safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: { flexGrow: 1 },
   body: {
@@ -139,17 +149,10 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: Radii.lg,
     borderWidth: 1,
-    borderColor: Colors.light.border,
-    backgroundColor: Colors.light.surface,
     textAlign: 'center',
     ...Typography.h2,
-    color: Colors.light.text,
   },
-  otpCellFilled: {
-    borderColor: Colors.light.primary,
-    backgroundColor: Palette.brand[50],
-  },
-  timer: { ...Typography.caption, color: Colors.light.textMuted },
-  resend: { ...Typography.bodyStrong, color: Colors.light.primary },
+  timer: { ...Typography.caption },
+  resend: { ...Typography.bodyStrong },
   footer: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xl },
 });

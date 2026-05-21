@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.0.2-alpha] - 2026-05-21
+
+### ✏️ Changed (Alterado)
+
+#### Documentação
+- Especificação de canais: reações anônimas por padrão, comentários opcionais (anônimos ou identificados) com aprovação de admin
+
 ## [0.0.1-alpha] - 2026-05-14
 
 ### ❌️ Added (Adicionado)

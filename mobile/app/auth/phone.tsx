@@ -8,7 +8,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { StepHeader } from '@/components/ui/step-header';
 import { TextField } from '@/components/ui/text-field';
-import { Colors, Spacing, Typography } from '@/constants/theme';
+import { Spacing, Typography } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
 
@@ -18,6 +19,7 @@ export default function PhoneScreen() {
   const { data, set } = useRegistration();
   const [countryCode, setCountryCode] = useState(data.countryCode);
   const [phone, setPhone] = useState(data.phoneNumber);
+  const { colors } = useTheme();
 
   const isValid = useMemo(() => /^\d{6,15}$/.test(phone.replace(/\s/g, '')), [phone]);
 
@@ -28,7 +30,7 @@ export default function PhoneScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
 
       <ScrollView
@@ -65,7 +67,9 @@ export default function PhoneScreen() {
             </View>
           </View>
 
-          <Text style={styles.hint}>{t('auth.phone.common_codes')} {COUNTRY_CODES.join('  ')}</Text>
+          <Text style={[styles.hint, { color: colors.textMuted }]}>
+            {t('auth.phone.common_codes')} {COUNTRY_CODES.join('  ')}
+          </Text>
         </View>
       </ScrollView>
 
@@ -79,13 +83,13 @@ export default function PhoneScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.light.background },
+  safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: { flexGrow: 1 },
   body: { paddingHorizontal: Spacing.xl, gap: Spacing.lg },
   row: { flexDirection: 'row', gap: Spacing.md },
   codePicker: { width: 96 },
   phoneField: { flex: 1 },
-  hint: { ...Typography.caption, color: Colors.light.textMuted },
+  hint: { ...Typography.caption },
   footer: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xl, paddingTop: Spacing.md },
 });

@@ -10,7 +10,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { StepHeader } from '@/components/ui/step-header';
 import { TextField } from '@/components/ui/text-field';
-import { Colors, Palette, Radii, Spacing } from '@/constants/theme';
+import { Palette, Radii, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
 
@@ -20,6 +21,7 @@ export default function ProfileScreen() {
   const { data, set } = useRegistration();
   const [name, setName] = useState(data.displayName);
   const [avatar, setAvatar] = useState<string | null>(data.avatarUri);
+  const { colors } = useTheme();
 
   const isValid = useMemo(() => name.trim().length >= 2, [name]);
 
@@ -34,7 +36,7 @@ export default function ProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
 
       <ScrollView
@@ -52,15 +54,25 @@ export default function ProfileScreen() {
 
         <View style={styles.body}>
           <Pressable onPress={handlePickAvatar} style={styles.avatarWrap} accessibilityRole="button">
-            <View style={styles.avatar}>
+            <View
+              style={[
+                styles.avatar,
+                { backgroundColor: colors.surfaceMuted, borderColor: colors.surface },
+              ]}
+            >
               {avatar ? (
                 <Image source={alex} style={styles.avatarImage} contentFit="cover" />
               ) : (
-                <Ionicons name="person" size={48} color={Palette.neutral[400]} />
+                <Ionicons name="person" size={48} color={colors.textMuted} />
               )}
             </View>
-            <View style={styles.avatarEdit}>
-              <Ionicons name="camera" size={16} color={Colors.light.onPrimary} />
+            <View
+              style={[
+                styles.avatarEdit,
+                { backgroundColor: colors.primary, borderColor: colors.background },
+              ]}
+            >
+              <Ionicons name="camera" size={16} color={colors.onPrimary} />
             </View>
           </Pressable>
 
@@ -88,7 +100,7 @@ export default function ProfileScreen() {
 const AVATAR_SIZE = 112;
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.light.background },
+  safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: { flexGrow: 1, paddingBottom: Spacing.xl },
   body: {
@@ -105,12 +117,10 @@ const styles = StyleSheet.create({
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
     borderRadius: Radii.pill,
-    backgroundColor: Palette.neutral[100],
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     borderWidth: 3,
-    borderColor: Colors.light.surface,
     shadowColor: Palette.brand[900],
     shadowOpacity: 0.12,
     shadowRadius: 12,
@@ -125,11 +135,9 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: Radii.pill,
-    backgroundColor: Colors.light.primary,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: Colors.light.background,
   },
   footer: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xl },
 });
