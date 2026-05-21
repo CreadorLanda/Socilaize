@@ -7,7 +7,8 @@ import {
   View,
 } from 'react-native';
 
-import { Colors, Radii, Spacing, Typography } from '@/constants/theme';
+import { Radii, Spacing, Typography } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 
 type Props = TextInputProps & {
   label?: string;
@@ -31,23 +32,25 @@ export function TextField({
   ...rest
 }: Props) {
   const [focused, setFocused] = useState(false);
+  const { colors } = useTheme();
 
   return (
     <View style={styles.wrap}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
+      {label ? <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text> : null}
 
       <View
         style={[
           styles.field,
-          focused && styles.fieldFocused,
-          !!error && styles.fieldError,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+          focused && { borderColor: colors.primary },
+          !!error && { borderColor: colors.danger },
         ]}
       >
         {leftAdornment ? <View style={styles.adornment}>{leftAdornment}</View> : null}
         <TextInput
           ref={inputRef}
-          style={[styles.input, style]}
-          placeholderTextColor={Colors.light.textMuted}
+          style={[styles.input, { color: colors.text }, style]}
+          placeholderTextColor={colors.textMuted}
           onFocus={(e) => {
             setFocused(true);
             onFocus?.(e);
@@ -62,9 +65,9 @@ export function TextField({
       </View>
 
       {error ? (
-        <Text style={styles.error}>{error}</Text>
+        <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>
       ) : hint ? (
-        <Text style={styles.hint}>{hint}</Text>
+        <Text style={[styles.hint, { color: colors.textMuted }]}>{hint}</Text>
       ) : null}
     </View>
   );
@@ -76,29 +79,19 @@ const styles = StyleSheet.create({
   },
   label: {
     ...Typography.caption,
-    color: Colors.light.textSecondary,
     marginLeft: Spacing.xs,
   },
   field: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.light.surface,
     borderWidth: 1.5,
-    borderColor: Colors.light.border,
     borderRadius: Radii.lg,
     paddingHorizontal: Spacing.md,
     minHeight: 56,
   },
-  fieldFocused: {
-    borderColor: Colors.light.primary,
-  },
-  fieldError: {
-    borderColor: Colors.light.danger,
-  },
   input: {
     flex: 1,
     ...Typography.body,
-    color: Colors.light.text,
     paddingVertical: Spacing.md,
   },
   adornment: {
@@ -106,12 +99,10 @@ const styles = StyleSheet.create({
   },
   hint: {
     ...Typography.caption,
-    color: Colors.light.textMuted,
     marginLeft: Spacing.xs,
   },
   error: {
     ...Typography.caption,
-    color: Colors.light.danger,
     marginLeft: Spacing.xs,
   },
 });

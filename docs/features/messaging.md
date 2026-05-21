@@ -54,6 +54,8 @@ To react:
 2. Tap the reaction bar
 3. Select emoji
 
+In channels, the same long-press opens a floating bar with quick reactions and a **Comment** action.
+
 ### Message Editing
 
 - Edit within **15 minutes** of sending
@@ -133,8 +135,16 @@ Message: "Hello everyone" (Edited)
 
 - Broadcasting to unlimited members
 - Slow mode (1 message per X seconds)
-- Only admins can send
-- Reactions disabled by default
+- Only approved publishers can send (admins or designated members)
+- Members can react to posts (reactions are anonymous by default)
+- Members can comment if approved by admins
+
+#### Channel Reactions and Comments
+
+- Long-press a channel post to open a floating action bar with quick reactions and **Comment**.
+- Comments can be anonymous or identified; the author chooses per comment.
+- Anonymous comments never reveal identity to anyone (including admins).
+- Posting remains limited to approved publishers.
 
 ---
 

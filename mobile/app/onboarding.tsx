@@ -4,7 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
 const alex = require('@/assets/images/alex.png');
@@ -42,6 +43,7 @@ const BUBBLES: Bubble[] = [
 ];
 
 export default function OnboardingScreen() {
+  const { colors } = useTheme();
   const handleCreateAccount = () => {
     router.push('/auth/phone');
   };
@@ -51,13 +53,13 @@ export default function OnboardingScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
 
       <View style={styles.header}>
-        <Text style={styles.headline}>
+        <Text style={[styles.headline, { color: colors.text }]}>
           {t('onboarding.line1')}{'\n'}{t('onboarding.line2')}{'\n'}
-          <Text style={styles.headlineAccent}>
+          <Text style={[styles.headlineAccent, { color: colors.primary }]}>
             {t('onboarding.accent1')}{'\n'}{t('onboarding.accent2')}
           </Text>
         </Text>
@@ -80,7 +82,7 @@ export default function OnboardingScreen() {
                   right: b.right as any,
                   bottom: b.bottom as any,
                 },
-                b.hero && styles.bubbleHero,
+                b.hero && [styles.bubbleHero, { borderColor: colors.surface }],
               ]}
             >
               {b.source ? (
@@ -101,12 +103,15 @@ export default function OnboardingScreen() {
           onPress={handleCreateAccount}
           style={({ pressed }) => [
             styles.primaryButton,
+            { backgroundColor: colors.primary, shadowColor: colors.primary },
             pressed && styles.primaryButtonPressed,
           ]}
           accessibilityRole="button"
           accessibilityLabel={t('onboarding.cta_create')}
         >
-          <Text style={styles.primaryButtonText}>{t('onboarding.cta_create')}</Text>
+          <Text style={[styles.primaryButtonText, { color: colors.onPrimary }]}>
+            {t('onboarding.cta_create')}
+          </Text>
         </Pressable>
 
         <Pressable
@@ -118,7 +123,9 @@ export default function OnboardingScreen() {
           accessibilityRole="button"
           accessibilityLabel={t('onboarding.cta_restore')}
         >
-          <Text style={styles.secondaryButtonText}>{t('onboarding.cta_restore')}</Text>
+          <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>
+            {t('onboarding.cta_restore')}
+          </Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -128,7 +135,6 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: Colors.light.background,
   },
   header: {
     paddingHorizontal: Spacing.xl,
@@ -136,11 +142,8 @@ const styles = StyleSheet.create({
   },
   headline: {
     ...Typography.display,
-    color: Palette.brand[900],
   },
-  headlineAccent: {
-    color: Palette.brand[500],
-  },
+  headlineAccent: {},
   hero: {
     flex: 1,
     paddingHorizontal: Spacing.lg,
@@ -168,7 +171,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 12 },
     elevation: 10,
     borderWidth: 3,
-    borderColor: Colors.light.surface,
   },
   bubbleImage: {
     width: '100%',
@@ -180,24 +182,21 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   primaryButton: {
-    backgroundColor: Colors.light.primary,
     borderRadius: Radii.xl,
     paddingVertical: Spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Palette.brand[500],
     shadowOpacity: 0.3,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 6,
   },
   primaryButtonPressed: {
-    backgroundColor: Palette.brand[600],
+    opacity: 0.9,
     transform: [{ scale: 0.98 }],
   },
   primaryButtonText: {
     ...Typography.bodyStrong,
-    color: Colors.light.onPrimary,
   },
   secondaryButton: {
     paddingVertical: Spacing.md,
@@ -209,6 +208,5 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     ...Typography.bodyStrong,
-    color: Colors.light.textSecondary,
   },
 });

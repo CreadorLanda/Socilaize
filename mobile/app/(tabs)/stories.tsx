@@ -1,79 +1,121 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { Radii, Spacing, Typography } from '@/constants/theme';
+import { TabScene } from '@/components/ui/tab-scene';
+import { useTheme } from '@/hooks/use-theme';
 import { STORIES, type Story } from '@/data/mock';
 import { t } from '@/i18n';
 
 export default function StoriesScreen() {
+  const { colors } = useTheme();
   const me = STORIES.find((s) => s.isOwn);
   const others = STORIES.filter((s) => !s.isOwn);
 
   return (
-    <View style={styles.safe}>
+    <TabScene>
+    <View style={[styles.safe, { backgroundColor: colors.background }]}>
       <FlatList
         data={others}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={
           me ? (
             <View style={styles.section}>
-              <Pressable style={styles.myStory} accessibilityRole="button">
+              <Pressable
+                onPress={() => router.push('/story/create')}
+                style={[styles.myStory, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                accessibilityRole="button"
+              >
                 <View style={styles.myAvatarWrap}>
-                  <Image source={{ uri: me.avatarUri }} style={styles.myAvatar} contentFit="cover" />
-                  <View style={styles.addBadge}>
-                    <Ionicons name="add" size={16} color={Colors.light.onPrimary} />
+                  <Image
+                    source={{ uri: me.avatarUri }}
+                    style={[styles.myAvatar, { backgroundColor: colors.surfaceMuted }]}
+                    contentFit="cover"
+                  />
+                  <View
+                    style={[styles.addBadge, { backgroundColor: colors.primary, borderColor: colors.surface }]}
+                  >
+                    <Ionicons name="add" size={16} color={colors.onPrimary} />
                   </View>
                 </View>
                 <View style={styles.myStoryText}>
-                  <Text style={styles.myStoryTitle}>{t('stories.add_title')}</Text>
-                  <Text style={styles.myStorySubtitle}>{t('stories.add_subtitle')}</Text>
+                  <Text style={[styles.myStoryTitle, { color: colors.text }]}>{t('stories.add_title')}</Text>
+                  <Text style={[styles.myStorySubtitle, { color: colors.textSecondary }]}>
+                    {t('stories.add_subtitle')}
+                  </Text>
                 </View>
               </Pressable>
-              <Text style={styles.sectionLabel}>{t('stories.recent')}</Text>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('stories.recent')}</Text>
             </View>
           ) : null
         }
         renderItem={({ item }) => <StoryRow story={item} />}
         contentContainerStyle={styles.list}
-        ItemSeparatorComponent={() => <View style={styles.divider} />}
+        ItemSeparatorComponent={() => (
+          <View style={[styles.divider, { backgroundColor: colors.divider }]} />
+        )}
       />
 
       <Pressable
-        onPress={() => {}}
-        style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+        onPress={() => router.push('/story/create')}
+        style={({ pressed }) => [
+          styles.fab,
+          { backgroundColor: colors.primary, shadowColor: colors.primary },
+          pressed && styles.fabPressed,
+        ]}
         accessibilityRole="button"
         accessibilityLabel={t('stories.add_title')}
       >
-        <Ionicons name="camera" size={22} color={Colors.light.onPrimary} />
+        <Ionicons name="camera" size={22} color={colors.onPrimary} />
       </Pressable>
     </View>
+    </TabScene>
   );
 }
 
 function StoryRow({ story }: { story: Story }) {
+  const { colors } = useTheme();
   return (
     <Pressable
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      onPress={() => router.push(`/story/${story.id}`)}
+      style={({ pressed }) => [
+        styles.row,
+        pressed && [styles.rowPressed, { backgroundColor: colors.surfaceMuted }],
+      ]}
       accessibilityRole="button"
-      accessibilityLabel={`Open story from ${story.user}`}
+      accessibilityLabel={t('stories.open_story', { name: story.user })}
     >
       <View
-        style={[styles.ring, story.isViewed ? styles.ringViewed : styles.ringActive]}
+        style={[
+          styles.ring,
+          {
+            borderColor: story.isViewed ? colors.border : colors.primary,
+            borderWidth: story.isViewed ? 2 : 2.5,
+          },
+        ]}
       >
-        <View style={styles.ringInner}>
+        <View style={[styles.ringInner, { backgroundColor: colors.surfaceMuted }]}>
           <Image source={{ uri: story.avatarUri }} style={styles.avatar} contentFit="cover" />
         </View>
       </View>
       <View style={styles.rowText}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
+        <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
           {story.user}
         </Text>
-        <Text style={styles.rowSubtitle} numberOfLines={1}>
-          {story.username} · {story.isViewed ? t('stories.viewed') : t('stories.new')}
+        <Text style={[styles.rowSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+          {story.postedAt} · {story.isViewed ? t('stories.viewed') : t('stories.new')}
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color={Colors.light.textMuted} />
+      <View style={[styles.kindBadge, { backgroundColor: colors.surfaceMuted }]}>
+        <Ionicons
+          name={story.kind === 'video' ? 'videocam' : story.kind === 'text' ? 'text' : 'image'}
+          size={14}
+          color={colors.textSecondary}
+        />
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
     </Pressable>
   );
 }
@@ -81,7 +123,7 @@ function StoryRow({ story }: { story: Story }) {
 const AVATAR = 52;
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.light.background },
+  safe: { flex: 1 },
 
   fab: {
     position: 'absolute',
@@ -90,17 +132,14 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: Radii.pill,
-    backgroundColor: Colors.light.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Palette.brand[500],
     shadowOpacity: 0.35,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
   fabPressed: {
-    backgroundColor: Palette.brand[600],
     transform: [{ scale: 0.95 }],
   },
 
@@ -108,7 +147,6 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: Spacing.xl, gap: Spacing.md, paddingBottom: Spacing.sm },
   sectionLabel: {
     ...Typography.caption,
-    color: Colors.light.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginTop: Spacing.md,
@@ -119,17 +157,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.md,
     padding: Spacing.md,
-    backgroundColor: Colors.light.surface,
     borderRadius: Radii.lg,
     borderWidth: 1,
-    borderColor: Colors.light.border,
   },
   myAvatarWrap: { width: AVATAR + 4, height: AVATAR + 4 },
   myAvatar: {
     width: AVATAR + 4,
     height: AVATAR + 4,
     borderRadius: Radii.pill,
-    backgroundColor: Palette.neutral[100],
   },
   addBadge: {
     position: 'absolute',
@@ -138,15 +173,13 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: Radii.pill,
-    backgroundColor: Colors.light.primary,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: Colors.light.surface,
   },
   myStoryText: { flex: 1 },
-  myStoryTitle: { ...Typography.bodyStrong, color: Colors.light.text },
-  myStorySubtitle: { ...Typography.caption, color: Colors.light.textSecondary, marginTop: 2 },
+  myStoryTitle: { ...Typography.bodyStrong },
+  myStorySubtitle: { ...Typography.caption, marginTop: 2 },
 
   row: {
     flexDirection: 'row',
@@ -155,7 +188,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.md,
   },
-  rowPressed: { backgroundColor: Palette.neutral[100] },
+  rowPressed: {},
   ring: {
     width: AVATAR + 8,
     height: AVATAR + 8,
@@ -164,30 +197,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 2,
   },
-  ringActive: {
-    backgroundColor: 'transparent',
-    borderWidth: 2.5,
-    borderColor: Palette.brand[500],
-  },
-  ringViewed: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: Palette.neutral[300],
-  },
   ringInner: {
     width: AVATAR,
     height: AVATAR,
     borderRadius: Radii.pill,
     overflow: 'hidden',
-    backgroundColor: Palette.neutral[100],
   },
   avatar: { width: '100%', height: '100%' },
   rowText: { flex: 1 },
-  rowTitle: { ...Typography.bodyStrong, color: Colors.light.text },
-  rowSubtitle: { ...Typography.caption, color: Colors.light.textSecondary, marginTop: 2 },
+  rowTitle: { ...Typography.bodyStrong },
+  rowSubtitle: { ...Typography.caption, marginTop: 2 },
+  kindBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   divider: {
     height: 1,
-    backgroundColor: Colors.light.divider,
     marginLeft: Spacing.xl + AVATAR + Spacing.md + 8,
   },
 });

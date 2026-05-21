@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Colors, Palette, Radii, Spacing, Typography } from '@/constants/theme';
+import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
 import { t } from '@/i18n';
+import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
   step: number;
@@ -14,6 +15,7 @@ type Props = {
 };
 
 export function StepHeader({ step, total, title, subtitle, onBack }: Props) {
+  const { colors, scheme } = useTheme();
   const handleBack = () => {
     if (onBack) {
       onBack();
@@ -25,6 +27,8 @@ export function StepHeader({ step, total, title, subtitle, onBack }: Props) {
   };
 
   const progress = step / total;
+  const titleColor = scheme === 'dark' ? colors.text : Palette.brand[900];
+  const trackColor = colors.divider;
 
   return (
     <View style={styles.wrap}>
@@ -32,21 +36,34 @@ export function StepHeader({ step, total, title, subtitle, onBack }: Props) {
         <Pressable
           onPress={handleBack}
           hitSlop={12}
-          style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          style={({ pressed }) => [
+            styles.backButton,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            pressed && { backgroundColor: colors.surfaceMuted },
+          ]}
           accessibilityRole="button"
           accessibilityLabel={t('auth.back')}
         >
-          <Ionicons name="chevron-back" size={22} color={Colors.light.text} />
+          <Ionicons name="chevron-back" size={22} color={colors.text} />
         </Pressable>
-        <Text style={styles.counter}>{t('auth.step_counter', { step, total })}</Text>
+        <Text style={[styles.counter, { color: colors.textSecondary }]}>
+          {t('auth.step_counter', { step, total })}
+        </Text>
       </View>
 
-      <View style={styles.track}>
-        <View style={[styles.fill, { width: `${Math.min(Math.max(progress, 0), 1) * 100}%` }]} />
+      <View style={[styles.track, { backgroundColor: trackColor }]}>
+        <View
+          style={[
+            styles.fill,
+            { width: `${Math.min(Math.max(progress, 0), 1) * 100}%`, backgroundColor: colors.primary },
+          ]}
+        />
       </View>
 
-      <Text style={styles.title}>{title}</Text>
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      <Text style={[styles.title, { color: titleColor }]}>{title}</Text>
+      {subtitle ? (
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
+      ) : null}
     </View>
   );
 }
@@ -67,38 +84,27 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: Radii.pill,
-    backgroundColor: Colors.light.surface,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: Colors.light.border,
-  },
-  backButtonPressed: {
-    opacity: 0.7,
-    backgroundColor: Palette.neutral[100],
   },
   counter: {
     ...Typography.caption,
-    color: Colors.light.textSecondary,
   },
   track: {
     height: 4,
-    backgroundColor: Palette.neutral[200],
     borderRadius: Radii.pill,
     overflow: 'hidden',
   },
   fill: {
     height: '100%',
-    backgroundColor: Colors.light.primary,
     borderRadius: Radii.pill,
   },
   title: {
     ...Typography.h1,
-    color: Palette.brand[900],
     marginTop: Spacing.sm,
   },
   subtitle: {
     ...Typography.body,
-    color: Colors.light.textSecondary,
   },
 });
