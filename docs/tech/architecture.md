@@ -1,459 +1,144 @@
 # 🏗️ Architecture
 
-> Complete documentation for Socialize microservices architecture.
+> How Socialize is shaped: a security-first messaging platform with an on-device store, a thin server, and a WhatsApp bridge.
 
 ---
 
-## Overview
+## Goals
 
-Socialize uses a **microservices architecture** designed for:
-- **Scalability**: Scale individual services independently
-- **Availability**: Fault isolation prevents cascade failures
-- **Maintainability**: Teams can work on services independently
-- **Deployability**: Services can be deployed independently
+1. **End-to-end encryption by default.** The server must not be able to read user content.
+2. **Messages live on the device** — like WhatsApp. The server is a relay for ciphertext envelopes and authoritative metadata.
+3. **One coherent inbox** for both Socialize chats and bridged WhatsApp chats, with clear visual identification of each.
+4. **Modular monolith** in Go organised as MVC modules — easy to split later, fast to build now.
+5. **Operational simplicity.** PostgreSQL + Redis only. No MongoDB.
 
 ---
 
-## System Architecture
+## High-level shape
 
 ```
-                            ┌─────────────────┐
-                            │   API Gateway   │
-                            │ nginx/traefik   │
-                            └────────┬────────┘
-                                     │
-           ┌─────────────────────────┼─────────────────────────┐
-           │                         │                         │
-           ▼                         ▼                         ▼
-┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
-│  Auth Service    │      │   Chat Service   │      │  User Service    │
-│    (Port 3001)   │      │    (Port 3002)   │      │    (Port 3003)   │
-│                  │      │                  │      │                  │
-│ - Login         │      │ - Messages       │      │ - Profiles       │
-│ - Register     │      │ - Reactions     │      │ - Contacts      │
-│ - JWT         │      │ - Read status   │      │ - Search       │
-│ - Session      │      │ - Typing        │      │ - Settings     │
-└────────┬───────┘      └────────┬───────┘      └────────┬───────┘
-         │                       │                       │
-         │───────────────────────┼───────────────────────┤
-                             ▼ ▼
-                    ┌────────────────────────┐
-                    │    Message Broker   │
-                    │    Redis/Kafka     │
-                    └────────────────────────┘
-                             │
-         ┌───────────────────┼───────────────────┐
-         │                   │                   │
-         ▼                   ▼                   ▼
-┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-│ Media Service   │  │  Group Service  │  │ Notif Service  │
-│   (Port 3004)   │  │   (Port 3005)   │  │   (Port 3006)  │
-│                │  │                │  │                │
-│ - Upload       │  │ - Groups       │  │ - Push FCM     │
-│ - Media proc   │  │ - Channels    │  │ - Email        │
-│ - Thumbnails  │  │ - Members     │  │ - SMS          │
-└────────────────┘  └────────────────┘  └────────────────┘
+   Mobile / Web client
+   ├─ SQLite (SQLCipher, encrypted)   ← full chat history, on device
+   └─ libsignal                       ← E2E sessions
+            │
+            │  HTTPS / WSS (TLS 1.3, certificate pinning)
+            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Socialize API (Go)                       │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────────┐ │
+│  │ Controllers│→ │ Services   │→ │ Repositories           │ │
+│  │ (HTTP/WS)  │  │ (logic)    │  │ (pgx → Postgres)       │ │
+│  └────────────┘  └────────────┘  └────────────────────────┘ │
+│         │                                                   │
+│         ▼                                                   │
+│   Realtime hub (WebSocket) ── Redis pub/sub fan-out         │
+└──────┬──────────────────────────────────────────────────────┘
+       │                  │                    │
+       ▼                  ▼                    ▼
+   PostgreSQL          Redis              Object Storage
+   (authoritative)     (queues, cache,    (encrypted media
+                        presence, pub/sub) blobs)
+
+       ▲
+       │ internal gRPC
+       │
+┌──────┴─────────────────┐
+│  WhatsApp Bridge       │
+│  (mautrix-whatsapp)    │── whatsmeow ──► WhatsApp servers
+│  one worker per linked │
+│  account               │
+└────────────────────────┘
 ```
 
 ---
 
-## Services Detail
+## Components
 
-### 1. Auth Service (Port 3001)
+### Mobile client
+- Holds the full chat history in **SQLite (SQLCipher)**.
+- Uses **libsignal** for X3DH + Double Ratchet sessions; group chats use Sender Keys.
+- Talks to the API over HTTPS for request/response and WSS for real-time.
+- Stores the database key in the **OS keychain** (iOS Keychain / Android Keystore); optional biometric unlock on launch.
 
-**Purpose**: Authentication and authorization
+### API server (Go, modular monolith)
+- One process, organised as MVC modules per feature (`auth`, `users`, `messages`, `groups`, `channels`, `stories`, `media`, `badges`, `notifications`, `ai`, `bridges/whatsapp`).
+- HTTP via Gin/Echo, real-time via a WebSocket hub with Redis pub/sub fan-out (so the server can scale horizontally).
+- Authoritative for **metadata** (users, devices, groups, channels, public stories, badges, push tokens, key bundles) — not for message content.
 
-**Responsibilities**:
-- User registration and login
-- JWT token generation/validation
-- Session management
-- OAuth providers
+### PostgreSQL
+- Users, devices, key bundles (identity / signed pre-keys / one-time pre-keys), group membership, channel content, public stories, badges, audit logs.
+- Holds **only ciphertext** for pending message envelopes (deleted after delivery).
 
-**Endpoints**:
-```go
-POST   /auth/register     // Register new user
-POST   /auth/login     // Login
-POST   /auth/refresh  // Refresh token
-POST   /auth/logout   // Logout
-GET    /auth/me      // Get current user
-```
+### Redis
+- **Queues** (Redis Streams): message delivery, push notifications, bridge inbound/outbound, media processing.
+- **Cache**: session tokens, rate limit counters.
+- **Presence**: `presence:{user_id}` with short TTL.
+- **Typing**: `typing:{chat_id}` (TTL 5 s).
+- **Pub/sub**: cross-instance real-time fan-out.
 
-**Database**: PostgreSQL
-**Cache**: Redis
+### Object storage (S3-compatible)
+- Encrypted media (images, video, voice, documents).
+- Per-file Data Encryption Key (DEK) wrapped by a Key Encryption Key (KEK) in KMS/Vault.
+- Server cannot read media in plaintext.
 
----
-
-### 2. Chat Service (Port 3002)
-
-**Purpose**: Real-time messaging
-
-**Responsibilities**:
-- Message storage/delivery
-- Typing indicators
-- Read receipts
-- Reactions
-
-**Endpoints**:
-```go
-POST   /chats                    // Create chat
-GET    /chats/:id                // Get chat
-POST   /chats/:id/messages       // Send message
-GET    /chats/:id/messages      // Get messages
-WS     /ws/chat                // WebSocket
-```
-
-**Database**: PostgreSQL + MongoDB
-**Real-time**: WebSocket
+### WhatsApp bridge (separate process)
+- **mautrix-whatsapp** running as a sidecar, one worker process per linked account, connected to WhatsApp via **whatsmeow**.
+- Surfaces WhatsApp chats, messages, statuses, contacts and groups inside the Socialize inbox.
+- Bridged chats are clearly tagged (`source: 'whatsapp'`) and treated as a distinct surface — see [whatsapp-bridge.md](./whatsapp-bridge.md).
 
 ---
 
-### 3. User Service (Port 3003)
+## Identifying native vs WhatsApp chats
 
-**Purpose**: User management
+Every chat carries a `source` field:
 
-**Responsibilities**:
-- User profiles
-- Contact management
-- User search
-- Settings
+| Source     | Chat ID prefix | UI marker                          | E2E                |
+|------------|----------------|------------------------------------|--------------------|
+| `native`   | `s:<uuid>`     | none                               | Signal (true E2E)  |
+| `whatsapp` | `wa:<wa_jid>`  | small WhatsApp tag on row + header | WA E2E to bridge, then bridge↔server |
 
-**Endpoints**:
-```go
-GET    /users/:id              // Get profile
-PUT    /users/me               // Update profile
-GET    /users/search          // Search users
-POST   /users/me/contacts     // Add contact
-DELETE /users/me/contacts/:id // Remove contact
-```
-
-**Database**: PostgreSQL + MongoDB
+Bridged chats are read-only by default and become writable once the bridge is healthy and outbound is enabled. The trade-off — the bridge has plaintext access on the bridging hop — is documented and surfaced to the user before linking.
 
 ---
 
-### 4. Media Service (Port 3004)
+## Request lifecycle (text message, native chat)
 
-**Purpose**: Media handling
+1. Client A composes a message, encrypts to each recipient device with libsignal, produces N ciphertext envelopes.
+2. Client A `POST /messages` with the envelopes + addressing metadata.
+3. Controller validates auth → Service persists envelopes in Postgres → enqueues delivery on `q:messages.deliver`.
+4. Workers fan envelopes out: push WS frames to online recipients via Redis pub/sub, schedule push notifications for offline ones.
+5. Client B receives the envelope over WS, decrypts with libsignal, persists to its local SQLite, acks.
+6. Server deletes the envelope (or expires it after a short TTL if no ack).
 
-**Responsibilities**:
-- File upload/download
-- Image/video processing
-- Thumbnail generation
-- CDNs
-
-**Endpoints**:
-```go
-POST   /media/upload        // Upload file
-GET    /media/:id          // Download file
-POST   /media/:id/thumbnail // Generate thumbnail
-DELETE /media/:id         // Delete media
-```
-
-**Storage**: S3/MinIO
-**Processing**: FFmpeg, Sharp
+The server never sees plaintext.
 
 ---
 
-### 5. Group Service (Port 3005)
+## Why a modular monolith (and not microservices yet)
 
-**Purpose**: Group management
+The earlier draft of this document showed five services. We start with **one** Go binary for these reasons:
 
-**Responsibilities**:
-- Create/manage groups
-- Member management
-- Group settings
-- Permissions
-
-**Endpoints**:
-```go
-POST   /groups                    // Create group
-GET    /groups/:id               // Get group
-PUT    /groups/:id                // Update group
-POST   /groups/:id/members       // Add member
-DELETE /groups/:id/members/:id   // Remove member
-```
-
-**Database**: PostgreSQL
+- The whole team / contributors can run one process locally.
+- Cross-module transactions (signing up a user, granting a badge, etc.) stay simple.
+- Real-time fan-out is easier within one address space.
+- We get the *organisational* benefits of services (clear module boundaries, MVC layering) without the operational cost of many deployments, service meshes, and distributed tracing.
+- Splitting is a refactor, not a rewrite, because each module owns its package and its tables. When a module needs to scale independently, we extract it.
 
 ---
 
-### 6. Notification Service (Port 3006)
+## Branch strategy
 
-**Purpose**: Push notifications
-
-**Responsibilities**:
-- Push notifications
-- Email notifications
-- SMS alerts
-
-**Endpoints**:
-```go
-POST   /notifications/push   // Send push
-POST   /notifications/email // Send email
-POST   /notifications/sms   // Send SMS
-```
-
-**Providers**: FCM, APNs, SendGrid, Twilio
+- `backend/base` — base branch (scaffold, docs, shared platform code).
+- `backend/<feature>` — one branch per backend issue (see [services-and-branches.md](./services-and-branches.md)).
+- PRs go into `backend/base`; `backend/base` merges into `main` when the backend MVP is stable.
 
 ---
 
-### 7. AI Service (Port 3007)
+## Related documents
 
-**Purpose**: AI features (Dandara)
-
-**Responsibilities**:
-- Chat assistant
-- Translation
-- Summarization
-
-**Endpoints**:
-```go
-POST   /ai/chat           // Chat with AI
-POST   /ai/translate     // Translate
-POST   /ai/summarize      // Summarize chat
-```
-
-**AI**: OpenAI API, custom models
-
----
-
-### 8. Theme Service (Port 3009)
-
-**Purpose**: Theme management
-
-**Responsibilities**:
-- Theme storage
-- Theme marketplace
-- User theme preferences
-
-**Endpoints**:
-```go
-GET    /themes                    // List themes
-GET    /themes/:id               // Get theme
-POST   /themes                  // Create theme
-PUT    /users/me/theme          // Set user theme
-```
-
-**Database**: MongoDB
-
----
-
-## Service Communication
-
-### Synchronous (gRPC)
-
-For direct service-to-service calls:
-
-```go
-// Server (chat-service)
-rpc GetUserChats(GetUserChatsRequest) returns (stream Chat);
-
-// Client (auth-service)
-client := grpc.NewClient()
-chats, err := client.GetUserChats(&GetUserChatsRequest{
-    UserId: "user_123"
-})
-```
-
-### Asynchronous (Events)
-
-For event-driven communication:
-
-```go
-// Publish event
-broker.Publish("message.new", MessageEvent{
-    ChatId:    "chat_123",
-    MessageId: "msg_456"
-})
-
-// Subscribe to event
-broker.Subscribe("message.new", func(event MessageEvent) {
-    // Handle new message
-})
-```
-
----
-
-## Database Schema
-
-### PostgreSQL (Relational Data)
-
-```sql
--- Users
-CREATE TABLE users (
-    id UUID PRIMARY KEY,
-    phone VARCHAR(20) UNIQUE,
-    username VARCHAR(50) UNIQUE,
-    display_name VARCHAR(100),
-    created_at TIMESTAMP
-);
-
--- Messages
-CREATE TABLE messages (
-    id UUID PRIMARY KEY,
-    chat_id UUID REFERENCES chats(id),
-    sender_id UUID REFERENCES users(id),
-    content TEXT,
-    content_type VARCHAR(20),
-    created_at TIMESTAMP
-);
-
--- Chats
-CREATE TABLE chats (
-    id UUID PRIMARY KEY,
-    type VARCHAR(20),  -- 'direct', 'group', 'channel'
-    created_at TIMESTAMP
-);
-```
-
-### MongoDB (Documents)
-
-```javascript
-// User settings
-{
-    "_id": ObjectId,
-    "user_id": "uuid",
-    "theme": {
-        "mode": "dark",
-        "accent_color": "#007AFF"
-    },
-    "notifications": {
-        "push": true,
-        "email": false
-    }
-}
-```
-
-### Redis (Cache & Real-time)
-
-```
-# Session cache
-SESSION:{user_id} = "jwt_token"
-
-# Online status
-USER:ONLINE:{user_id} = "true"
-
-# Typing indicator
-CHAT:TYPING:{chat_id}:{user_id} = timestamp
-
-# WebSocket connections
-WS:SERVER:{server_id} = [connection_ids]
-```
-
----
-
-## API Gateway
-
-### Routes Configuration
-
-```yaml
-routes:
-  - path: /api/auth/*
-    service: auth-service
-    auth: optional
-    
-  - path: /api/chats/*
-    service: chat-service
-    auth: required
-    
-  - path: /api/users/*
-    service: user-service
-    auth: required
-    
-  - path: /ws/*
-    service: chat-service
-    auth: required
-    proxy: websocket
-```
-
-### Middleware
-
-```go
-// Rate limiting
-rate_limit:
-  requests: 100
-  window: 60s
-  
-// CORS
-cors:
-  origins: ["*"]
-  methods: ["GET", "POST", "PUT", "DELETE"]
-  
-// Compression
-compression:
-  enabled: true
-  min_size: 1kb
-```
-
----
-
-## Deployment
-
-### Docker Compose (Development)
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:15-alpine
-    ports: [5432:5432]
-    
-  mongodb:
-    image: mongo:7
-    ports: [27017:27017]
-    
-  redis:
-    image: redis:7-alpine
-    ports: [6379:6379]
-    
-  auth-service:
-    build: ./server/auth
-    ports: [3001:3001]
-    
-  chat-service:
-    build: ./server/chat
-    ports: [3002:3002]
-```
-
-### Kubernetes (Production)
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: chat-service
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: chat-service
-        image: socialize/chat-service:v1.0.0
-        ports: [3002]
-```
-
----
-
-## Monitoring
-
-### Metrics
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `requests_total` | Counter | Total requests |
-| `request_duration` | Histogram | Request latency |
-| `active_connections` | Gauge | WebSocket connections |
-| `messages_sent` | Counter | Messages sent |
-
-### Health Checks
-
-```go
-GET /health
-Response: {
-    "status": "healthy",
-    "services": {
-        "postgres": "up",
-        "redis": "up"
-    }
-}
-```
+- [Database](./database.md) — Postgres + Redis schema, on-device SQLite.
+- [Backend (Go, MVC)](./backend-go.md) — code layout and conventions.
+- [Local storage](./local-storage.md) — on-device SQLite + SQLCipher.
+- [WhatsApp bridge](./whatsapp-bridge.md) — mautrix integration.
+- [Services & branches](./services-and-branches.md) — feature → branch → issue map.
+- [Encryption](../security/encryption.md) — Signal Protocol, at-rest, in-transit.
