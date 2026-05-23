@@ -467,6 +467,9 @@ export type ChannelComment = {
   anonymous: boolean;
   authorName?: string;
   pending?: boolean;
+  likes?: number;
+  liked?: boolean;
+  replies?: ChannelComment[];
 };
 
 export type Channel = {
@@ -513,12 +516,31 @@ export const CHANNELS: Channel[] = [
             timestamp: '1h',
             anonymous: false,
             authorName: 'Maya',
+            likes: 12,
+            replies: [
+              {
+                id: 'c1r1',
+                text: 'Agreed — the new flow feels so much smoother.',
+                timestamp: '48m',
+                anonymous: false,
+                authorName: 'Leo',
+                likes: 3,
+              },
+              {
+                id: 'c1r2',
+                text: 'Took me 30 seconds to get set up.',
+                timestamp: '20m',
+                anonymous: true,
+                likes: 1,
+              },
+            ],
           },
           {
             id: 'c2',
             text: 'Huge improvement for community groups.',
             timestamp: '52m',
             anonymous: true,
+            likes: 5,
           },
         ],
       },

@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   FlatList,
@@ -16,6 +16,13 @@ import {
   type GestureResponderEvent,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatCount } from '@/components/ui/follow-button';
@@ -33,10 +40,8 @@ const ACTION_BAR_HEIGHT = 44;
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
-const nowStamp = () => {
-  const now = new Date();
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-};
+const countComments = (list: ChannelComment[]) =>
+  list.reduce((n, c) => n + 1 + (c.replies?.length ?? 0), 0);
 
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -52,6 +57,10 @@ export default function ChannelScreen() {
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentAnonymous, setCommentAnonymous] = useState(false);
+  const [commentReplyTo, setCommentReplyTo] = useState<{ id: string; author: string } | null>(null);
+  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
+  const commentInputRef = useRef<TextInput>(null);
+  const commentScrollRef = useRef<ScrollView>(null);
   const [showNotifPrompt, setShowNotifPrompt] = useState(false);
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -156,6 +165,8 @@ export default function ChannelScreen() {
     setCommentPostId(null);
     setCommentDraft('');
     setCommentAnonymous(false);
+    setCommentReplyTo(null);
+    setExpandedComments(new Set());
   };
 
   const handleFollowPress = () => {
@@ -177,17 +188,62 @@ export default function ChannelScreen() {
     const comment: ChannelComment = {
       id: `c${Date.now()}`,
       text,
-      timestamp: nowStamp(),
+      timestamp: t('channel.just_now'),
       anonymous: commentAnonymous,
       authorName: commentAnonymous ? undefined : CURRENT_USER.name,
       pending: true,
+      likes: 0,
+    };
+    const replyTo = commentReplyTo;
+    updatePost(commentPostId, (post) => {
+      const list = post.comments ?? [];
+      if (replyTo) {
+        return {
+          ...post,
+          comments: list.map((c) =>
+            c.id === replyTo.id ? { ...c, replies: [...(c.replies ?? []), comment] } : c,
+          ),
+        };
+      }
+      return { ...post, comments: [...list, comment] };
+    });
+    if (replyTo) {
+      setExpandedComments((prev) => new Set(prev).add(replyTo.id));
+    } else {
+      setTimeout(() => commentScrollRef.current?.scrollToEnd({ animated: true }), 120);
+    }
+    setCommentDraft('');
+    setCommentAnonymous(false);
+    setCommentReplyTo(null);
+  };
+
+  const toggleCommentLike = (commentId: string) => {
+    if (!commentPostId) return;
+    const flip = (c: ChannelComment): ChannelComment => {
+      if (c.id === commentId) {
+        const liked = !c.liked;
+        return { ...c, liked, likes: Math.max(0, (c.likes ?? 0) + (liked ? 1 : -1)) };
+      }
+      return c.replies ? { ...c, replies: c.replies.map(flip) } : c;
     };
     updatePost(commentPostId, (post) => ({
       ...post,
-      comments: [...(post.comments ?? []), comment],
+      comments: (post.comments ?? []).map(flip),
     }));
-    setCommentDraft('');
-    setCommentAnonymous(false);
+  };
+
+  const toggleReplies = (commentId: string) => {
+    setExpandedComments((prev) => {
+      const next = new Set(prev);
+      if (next.has(commentId)) next.delete(commentId);
+      else next.add(commentId);
+      return next;
+    });
+  };
+
+  const openReplyTo = (target: { id: string; author: string }) => {
+    setCommentReplyTo(target);
+    setTimeout(() => commentInputRef.current?.focus(), 80);
   };
 
   if (!channel) {
@@ -403,7 +459,7 @@ export default function ChannelScreen() {
                   {t('channel.comments')}
                   {comments.length > 0 ? (
                     <Text style={[styles.commentSheetCount, { color: colors.textSecondary }]}>
-                      {' '}·{' '}{comments.length}
+                      {' '}·{' '}{countComments(comments)}
                     </Text>
                   ) : null}
                 </Text>
@@ -414,6 +470,7 @@ export default function ChannelScreen() {
 
               {/* Comment list */}
               <ScrollView
+                ref={commentScrollRef}
                 style={styles.commentScroll}
                 contentContainerStyle={styles.commentScrollContent}
                 showsVerticalScrollIndicator={false}
@@ -421,7 +478,14 @@ export default function ChannelScreen() {
               >
                 {comments.length ? (
                   comments.map((comment) => (
-                    <CommentRow key={comment.id} comment={comment} />
+                    <CommentRow
+                      key={comment.id}
+                      comment={comment}
+                      expanded={expandedComments.has(comment.id)}
+                      onReply={openReplyTo}
+                      onLike={toggleCommentLike}
+                      onToggleReplies={toggleReplies}
+                    />
                   ))
                 ) : (
                   <View style={styles.commentEmpty}>
@@ -455,6 +519,19 @@ export default function ChannelScreen() {
                 </ScrollView>
               </View>
 
+              {/* Replying-to bar */}
+              {commentReplyTo ? (
+                <View style={[styles.replyingBar, { backgroundColor: colors.surfaceMuted, borderTopColor: colors.divider }]}>
+                  <Ionicons name="arrow-undo-outline" size={14} color={colors.textSecondary} />
+                  <Text style={[styles.replyingText, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {t('channel.replying_to', { name: commentReplyTo.author })}
+                  </Text>
+                  <Pressable onPress={() => setCommentReplyTo(null)} hitSlop={8}>
+                    <Ionicons name="close" size={16} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+              ) : null}
+
               {/* Composer — TikTok style: avatar + pill input + Post/GIF */}
               <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
                 <View
@@ -469,6 +546,7 @@ export default function ChannelScreen() {
                 </View>
                 <View style={[styles.composerInputWrap, { backgroundColor: colors.surfaceMuted }]}>
                   <TextInput
+                    ref={commentInputRef}
                     value={commentDraft}
                     onChangeText={setCommentDraft}
                     placeholder={t('channel.comment_placeholder')}
@@ -711,39 +789,68 @@ function Post({
   );
 }
 
-// ── Comment row — TikTok style ──────────────────────────────────────────────────
-function CommentRow({ comment }: { comment: ChannelComment }) {
+// ── Comment row — TikTok style, with threaded replies ───────────────────────────
+function CommentRow({
+  comment,
+  expanded,
+  isReply,
+  parentId,
+  onReply,
+  onLike,
+  onToggleReplies,
+}: {
+  comment: ChannelComment;
+  expanded?: boolean;
+  isReply?: boolean;
+  parentId?: string;
+  onReply: (target: { id: string; author: string }) => void;
+  onLike: (id: string) => void;
+  onToggleReplies?: (id: string) => void;
+}) {
   const { colors } = useTheme();
-  const [liked, setLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(() => comment.id.charCodeAt(1) % 18);
-
   const isAnon = comment.anonymous;
   const author = isAnon ? t('channel.anonymous') : comment.authorName || t('channel.anonymous');
   const initial = isAnon ? '?' : author.charAt(0).toUpperCase();
+  const likes = comment.likes ?? 0;
+  const replies = comment.replies ?? [];
 
-  const toggleLike = () => {
-    setLiked((prev) => {
-      setLikeCount((c) => (prev ? c - 1 : c + 1));
-      return !prev;
-    });
+  const pop = useSharedValue(1);
+  const heartStyle = useAnimatedStyle(() => ({ transform: [{ scale: pop.value }] }));
+
+  const handleLike = () => {
+    pop.value = withSequence(
+      withTiming(1.4, { duration: 110 }),
+      withSpring(1, { damping: 6, stiffness: 220 }),
+    );
+    onLike(comment.id);
+  };
+
+  const handleReply = () => {
+    onReply({ id: isReply ? parentId ?? comment.id : comment.id, author });
   };
 
   return (
-    <View style={styles.commentRow}>
+    <View style={[styles.commentRow, isReply && styles.commentRowReply, comment.pending && styles.commentPendingRow]}>
       <View
         style={[
           styles.commentAvatar,
+          isReply && styles.commentAvatarSmall,
           { backgroundColor: isAnon ? colors.surfaceMuted : `${colors.primary}22` },
         ]}
       >
-        <Text style={[styles.commentAvatarText, { color: isAnon ? colors.textMuted : colors.primary }]}>
+        <Text
+          style={[
+            isReply ? styles.commentAvatarTextSmall : styles.commentAvatarText,
+            { color: isAnon ? colors.textMuted : colors.primary },
+          ]}
+        >
           {initial}
         </Text>
       </View>
 
       <View style={styles.commentBody}>
         <Text style={[styles.commentAuthorText, { color: colors.text }]}>{author}</Text>
-        <Text style={[styles.commentContent, { color: colors.text }]} numberOfLines={6}>
+        <Text style={[styles.commentContent, { color: colors.text }]} numberOfLines={8}>
           {comment.text}
         </Text>
         <View style={styles.commentMeta}>
@@ -753,19 +860,58 @@ function CommentRow({ comment }: { comment: ChannelComment }) {
               · {t('channel.pending_approval')}
             </Text>
           ) : null}
-          <Pressable hitSlop={8}>
+          <Pressable onPress={handleReply} hitSlop={8}>
             <Text style={[styles.commentReply, { color: colors.textSecondary }]}>
               {t('channel.reply')}
             </Text>
           </Pressable>
         </View>
+
+        {!isReply && replies.length > 0 ? (
+          <>
+            <Pressable
+              onPress={() => onToggleReplies?.(comment.id)}
+              style={styles.viewReplies}
+              hitSlop={6}
+            >
+              <View style={[styles.replyLine, { backgroundColor: colors.border }]} />
+              <Text style={[styles.viewRepliesText, { color: colors.textSecondary }]}>
+                {expanded
+                  ? t('channel.hide_replies')
+                  : replies.length === 1
+                    ? t('channel.view_one_reply')
+                    : t('channel.view_replies', { count: replies.length })}
+              </Text>
+            </Pressable>
+            {expanded
+              ? replies.map((r) => (
+                  <CommentRow
+                    key={r.id}
+                    comment={r}
+                    isReply
+                    parentId={comment.id}
+                    onReply={onReply}
+                    onLike={onLike}
+                  />
+                ))
+              : null}
+          </>
+        ) : null}
       </View>
 
       {/* Like button + count */}
-      <Pressable onPress={toggleLike} hitSlop={10} style={styles.commentLikeBtn}>
-        <Ionicons name={liked ? 'heart' : 'heart-outline'} size={16} color={liked ? '#FF3040' : colors.textMuted} />
-        {likeCount > 0 ? (
-          <Text style={[styles.commentLikeCount, { color: colors.textMuted }]}>{likeCount}</Text>
+      <Pressable onPress={handleLike} hitSlop={10} style={styles.commentLikeBtn}>
+        <Animated.View style={heartStyle}>
+          <Ionicons
+            name={comment.liked ? 'heart' : 'heart-outline'}
+            size={isReply ? 13 : 16}
+            color={comment.liked ? '#FF3040' : colors.textMuted}
+          />
+        </Animated.View>
+        {likes > 0 ? (
+          <Text style={[styles.commentLikeCount, { color: comment.liked ? '#FF3040' : colors.textMuted }]}>
+            {likes}
+          </Text>
         ) : null}
       </Pressable>
     </View>
@@ -1009,6 +1155,11 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2,
     alignItems: 'flex-start',
   },
+  commentRowReply: {
+    gap: Spacing.sm,
+    paddingVertical: Spacing.xs + 2,
+  },
+  commentPendingRow: { opacity: 0.55 },
   commentAvatar: {
     width: 44,
     height: 44,
@@ -1017,7 +1168,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
+  commentAvatarSmall: { width: 32, height: 32 },
   commentAvatarText: { ...Typography.body, fontWeight: '700' },
+  commentAvatarTextSmall: { ...Typography.caption, fontWeight: '700' },
   commentBody: { flex: 1, gap: 4 },
   commentAuthorText: { ...Typography.caption, fontWeight: '700', lineHeight: 17 },
   commentContent: { ...Typography.caption, lineHeight: 20 },
@@ -1027,6 +1180,24 @@ const styles = StyleSheet.create({
   commentReply: { ...Typography.micro, fontWeight: '600' },
   commentLikeBtn: { alignItems: 'center', gap: 3, paddingLeft: Spacing.xs, paddingTop: 2 },
   commentLikeCount: { ...Typography.micro },
+  viewReplies: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  replyLine: { width: 22, height: 1, borderRadius: 1 },
+  viewRepliesText: { ...Typography.micro, fontWeight: '700' },
+  replyingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  replyingText: { ...Typography.micro, flex: 1 },
 
   // Quick emoji bar
   emojiBar: {
