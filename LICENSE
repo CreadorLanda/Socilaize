@@ -1,0 +1,74 @@
+# Weavox — Dual Licensing
+
+This software is released under a dual-license model.
+
+---
+
+## License Options
+
+### 1. Open Source (GPL v3)
+
+For open-source projects, community contributors, and non-commercial use:
+
+- **License File:** [LICENSE-GPL.txt](./LICENSE-GPL.txt)
+- **Conditions:** You must disclose source code of any derivative works under the same GPL v3 license.
+
+### 2. Commercial License
+
+For companies and individuals who want to use Weavox in proprietary, closed-source products:
+
+- **License File:** [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md)
+- **Contact:** licensing@skylinetechone.com
+- **Website:** weavox.app
+
+---
+
+## Which License Do You Need?
+
+| Use Case | Recommended License |
+|---------|----------------|
+| Open-source project | GPL v3 |
+| Personal/non-commercial | GPL v3 |
+| Internal business tool | Commercial (Starter) |
+| SaaS platform | Commercial (Growth/Business) |
+| Enterprise solution | Commercial (Enterprise) |
+| Mobile app resale | Commercial (Business+) |
+
+---
+
+## Quick Comparison
+
+| Aspect | GPL v3 | Commercial |
+|--------|--------|-----------|
+| Source code disclosure | Required | Not required |
+| Attribution | Required | Varies by tier |
+| Closed-source products | Not permitted | Permitted |
+| Build competing apps | Not permitted | 24-month restriction |
+| Resale as standalone | Not permitted | Not permitted |
+| Commercial SaaS | Not permitted | Permitted |
+
+---
+
+## Obtaining a Commercial License
+
+To purchase a commercial license:
+
+1. **Email:** licensing@skylinetechone.com
+2. **Website:** weavox.app/commercial
+3. **Tiers:** Starter ($2,400/yr), Growth ($12,000/yr), Business ($60,000/yr), Enterprise (custom)
+
+Include in your inquiry:
+- Company name and location
+- Intended use case
+- Estimated monthly active users (MAU)
+- Required deployment count
+
+---
+
+## Trademark Notice
+
+"Weavox" and the Weavox logo are trademarks of SkylineTech, Lda. All rights reserved.
+
+---
+
+*Copyright (C) 2025 SkylineTech, Lda. — Luanda, Angola*
