@@ -1,0 +1,57 @@
+# Systemd unit for the Socialize API.
+#
+# Install on the VPS:
+#   sudo cp deploy/vps/socialize-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now socialize-api
+#
+# Assumes:
+#   - a non-login system user 'socialize'
+#       sudo useradd -r -s /usr/sbin/nologin -d /opt/socialize socialize
+#   - the binary lives at /opt/socialize/server/bin/api
+#       sudo install -o socialize -g socialize -m 755 bin/api /opt/socialize/server/bin/api
+#   - the env file lives at /opt/socialize/server/.env (mode 600, owned by socialize)
+#
+# Update the binary:
+#   sudo install -o socialize -g socialize -m 755 bin/api /opt/socialize/server/bin/api
+#   sudo systemctl restart socialize-api
+
+[Unit]
+Description=Socialize API
+Documentation=https://github.com/CreadorLanda/Socilaize
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=socialize
+Group=socialize
+WorkingDirectory=/opt/socialize/server
+EnvironmentFile=/opt/socialize/server/.env
+ExecStart=/opt/socialize/server/bin/api
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+LimitNOFILE=65535
+
+# Security hardening — see systemd.exec(5).
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

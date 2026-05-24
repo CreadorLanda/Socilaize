@@ -1,11 +1,37 @@
-# Local stack for backend development.
+# Local + VPS development stack.
 #
-# Postgres + Redis are required by the API. mautrix-whatsapp is included so
-# the WhatsApp bridge can be exercised end-to-end on the same machine; it
-# stays stopped until you `docker compose up mautrix`.
+# Targets two topologies with one file, via profiles:
+#
+#   1) Hybrid (recommended): Postgres on Supabase, everything else local.
+#        docker compose up -d redis              # just Redis
+#        docker compose --profile bridge up -d   # + mautrix sidecar
+#
+#   2) Fully local (offline dev): also runs Postgres locally.
+#        docker compose --profile local-pg up -d
+#
+# See docs/tech/deployment.md for the full deployment story.
+
 services:
+  # Always available (no profile). Use it locally for dev OR on the VPS.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Opt-in: a local Postgres for offline development.
+  # In hybrid topology this stays stopped — POSTGRES_URL points at Supabase.
   postgres:
     image: postgres:16-alpine
+    profiles: ["local-pg"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: socialize
@@ -21,29 +47,13 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  # WhatsApp bridge sidecar. Opt-in (`docker compose up mautrix`).
+  # Opt-in: the WhatsApp bridge sidecar (one process per linked user is
+  # spawned by mautrix itself once the API requests a link).
   # See docs/tech/whatsapp-bridge.md for the link flow.
   mautrix:
     image: dock.mau.dev/mautrix/whatsapp:latest
     profiles: ["bridge"]
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     volumes:
       - mautrix-data:/data
     environment:

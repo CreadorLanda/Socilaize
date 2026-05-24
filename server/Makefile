@@ -30,11 +30,14 @@ migrate-up: ## Apply all pending migrations.
 migrate-down: ## Roll back the most recent migration.
 	migrate -path migrations -database "$(POSTGRES_URL)" down 1
 
-docker-up: ## Start postgres + redis locally.
-	docker compose -f deploy/docker/docker-compose.yml up -d postgres redis
+docker-up: ## Start Redis locally (use Supabase for Postgres).
+	docker compose -f deploy/docker/docker-compose.yml up -d redis
+
+docker-up-local: ## Start Redis + a local Postgres (fully offline dev).
+	docker compose -f deploy/docker/docker-compose.yml --profile local-pg up -d
 
 docker-bridge: ## Start the mautrix-whatsapp sidecar.
 	docker compose -f deploy/docker/docker-compose.yml --profile bridge up -d mautrix
 
 docker-down: ## Stop the local stack.
-	docker compose -f deploy/docker/docker-compose.yml down
+	docker compose -f deploy/docker/docker-compose.yml --profile local-pg --profile bridge down
