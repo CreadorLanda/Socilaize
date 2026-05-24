@@ -283,6 +283,13 @@ export const MESSAGES: Record<string, Message[]> = {
       fromMe: false,
       timestamp: '09:42',
     },
+    {
+      id: 'm6',
+      text: 'btw, this thread is gold — read it before tonight 👇\nhttps://example.com/web3-onboarding',
+      fromMe: false,
+      timestamp: '09:44',
+      forwarded: true,
+    },
   ],
   c2: [
     { id: 'm1', text: 'Studio Sat afternoon?', fromMe: true, timestamp: '09:28', status: 'read' },
@@ -393,6 +400,15 @@ export const MESSAGES: Record<string, Message[]> = {
       source: 'whatsapp',
       senderName: 'Maria Costa',
     },
+    {
+      id: 'wm9',
+      text: 'Olha o que o pai partilhou no grupo — vale a pena ler.',
+      fromMe: false,
+      timestamp: '11:26',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+      forwarded: true,
+    },
   ],
 
   // ── WhatsApp group (bridged) ───────────────────────────────────────────
@@ -430,6 +446,16 @@ export const MESSAGES: Record<string, Message[]> = {
         width: 160,
         height: 160,
       },
+    },
+    {
+      id: 'gm4',
+      text: 'Aviso do condomínio: amanhã há corte de água das 9h às 12h.',
+      fromMe: false,
+      timestamp: '10:55',
+      source: 'whatsapp',
+      senderName: 'Mãe',
+      senderAvatarUri: dicebear('avataaars', 'Mae', 'F472B6'),
+      forwarded: true,
     },
   ],
 };
