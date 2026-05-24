@@ -1,0 +1,55 @@
+# Reverse proxy + automatic TLS (Let's Encrypt) for the Socialize API.
+#
+# Install Caddy on the VPS:
+#   sudo apt install caddy        # Debian/Ubuntu
+#   # or:  https://caddyserver.com/docs/install
+#
+# Then place this file at /etc/caddy/Caddyfile (replacing the default) and:
+#   sudo systemctl reload caddy
+#
+# Caddy will obtain a TLS cert on first boot and renew it automatically.
+
+# Replace this with your actual domain. The DNS A/AAAA records for it must
+# point at this VPS before Caddy can issue a cert.
+api.socialize.example {
+	encode gzip zstd
+
+	# WebSocket upgrades: Caddy handles this transparently with reverse_proxy,
+	# but we bump idle timeouts so long-lived WS connections survive.
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+
+	# All routes proxy to the Go API on localhost:8080.
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# Long-poll-friendly timeouts for WS.
+		transport http {
+			read_timeout 3600s
+			write_timeout 3600s
+		}
+	}
+
+	# Security headers — defence in depth on top of TLS.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "interest-cohort=()"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/api.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+}
