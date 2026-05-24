@@ -1763,19 +1763,12 @@ function BubbleBody({
         </View>
       ) : null}
 
-      {msg.forwarded ? (
+      {/* "Reencaminhada" label is only shown on *incoming* forwards — when
+          I forward something, I already know, so we don't tag my own copy. */}
+      {msg.forwarded && !mine ? (
         <View style={styles.forwardedRow}>
-          <Ionicons
-            name="arrow-redo-outline"
-            size={12}
-            color={mine ? 'rgba(255,255,255,0.65)' : colors.textMuted}
-          />
-          <Text
-            style={[
-              styles.forwardedText,
-              { color: mine ? 'rgba(255,255,255,0.65)' : colors.textMuted },
-            ]}
-          >
+          <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+          <Text style={[styles.forwardedText, { color: colors.textMuted }]}>
             {t('chat.forwarded')}
           </Text>
         </View>
@@ -2024,7 +2017,9 @@ function ReactionMenu({
   const showReply = true;
   const showForward = true;
   const showCopy = hasText;
-  const showEdit = mine && hasText;
+  // Forwarded messages cannot be edited — even if they're mine, the canonical
+  // content lives on the original sender's side.
+  const showEdit = mine && hasText && !msg.forwarded;
   const showSelect = true;
   const showDelete = true;
   const menuItems =
