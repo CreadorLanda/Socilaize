@@ -244,6 +244,10 @@ export default {
     forward_title: 'Reencaminhar para…',
     forward_search: 'Procurar conversas',
     forward_sent: 'Reencaminhada para {{name}}',
+    forwarded: 'Reencaminhada',
+    select: 'Selecionar',
+    selected_count: '{{count}} selecionadas',
+    delete_count_title: 'Eliminar {{count}} mensagens?',
   },
   group: {
     settings_title: 'Definições do grupo',

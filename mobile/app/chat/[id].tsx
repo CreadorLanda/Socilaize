@@ -139,8 +139,10 @@ export default function ChatScreen() {
   const [showAttach, setShowAttach] = useState(false);
   const [composeKind, setComposeKind] = useState<string | null>(null);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Message | null>(null);
-  const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<Message[]>([]);
+  const [forwardTargets, setForwardTargets] = useState<Message[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectionMode = selectedIds.size > 0;
   const [dandaraTyping, setDandaraTyping] = useState(false);
   const { colors, isDark } = useTheme();
 
@@ -441,7 +443,7 @@ export default function ChatScreen() {
   };
 
   const forwardFromMenu = () => {
-    if (menuTarget) setForwardTarget(menuTarget.msg);
+    if (menuTarget) setForwardTargets([menuTarget.msg]);
   };
 
   const editFromMenu = () => {
@@ -454,7 +456,7 @@ export default function ChatScreen() {
   };
 
   const deleteFromMenu = () => {
-    if (menuTarget) setDeleteTarget(menuTarget.msg);
+    if (menuTarget) setDeleteTargets([menuTarget.msg]);
   };
 
   const cancelEdit = () => {
@@ -462,39 +464,89 @@ export default function ChatScreen() {
     setDraft('');
   };
 
-  // Apply the delete action chosen from the confirmation modal.
-  // 'me'   — local-only soft delete (just mark deletedAt on this device).
-  // 'all'  — propagates to the bridge / other clients (here just marks deletedAt).
+  // ── Multi-select ─────────────────────────────────────────────────────────
+  const startSelection = (msg: Message) => {
+    setSelectedIds(new Set([msg.id]));
+    Haptics.selectionAsync().catch(() => {});
+  };
+
+  const toggleSelect = (msgId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const selectFromMenu = () => {
+    if (menuTarget) startSelection(menuTarget.msg);
+  };
+
+  // Resolve currently-selected (and not-deleted) messages — used by bulk actions.
+  const selectedMessages = (): Message[] =>
+    visible.filter((m) => selectedIds.has(m.id) && !m.deletedAt);
+
+  const bulkForward = () => {
+    const list = selectedMessages();
+    if (list.length === 0) return;
+    setForwardTargets(list);
+  };
+
+  const bulkDelete = () => {
+    const list = selectedMessages();
+    if (list.length === 0) return;
+    setDeleteTargets(list);
+  };
+
+  const bulkCopy = () => {
+    const txt = selectedMessages()
+      .map((m) => m.text)
+      .filter(Boolean)
+      .join('\n\n');
+    if (txt) Clipboard.setStringAsync(txt).catch(() => {});
+    clearSelection();
+  };
+
+  // Apply the delete action chosen from the confirmation modal — handles
+  // single message (from the context menu) and bulk (from selection mode).
+  // 'me'  — local-only soft delete.
+  // 'all' — propagates to the bridge / other clients.
   const confirmDelete = (scope: 'me' | 'all') => {
-    if (!deleteTarget) return;
-    const id = deleteTarget.id;
+    if (deleteTargets.length === 0) return;
+    const ids = new Set(deleteTargets.map((t) => t.id));
     setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, deletedAt: new Date().toISOString() } : m)),
+      prev.map((m) => (ids.has(m.id) ? { ...m, deletedAt: new Date().toISOString() } : m)),
     );
     Haptics.impactAsync(
       scope === 'all' ? Haptics.ImpactFeedbackStyle.Rigid : Haptics.ImpactFeedbackStyle.Light,
     ).catch(() => {});
-    setDeleteTarget(null);
+    setDeleteTargets([]);
+    clearSelection();
   };
 
-  // Append the forwarded message to another chat's mock store.
-  // Real implementation would call POST /messages with the target chat id.
+  // Append the forwarded messages to another chat's mock store.
+  // Real implementation would call POST /messages for each.
   const forwardTo = (destChatId: string) => {
-    const msg = forwardTarget;
-    if (!msg) return;
+    if (forwardTargets.length === 0) return;
     const arr = MESSAGES[destChatId] ?? [];
-    const forwarded: Message = {
-      id: `m${Date.now()}`,
+    const base = Date.now();
+    const forwarded: Message[] = forwardTargets.map((msg, i) => ({
+      id: `m${base}${i}`,
       text: msg.text,
       media: msg.media,
       attachment: msg.attachment,
       fromMe: true,
       timestamp: nowTime(),
       status: 'sent',
-    };
-    MESSAGES[destChatId] = [...arr, forwarded];
+      forwarded: true,
+    }));
+    MESSAGES[destChatId] = [...arr, ...forwarded];
     Haptics.selectionAsync().catch(() => {});
-    setForwardTarget(null);
+    setForwardTargets([]);
+    clearSelection();
   };
 
   const replyFromSwipe = (msg: Message) => {
@@ -685,6 +737,50 @@ export default function ChatScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
 
+      {/* Selection-mode header replaces both the normal and the search header
+          while messages are selected. Search and selection are mutually
+          exclusive — entering selection cancels search. */}
+      {selectionMode ? (
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.divider }]}>
+          <Pressable
+            onPress={clearSelection}
+            hitSlop={12}
+            style={({ pressed }) => [styles.backBtn, pressed && { backgroundColor: colors.surfaceMuted }]}
+            accessibilityLabel={t('chat.cancel')}
+          >
+            <Ionicons name="close" size={22} color={colors.text} />
+          </Pressable>
+          <Text style={[styles.peerName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+            {t('chat.selected_count', { count: selectedIds.size })}
+          </Text>
+          <View style={styles.headerActions}>
+            <Pressable
+              hitSlop={8}
+              style={styles.iconBtn}
+              onPress={bulkCopy}
+              accessibilityLabel={t('chat.copy')}
+            >
+              <Ionicons name="copy-outline" size={20} color={colors.text} />
+            </Pressable>
+            <Pressable
+              hitSlop={8}
+              style={styles.iconBtn}
+              onPress={bulkForward}
+              accessibilityLabel={t('chat.forward')}
+            >
+              <Ionicons name="arrow-redo-outline" size={20} color={colors.text} />
+            </Pressable>
+            <Pressable
+              hitSlop={8}
+              style={styles.iconBtn}
+              onPress={bulkDelete}
+              accessibilityLabel={t('chat.delete')}
+            >
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            </Pressable>
+          </View>
+        </View>
+      ) : (
       <StateTransition transitionKey={searchMode}>
       {searchMode ? (
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.divider }]}>
@@ -818,6 +914,7 @@ export default function ChatScreen() {
       )}
 
       </StateTransition>
+      )}
 
       <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <View style={[styles.thread, { backgroundColor: colors.surfaceMuted }]}>
@@ -835,6 +932,9 @@ export default function ChatScreen() {
                   isGroup={isGroup}
                   query={searching ? trimmedQuery : ''}
                   reactions={reactionsMap[item.id] ?? []}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(item.id)}
+                  onToggleSelect={toggleSelect}
                   onOpenMenu={openMenu}
                   onReact={handleReact}
                   onReply={replyFromSwipe}
@@ -1064,22 +1164,23 @@ export default function ChatScreen() {
           onForward={forwardFromMenu}
           onEdit={editFromMenu}
           onDelete={deleteFromMenu}
+          onSelect={selectFromMenu}
           onClose={closeMenu}
         />
       ) : null}
 
       {/* Delete confirmation */}
       <DeleteMessageModal
-        target={deleteTarget}
-        onCancel={() => setDeleteTarget(null)}
+        targets={deleteTargets}
+        onCancel={() => setDeleteTargets([])}
         onConfirm={confirmDelete}
       />
 
       {/* Forward to another chat */}
       <ForwardChatPicker
-        target={forwardTarget}
+        targets={forwardTargets}
         currentChatId={chat.id}
-        onClose={() => setForwardTarget(null)}
+        onClose={() => setForwardTargets([])}
         onPick={forwardTo}
       />
 
@@ -1662,6 +1763,24 @@ function BubbleBody({
         </View>
       ) : null}
 
+      {msg.forwarded ? (
+        <View style={styles.forwardedRow}>
+          <Ionicons
+            name="arrow-redo-outline"
+            size={12}
+            color={mine ? 'rgba(255,255,255,0.65)' : colors.textMuted}
+          />
+          <Text
+            style={[
+              styles.forwardedText,
+              { color: mine ? 'rgba(255,255,255,0.65)' : colors.textMuted },
+            ]}
+          >
+            {t('chat.forwarded')}
+          </Text>
+        </View>
+      ) : null}
+
       {isVisualMedia ? <MediaContent media={msg.media!} /> : null}
 
       {isAudio ? (
@@ -1698,6 +1817,9 @@ function Bubble({
   isGroup,
   query,
   reactions,
+  selectionMode,
+  selected,
+  onToggleSelect,
   onOpenMenu,
   onReact,
   onReply,
@@ -1708,6 +1830,9 @@ function Bubble({
   isGroup: boolean;
   query: string;
   reactions: ReactionEntry[];
+  selectionMode: boolean;
+  selected: boolean;
+  onToggleSelect: (msgId: string) => void;
   onOpenMenu: (target: MenuTarget) => void;
   onReact: (msgId: string, emoji: string) => void;
   onReply: (msg: GroupedMessage) => void;
@@ -1722,7 +1847,9 @@ function Bubble({
   const translateX = useSharedValue(0);
 
   // Swipe right to reply — drag the bubble, release past the threshold.
+  // Disabled in selection mode (taps toggle selection instead).
   const pan = Gesture.Pan()
+    .enabled(!selectionMode)
     .activeOffsetX(14)
     .failOffsetY([-12, 12])
     .onUpdate((e) => {
@@ -1754,13 +1881,25 @@ function Bubble({
 
   return (
     <GestureDetector gesture={pan}>
-      <View
+      <Pressable
+        onPress={selectionMode ? () => onToggleSelect(msg.id) : undefined}
         style={[
           styles.bubbleRow,
           mine ? styles.bubbleRowMine : styles.bubbleRowTheirs,
           !msg.isLastInGroup && styles.bubbleRowGrouped,
+          selectionMode && styles.bubbleRowSelectable,
+          selected && { backgroundColor: `${colors.primary}14` },
         ]}
       >
+        {selectionMode ? (
+          <View style={styles.selectCheck}>
+            <Ionicons
+              name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+              size={22}
+              color={selected ? colors.primary : colors.textMuted}
+            />
+          </View>
+        ) : null}
         {showAvatar ? (
           msg.isLastInGroup ? (
             <Image
@@ -1783,7 +1922,8 @@ function Bubble({
 
           <Pressable
             ref={bubbleRef}
-            onLongPress={handleLongPress}
+            onLongPress={selectionMode ? undefined : handleLongPress}
+            onPress={selectionMode ? () => onToggleSelect(msg.id) : undefined}
             delayLongPress={260}
             style={[
               styles.bubble,
@@ -1829,7 +1969,7 @@ function Bubble({
             </View>
           ) : null}
         </Animated.View>
-      </View>
+      </Pressable>
     </GestureDetector>
   );
 }
@@ -1846,6 +1986,7 @@ function ReactionMenu({
   onForward,
   onEdit,
   onDelete,
+  onSelect,
   onClose,
 }: {
   target: MenuTarget;
@@ -1857,6 +1998,7 @@ function ReactionMenu({
   onForward: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onSelect: () => void;
   onClose: () => void;
 }) {
   const { colors, isDark } = useTheme();
@@ -1883,9 +2025,15 @@ function ReactionMenu({
   const showForward = true;
   const showCopy = hasText;
   const showEdit = mine && hasText;
+  const showSelect = true;
   const showDelete = true;
   const menuItems =
-    Number(showReply) + Number(showForward) + Number(showCopy) + Number(showEdit) + Number(showDelete);
+    Number(showReply) +
+    Number(showForward) +
+    Number(showCopy) +
+    Number(showEdit) +
+    Number(showSelect) +
+    Number(showDelete);
   const menuH = menuItems * MENU_ITEM_HEIGHT;
   const menuW = 230;
   const barW = CHAT_REACTIONS.length * 46 + 14;
@@ -2006,6 +2154,7 @@ function ReactionMenu({
             { show: showForward, label: t('chat.forward'), icon: 'arrow-redo-outline', onPress: onForward, destructive: false },
             { show: showCopy, label: t('chat.copy'), icon: 'copy-outline', onPress: onCopy, destructive: false },
             { show: showEdit, label: t('chat.edit'), icon: 'create-outline', onPress: onEdit, destructive: false },
+            { show: showSelect, label: t('chat.select'), icon: 'checkmark-circle-outline', onPress: onSelect, destructive: false },
             { show: showDelete, label: t('chat.delete'), icon: 'trash-outline', onPress: onDelete, destructive: true },
           ] as const
         )
@@ -2043,32 +2192,34 @@ function ReactionMenu({
   );
 }
 
-// Confirmation modal for deleting a message — two paths for own messages.
+// Confirmation modal for deleting one or many messages.
+// "Delete for everyone" only shows when ALL targets are own.
 function DeleteMessageModal({
-  target,
+  targets,
   onCancel,
   onConfirm,
 }: {
-  target: Message | null;
+  targets: Message[];
   onCancel: () => void;
   onConfirm: (scope: 'me' | 'all') => void;
 }) {
   const { colors } = useTheme();
-  if (!target) return null;
-  const mine = target.fromMe;
+  if (targets.length === 0) return null;
+  const allMine = targets.every((t) => t.fromMe);
+  const count = targets.length;
+  const title =
+    count > 1 ? t('chat.delete_count_title', { count }) : t('chat.delete_confirm_title');
   return (
-    <Modal transparent animationType="fade" visible={!!target} onRequestClose={onCancel}>
+    <Modal transparent animationType="fade" visible={count > 0} onRequestClose={onCancel}>
       <View style={styles.dimOverlay}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
         <View style={[styles.deleteCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={[styles.deleteIcon, { backgroundColor: `${colors.danger}1F` }]}>
             <Ionicons name="trash-outline" size={22} color={colors.danger} />
           </View>
-          <Text style={[styles.deleteTitle, { color: colors.text }]}>
-            {t('chat.delete_confirm_title')}
-          </Text>
+          <Text style={[styles.deleteTitle, { color: colors.text }]}>{title}</Text>
           <View style={styles.deleteActions}>
-            {mine ? (
+            {allMine ? (
               <Pressable
                 onPress={() => onConfirm('all')}
                 style={({ pressed }) => [
@@ -2113,14 +2264,14 @@ function DeleteMessageModal({
   );
 }
 
-// Sheet to pick a destination chat for a forwarded message.
+// Sheet to pick a destination chat for one or more forwarded messages.
 function ForwardChatPicker({
-  target,
+  targets,
   currentChatId,
   onClose,
   onPick,
 }: {
-  target: Message | null;
+  targets: Message[];
   currentChatId: string;
   onClose: () => void;
   onPick: (chatId: string) => void;
@@ -2128,9 +2279,10 @@ function ForwardChatPicker({
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
+  const count = targets.length;
   useEffect(() => {
-    if (!target) setQuery('');
-  }, [target]);
+    if (count === 0) setQuery('');
+  }, [count]);
 
   const list = CHATS.filter(
     (c) =>
@@ -2140,7 +2292,7 @@ function ForwardChatPicker({
   );
 
   return (
-    <Modal transparent animationType="slide" visible={!!target} onRequestClose={onClose}>
+    <Modal transparent animationType="slide" visible={count > 0} onRequestClose={onClose}>
       <View style={styles.sheetOverlayDark}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <KeyboardAvoidingView behavior="padding">
@@ -2149,9 +2301,16 @@ function ForwardChatPicker({
               <View style={[styles.dragBar, { backgroundColor: colors.border }]} />
             </View>
             <View style={styles.forwardHeader}>
-              <Text style={[styles.forwardTitle, { color: colors.text }]}>
-                {t('chat.forward_title')}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.forwardTitle, { color: colors.text }]}>
+                  {t('chat.forward_title')}
+                </Text>
+                {count > 1 ? (
+                  <Text style={[styles.forwardHint, { color: colors.textSecondary, marginTop: 2 }]}>
+                    {t('chat.selected_count', { count })}
+                  </Text>
+                ) : null}
+              </View>
               <Pressable onPress={onClose} hitSlop={12}>
                 <Ionicons name="close" size={22} color={colors.text} />
               </Pressable>
@@ -2938,4 +3097,25 @@ const styles = StyleSheet.create({
   forwardText: { flex: 1, gap: 2 },
   forwardName: { ...Typography.body, fontSize: 15, fontWeight: '600' },
   forwardHint: { ...Typography.caption },
+
+  // ── Selection mode ──────────────────────────────────────────────────────────
+  bubbleRowSelectable: { paddingLeft: 4, paddingRight: 4, borderRadius: Radii.md },
+  selectCheck: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+
+  // ── Forwarded indicator ─────────────────────────────────────────────────────
+  forwardedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginBottom: 2,
+  },
+  forwardedText: {
+    ...Typography.micro,
+    fontStyle: 'italic',
+  },
 });

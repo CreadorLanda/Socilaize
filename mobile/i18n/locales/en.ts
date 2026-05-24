@@ -244,6 +244,10 @@ export default {
     forward_title: 'Forward to…',
     forward_search: 'Search chats',
     forward_sent: 'Forwarded to {{name}}',
+    forwarded: 'Forwarded',
+    select: 'Select',
+    selected_count: '{{count}} selected',
+    delete_count_title: 'Delete {{count}} messages?',
   },
   group: {
     settings_title: 'Group settings',

@@ -231,6 +231,8 @@ export type Message = {
   mentions?: string[];
   /** Origin of the message — 'whatsapp' for messages received via the bridge. */
   source?: 'native' | 'whatsapp';
+  /** True for messages that were forwarded from somewhere else. */
+  forwarded?: boolean;
 };
 
 export type GroupMember = {
