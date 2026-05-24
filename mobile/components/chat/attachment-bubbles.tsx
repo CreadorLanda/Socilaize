@@ -58,6 +58,7 @@ export function AttachmentBubble({
   }
 
   if (attachment.kind === 'location') {
+    const isLive = !!attachment.live;
     return (
       <View style={styles.card}>
         <View style={[styles.map, { backgroundColor: mine ? 'rgba(255,255,255,0.14)' : colors.surfaceMuted }]}>
@@ -68,6 +69,12 @@ export function AttachmentBubble({
           <View style={styles.pinWrap}>
             <Ionicons name="location" size={34} color="#EF4444" />
           </View>
+          {isLive ? (
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveBadgeText}>AO VIVO</Text>
+            </View>
+          ) : null}
         </View>
         <View style={styles.locText}>
           <Text style={[styles.locPlace, { color: tint }]} numberOfLines={1}>
@@ -77,6 +84,21 @@ export function AttachmentBubble({
             {attachment.address}
           </Text>
         </View>
+      </View>
+    );
+  }
+
+  if (attachment.kind === 'sticker') {
+    const w = attachment.width ?? 160;
+    const h = attachment.height ?? 160;
+    return (
+      <View style={styles.stickerWrap}>
+        <Image
+          source={{ uri: attachment.uri }}
+          style={[styles.sticker, { width: w, height: h }]}
+          contentFit="contain"
+          transition={120}
+        />
       </View>
     );
   }
@@ -288,6 +310,25 @@ const styles = StyleSheet.create({
   locText: { gap: 2, paddingHorizontal: 2 },
   locPlace: { ...Typography.caption, fontWeight: '700' },
   locAddress: { ...Typography.micro, lineHeight: 15 },
+  liveBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: Radii.pill,
+  },
+  liveDot: { width: 6, height: 6, borderRadius: Radii.pill, backgroundColor: '#FFFFFF' },
+  liveBadgeText: { ...Typography.micro, color: '#FFFFFF', fontWeight: '700', letterSpacing: 0.5 },
+
+  // Sticker — sits inside the bubble with transparent background; the bubble
+  // wrapping is invisible because we strip its padding/bg in Bubble itself.
+  stickerWrap: { alignItems: 'flex-start' },
+  sticker: { backgroundColor: 'transparent' },
 
   // Contact
   contactRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: 2 },

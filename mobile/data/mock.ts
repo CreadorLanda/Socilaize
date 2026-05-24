@@ -18,6 +18,10 @@ export type ChatPreview = {
   memberCount?: number;
   /** True for the Dandara AI assistant chat. */
   isAI?: boolean;
+  /** Where this chat lives — 'whatsapp' for bridged chats. */
+  source?: 'native' | 'whatsapp';
+  /** WhatsApp JID for bridged chats (only meaningful when source='whatsapp'). */
+  bridgeJid?: string;
 };
 
 /** The Dandara AI assistant — her own chat plus an in-chat helper. */
@@ -123,6 +127,33 @@ export const CHATS: ChatPreview[] = [
     isGroup: true,
     memberCount: 6,
   },
+  // ── WhatsApp bridge examples (source='whatsapp') ─────────────────────────
+  {
+    id: 'wa1',
+    name: 'Maria Costa',
+    username: '+351 912 000 111',
+    avatarUri: dicebear('avataaars', 'Maria Costa', '25D366'),
+    lastMessage: 'Já estou a caminho 🚗',
+    timestamp: '11:24',
+    unreadCount: 2,
+    online: true,
+    source: 'whatsapp',
+    bridgeJid: '351912000111@s.whatsapp.net',
+  },
+  {
+    id: 'wag1',
+    name: 'Família',
+    username: 'WhatsApp Group',
+    avatarUri: dicebear('initials', 'Família', '25D366'),
+    lastMessage: '@alex anda cá ver isto',
+    timestamp: '10:51',
+    unreadCount: 5,
+    online: false,
+    isGroup: true,
+    memberCount: 8,
+    source: 'whatsapp',
+    bridgeJid: '120363025@g.us',
+  },
 ];
 
 export type MediaAttachment = {
@@ -134,8 +165,23 @@ export type MediaAttachment = {
 /** Rich attachments composed from the chat attachment menu. */
 export type MessageAttachment =
   | { kind: 'document'; name: string; ext: string; sizeLabel: string }
-  | { kind: 'location'; place: string; address: string }
+  | {
+      kind: 'location';
+      place: string;
+      address: string;
+      /** Live (continuously updated) location — shows a pulsing dot and expiry countdown. */
+      live?: boolean;
+      /** ISO timestamp when the live share expires (only meaningful when live=true). */
+      expiresAt?: string;
+    }
   | { kind: 'contact'; name: string; detail: string; avatarUri?: string }
+  | {
+      kind: 'sticker';
+      uri: string;
+      animated?: boolean;
+      width?: number;
+      height?: number;
+    }
   | {
       kind: 'poll';
       question: string;
@@ -171,6 +217,20 @@ export type Message = {
   attachment?: MessageAttachment;
   /** True for messages authored by the Dandara AI assistant. */
   isAI?: boolean;
+  /** True if the message text has been edited after sending. */
+  edited?: boolean;
+  /** When set, the message is rendered as a "this message was deleted" placeholder. */
+  deletedAt?: string;
+  /** When true, the message content is consumed on first view (WhatsApp view-once). */
+  viewOnce?: boolean;
+  /** True once a view-once message has been opened locally. */
+  viewed?: boolean;
+  /** Disappearing message — ISO timestamp when it should self-delete. */
+  expiresAt?: string;
+  /** Usernames mentioned in the text (without @). Used for inline highlighting. */
+  mentions?: string[];
+  /** Origin of the message — 'whatsapp' for messages received via the bridge. */
+  source?: 'native' | 'whatsapp';
 };
 
 export type GroupMember = {
@@ -245,6 +305,130 @@ export const MESSAGES: Record<string, Message[]> = {
     { id: 'm12', text: 'adding a couple of new builders to the group today', fromMe: false, timestamp: '08:50', historical: true, senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
     { id: 'm13', text: 'You joined the group', fromMe: false, timestamp: '08:54', system: true },
     { id: 'm14', text: 'Welcome aboard — scroll up to catch the thread.', fromMe: false, timestamp: '08:55', senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
+  ],
+
+  // ── WhatsApp 1:1 (bridged) ─────────────────────────────────────────────
+  wa1: [
+    {
+      id: 'wm1',
+      text: 'Olá! Estamos a marcar para sábado?',
+      fromMe: false,
+      timestamp: '10:30',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+    },
+    {
+      id: 'wm2',
+      text: 'Sim, combinado! Onde nos encontramos?',
+      fromMe: true,
+      timestamp: '10:32',
+      status: 'read',
+      source: 'whatsapp',
+      edited: true,
+    },
+    {
+      id: 'wm3',
+      text: '',
+      fromMe: false,
+      timestamp: '10:35',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+      attachment: {
+        kind: 'sticker',
+        uri: dicebear('shapes', 'sticker-wave', 'transparent'),
+        width: 160,
+        height: 160,
+      },
+    },
+    {
+      id: 'wm4',
+      text: 'Mensagem apagada',
+      fromMe: false,
+      timestamp: '10:40',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+      deletedAt: '2026-05-24T10:42:00Z',
+    },
+    {
+      id: 'wm5',
+      text: 'Vê esta foto, só por um instante',
+      fromMe: false,
+      timestamp: '10:45',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+      viewOnce: true,
+      media: { type: 'image', uri: dicebear('shapes', 'view-once-photo', 'FF6F61') },
+    },
+    {
+      id: 'wm6',
+      text: 'Combinado, esta mensagem desaparece em 24h',
+      fromMe: true,
+      timestamp: '10:50',
+      status: 'read',
+      source: 'whatsapp',
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    },
+    {
+      id: 'wm7',
+      text: '',
+      fromMe: false,
+      timestamp: '11:20',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+      attachment: {
+        kind: 'location',
+        place: 'A minha localização',
+        address: 'Avenida da Liberdade, Lisboa',
+        live: true,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
+    },
+    {
+      id: 'wm8',
+      text: 'Já estou a caminho 🚗',
+      fromMe: false,
+      timestamp: '11:24',
+      source: 'whatsapp',
+      senderName: 'Maria Costa',
+    },
+  ],
+
+  // ── WhatsApp group (bridged) ───────────────────────────────────────────
+  wag1: [
+    {
+      id: 'gm1',
+      text: 'Bom dia família ☀️',
+      fromMe: false,
+      timestamp: '08:14',
+      source: 'whatsapp',
+      senderName: 'Mãe',
+      senderAvatarUri: dicebear('avataaars', 'Mae', 'F472B6'),
+    },
+    {
+      id: 'gm2',
+      text: '@alex anda cá ver isto',
+      fromMe: false,
+      timestamp: '10:51',
+      source: 'whatsapp',
+      senderName: 'Tio Zé',
+      senderAvatarUri: dicebear('avataaars', 'Tio Ze', '60A5FA'),
+      mentions: ['alex'],
+    },
+    {
+      id: 'gm3',
+      text: '',
+      fromMe: false,
+      timestamp: '10:52',
+      source: 'whatsapp',
+      senderName: 'Tio Zé',
+      senderAvatarUri: dicebear('avataaars', 'Tio Ze', '60A5FA'),
+      attachment: {
+        kind: 'sticker',
+        uri: dicebear('shapes', 'sticker-thumbsup', 'transparent'),
+        width: 160,
+        height: 160,
+      },
+    },
   ],
 };
 

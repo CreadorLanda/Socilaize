@@ -191,6 +191,7 @@ export default function ChatScreen() {
 
   const isGroup = !!chat?.isGroup;
   const isAIChat = !!chat?.isAI;
+  const isWAChat = chat?.source === 'whatsapp';
   const group = useGroup(isGroup ? id : undefined);
 
   // Apply the group's history settings: hide pre-join messages when history is
@@ -498,13 +499,15 @@ export default function ChatScreen() {
 
   // One-line preview for a quoted/replied message.
   const replySnippet = (m: Message): string => {
+    if (m.deletedAt) return t(m.fromMe ? 'chat.deleted_self' : 'chat.deleted_other');
     if (m.attachment) {
-      const k = m.attachment.kind;
-      if (k === 'document') return t('chat.attach_document');
-      if (k === 'location') return t('chat.attach_location');
-      if (k === 'contact') return t('chat.attach_contact');
-      if (k === 'poll') return t('chat.poll_label');
-      if (k === 'event') return t('chat.event_label');
+      const a = m.attachment;
+      if (a.kind === 'document') return t('chat.attach_document');
+      if (a.kind === 'location') return a.live ? t('chat.live_location') : t('chat.attach_location');
+      if (a.kind === 'contact') return t('chat.attach_contact');
+      if (a.kind === 'sticker') return t('chat.sticker');
+      if (a.kind === 'poll') return t('chat.poll_label');
+      if (a.kind === 'event') return t('chat.event_label');
       return t('chat.game_invite');
     }
     if (m.media) {
@@ -515,11 +518,13 @@ export default function ChatScreen() {
 
   // Icon shown next to a quoted/replied message preview.
   const replyIcon = (m: Message): keyof typeof Ionicons.glyphMap | undefined => {
+    if (m.deletedAt) return 'ban-outline';
     if (m.attachment) {
       const k = m.attachment.kind;
       if (k === 'document') return 'document-text';
       if (k === 'location') return 'location';
       if (k === 'contact') return 'person';
+      if (k === 'sticker') return 'happy';
       if (k === 'poll') return 'stats-chart';
       if (k === 'event') return 'calendar';
       return 'game-controller';
@@ -592,6 +597,12 @@ export default function ChatScreen() {
         return { ...m, attachment: { ...att, options } };
       }),
     );
+  };
+
+  // Mark a view-once message as opened. On a real backend this would also
+  // fire an event to the bridge so the sender sees "Opened".
+  const handleViewOnce = (msgId: string) => {
+    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, viewed: true } : m)));
   };
 
   const hasDraft = draft.trim().length > 0;
@@ -677,15 +688,22 @@ export default function ChatScreen() {
               <Text style={[styles.peerName, { color: colors.text }]} numberOfLines={1}>
                 {chat.name}
               </Text>
-              <Text style={[styles.peerStatus, { color: colors.textSecondary }]} numberOfLines={1}>
-                {isAIChat
-                  ? t('chat.ai_subtitle')
-                  : isGroup
-                    ? t('group.members_count', { count: memberCount })
-                    : chat.online
-                      ? t('chats.online')
-                      : t('chats.last_seen')}
-              </Text>
+              <View style={styles.peerStatusRow}>
+                {isWAChat ? <Ionicons name="logo-whatsapp" size={11} color="#25D366" /> : null}
+                <Text style={[styles.peerStatus, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {isWAChat
+                    ? isGroup
+                      ? t('chat.wa_group_subtitle', { count: memberCount })
+                      : t('chat.wa_subtitle')
+                    : isAIChat
+                      ? t('chat.ai_subtitle')
+                      : isGroup
+                        ? t('group.members_count', { count: memberCount })
+                        : chat.online
+                          ? t('chats.online')
+                          : t('chats.last_seen')}
+                </Text>
+              </View>
             </View>
           </Pressable>
 
@@ -753,6 +771,7 @@ export default function ChatScreen() {
                   onReact={handleReact}
                   onReply={replyFromSwipe}
                   onVote={handleVote}
+                  onViewOnce={handleViewOnce}
                 />
               )
             }
@@ -777,12 +796,16 @@ export default function ChatScreen() {
                   )}
                   <View style={[styles.e2eNotice, { backgroundColor: colors.surface }]}>
                     <Ionicons
-                      name={isAIChat ? 'sparkles' : 'lock-closed'}
+                      name={isAIChat ? 'sparkles' : isWAChat ? 'logo-whatsapp' : 'lock-closed'}
                       size={11}
-                      color={colors.textSecondary}
+                      color={isWAChat ? '#25D366' : colors.textSecondary}
                     />
                     <Text style={[styles.e2eNoticeText, { color: colors.textSecondary }]}>
-                      {isAIChat ? t('chat.ai_disclaimer') : t('chat.encrypted_notice')}
+                      {isAIChat
+                        ? t('chat.ai_disclaimer')
+                        : isWAChat
+                          ? t('chat.wa_bridge_notice')
+                          : t('chat.encrypted_notice')}
                     </Text>
                   </View>
                 </View>
@@ -1027,31 +1050,71 @@ function HistoryBanner({
 function HighlightedText({
   text,
   query,
+  mentions,
   style,
   highlight,
+  mentionColor,
 }: {
   text: string;
   query: string;
+  mentions?: string[];
   style: StyleProp<TextStyle>;
   highlight: string;
+  mentionColor?: string;
 }) {
-  if (!query) return <Text style={style}>{text}</Text>;
-  const lower = text.toLowerCase();
-  const q = query.toLowerCase();
-  const parts: { text: string; match: boolean }[] = [];
-  let from = 0;
-  let idx = lower.indexOf(q, from);
-  while (idx !== -1) {
-    if (idx > from) parts.push({ text: text.slice(from, idx), match: false });
-    parts.push({ text: text.slice(idx, idx + q.length), match: true });
-    from = idx + q.length;
-    idx = lower.indexOf(q, from);
+  const q = (query ?? '').trim().toLowerCase();
+  const hasMentions = !!mentions && mentions.length > 0;
+  if (!q && !hasMentions) return <Text style={style}>{text}</Text>;
+
+  // 1) Split by mentions first so each "@user" is its own segment we won't recolor.
+  const mentionRe = hasMentions ? new RegExp(`@(?:${mentions!.join('|')})\\b`, 'gi') : null;
+  type Tok = { text: string; mention?: boolean };
+  const tokens: Tok[] = [];
+  if (mentionRe) {
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = mentionRe.exec(text)) !== null) {
+      if (m.index > last) tokens.push({ text: text.slice(last, m.index) });
+      tokens.push({ text: m[0], mention: true });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) tokens.push({ text: text.slice(last) });
+  } else {
+    tokens.push({ text });
   }
-  if (from < text.length) parts.push({ text: text.slice(from), match: false });
+
+  // 2) Within plain tokens, split by search-query matches.
+  type Part = { text: string; kind: 'plain' | 'match' | 'mention' };
+  const parts: Part[] = [];
+  for (const tok of tokens) {
+    if (tok.mention) {
+      parts.push({ text: tok.text, kind: 'mention' });
+      continue;
+    }
+    if (!q) {
+      parts.push({ text: tok.text, kind: 'plain' });
+      continue;
+    }
+    const lower = tok.text.toLowerCase();
+    let last = 0;
+    let i = lower.indexOf(q, last);
+    while (i !== -1) {
+      if (i > last) parts.push({ text: tok.text.slice(last, i), kind: 'plain' });
+      parts.push({ text: tok.text.slice(i, i + q.length), kind: 'match' });
+      last = i + q.length;
+      i = lower.indexOf(q, last);
+    }
+    if (last < tok.text.length) parts.push({ text: tok.text.slice(last), kind: 'plain' });
+  }
+
   return (
     <Text style={style}>
       {parts.map((p, i) =>
-        p.match ? (
+        p.kind === 'mention' ? (
+          <Text key={i} style={{ color: mentionColor, fontWeight: '700' }}>
+            {p.text}
+          </Text>
+        ) : p.kind === 'match' ? (
           <Text key={i} style={{ backgroundColor: highlight, fontWeight: '700' }}>
             {p.text}
           </Text>
@@ -1063,11 +1126,34 @@ function HighlightedText({
   );
 }
 
+// Short remaining-time label for ephemeral / live-location countdowns.
+function relativeRemaining(iso?: string): string | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return '0m';
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 function MetaRow({ msg, onMedia }: { msg: GroupedMessage; onMedia?: boolean }) {
   const { colors } = useTheme();
   const mine = msg.fromMe;
+  const dim = onMedia ? '#FFFFFF' : mine ? 'rgba(255,255,255,0.78)' : colors.textMuted;
+  const ttl = relativeRemaining(msg.expiresAt);
   return (
     <View style={[styles.metaRow, onMedia && styles.metaOverlay]}>
+      {msg.edited ? (
+        <Text style={[styles.metaTime, { color: dim }]}>{t('chat.edited')} ·</Text>
+      ) : null}
+      {ttl ? (
+        <View style={styles.metaInline}>
+          <Ionicons name="timer-outline" size={11} color={dim} />
+          <Text style={[styles.metaTime, { color: dim }]}>{ttl}</Text>
+        </View>
+      ) : null}
       <Text
         style={[
           styles.metaTime,
@@ -1373,12 +1459,14 @@ function BubbleBody({
   isGroup,
   query,
   onVote,
+  onViewOnce,
 }: {
   msg: GroupedMessage;
   mine: boolean;
   isGroup: boolean;
   query: string;
   onVote?: (optionId: string) => void;
+  onViewOnce?: (msgId: string) => void;
 }) {
   const { colors } = useTheme();
   const isAudio = msg.media?.type === 'audio';
@@ -1387,6 +1475,46 @@ function BubbleBody({
   const hasText = msg.text.trim().length > 0;
   const mediaOnly = isVisualMedia && !hasText;
   const showSender = (isGroup || !!msg.isAI) && !mine && msg.isFirstInGroup && !!msg.senderName;
+
+  // Deleted message → italic placeholder, no reactions, no swipe-reply target.
+  if (msg.deletedAt) {
+    const dim = mine ? 'rgba(255,255,255,0.75)' : colors.textMuted;
+    return (
+      <View style={styles.deletedRow}>
+        <Ionicons name="ban-outline" size={14} color={dim} />
+        <Text style={[styles.deletedText, { color: dim }]}>
+          {mine ? t('chat.deleted_self') : t('chat.deleted_other')}
+        </Text>
+        <MetaRow msg={msg} />
+      </View>
+    );
+  }
+
+  // View-once gate — until tapped, show sealed UI.
+  if (msg.viewOnce && !msg.viewed) {
+    const accent = mine ? colors.onPrimary : colors.primary;
+    return (
+      <Pressable
+        onPress={onViewOnce ? () => onViewOnce(msg.id) : undefined}
+        style={styles.viewOnceRow}
+        accessibilityRole="button"
+        accessibilityLabel={t('chat.view_once_tap')}
+      >
+        <View style={[styles.viewOnceIcon, { borderColor: accent }]}>
+          <Ionicons name="eye-outline" size={18} color={accent} />
+        </View>
+        <View style={styles.viewOnceText}>
+          <Text style={[styles.viewOnceTitle, { color: mine ? colors.onPrimary : colors.text }]}>
+            {t('chat.view_once')}
+          </Text>
+          <Text style={[styles.viewOnceHint, { color: mine ? 'rgba(255,255,255,0.75)' : colors.textSecondary }]}>
+            {t('chat.view_once_tap')}
+          </Text>
+        </View>
+        <MetaRow msg={msg} />
+      </Pressable>
+    );
+  }
 
   return (
     <>
@@ -1448,7 +1576,9 @@ function BubbleBody({
           <HighlightedText
             text={msg.text}
             query={query}
+            mentions={msg.mentions}
             highlight={colors.warning}
+            mentionColor={mine ? colors.onPrimary : colors.primary}
             style={[styles.bubbleText, { color: mine ? colors.onPrimary : colors.text }]}
           />
           <MetaRow msg={msg} />
@@ -1471,6 +1601,7 @@ function Bubble({
   onReact,
   onReply,
   onVote,
+  onViewOnce,
 }: {
   msg: GroupedMessage;
   isGroup: boolean;
@@ -1480,6 +1611,7 @@ function Bubble({
   onReact: (msgId: string, emoji: string) => void;
   onReply: (msg: GroupedMessage) => void;
   onVote: (msgId: string, optionId: string) => void;
+  onViewOnce: (msgId: string) => void;
 }) {
   const { colors } = useTheme();
   const mine = msg.fromMe;
@@ -1567,6 +1699,7 @@ function Bubble({
               isGroup={isGroup}
               query={query}
               onVote={(optId) => onVote(msg.id, optId)}
+              onViewOnce={onViewOnce}
             />
           </Pressable>
 
@@ -1833,7 +1966,8 @@ const styles = StyleSheet.create({
   },
   peerInfo: { flex: 1 },
   peerName: { ...Typography.bodyStrong, fontSize: 16 },
-  peerStatus: { ...Typography.caption, marginTop: 1 },
+  peerStatus: { ...Typography.caption },
+  peerStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
   headerActions: { flexDirection: 'row', gap: 2 },
 
   searchField: {
@@ -2087,6 +2221,36 @@ const styles = StyleSheet.create({
     gap: 3,
     marginTop: 2,
   },
+  metaInline: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+
+  // Deleted message placeholder.
+  deletedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  deletedText: { ...Typography.caption, fontStyle: 'italic', flexShrink: 1 },
+
+  // View-once sealed UI.
+  viewOnceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: 4,
+    minWidth: 200,
+  },
+  viewOnceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewOnceText: { flex: 1, gap: 1 },
+  viewOnceTitle: { ...Typography.caption, fontWeight: '700' },
+  viewOnceHint: { ...Typography.micro },
   metaOverlay: {
     position: 'absolute',
     right: 10,
