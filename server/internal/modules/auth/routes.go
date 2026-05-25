@@ -8,4 +8,5 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	g.POST("/start", c.PostStart)
 	g.POST("/verify", c.PostVerify)
 	g.POST("/refresh", c.PostRefresh)
+	g.POST("/logout", c.PostLogout)
 }

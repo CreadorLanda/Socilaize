@@ -1,12 +1,14 @@
 import { DarkTheme, DefaultTheme, ThemeProvider, type Theme } from '@react-navigation/native';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
 import { Colors } from '@/constants/theme';
+import { bootstrapAuth } from '@/data/auth-store';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
@@ -17,6 +19,23 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const palette = Colors[isDark ? 'dark' : 'light'];
+  // Restore the persisted session before the first navigation. We always
+  // render the Stack (so the navigator is mounted and router.replace works),
+  // but cover it with a splash backstop until boot resolves — this hides the
+  // brief onboarding flash that returning users would otherwise see.
+  const [booted, setBooted] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    bootstrapAuth().then((user) => {
+      if (!mounted) return;
+      if (user) router.replace('/(tabs)');
+      setBooted(true);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Bind the navigation theme to the app palette so every scene's container is
   // an opaque app colour. The default RN themes paint scenes white/black, which
@@ -53,7 +72,9 @@ export default function RootLayout() {
             <Stack.Screen name="auth" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-info/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="channel-info/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
             <Stack.Screen name="calls" options={{ headerShown: false }} />
@@ -84,6 +105,19 @@ export default function RootLayout() {
             />
             <Stack.Screen name="modal" options={{ presentation: 'modal', headerShown: false }} />
           </Stack>
+          {!booted ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: palette.background,
+              }}
+            />
+          ) : null}
         </View>
         <StatusBar style="auto" />
       </ThemeProvider>

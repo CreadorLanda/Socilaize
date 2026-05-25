@@ -11,6 +11,8 @@ import { PrimaryButton } from '@/components/ui/primary-button';
 import { StepHeader } from '@/components/ui/step-header';
 import { TextField } from '@/components/ui/text-field';
 import { Palette, Radii, Spacing } from '@/constants/theme';
+import { patchMe } from '@/data/api/users';
+import { setUser } from '@/data/auth-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
@@ -21,6 +23,7 @@ export default function ProfileScreen() {
   const { data, set } = useRegistration();
   const [name, setName] = useState(data.displayName);
   const [avatar, setAvatar] = useState<string | null>(data.avatarUri);
+  const [busy, setBusy] = useState(false);
   const { colors } = useTheme();
 
   const isValid = useMemo(() => name.trim().length >= 2, [name]);
@@ -29,9 +32,21 @@ export default function ProfileScreen() {
     setAvatar((curr) => (curr ? null : 'local:alex'));
   };
 
-  const handleContinue = () => {
-    set('displayName', name.trim());
+  const handleContinue = async () => {
+    const display = name.trim();
+    set('displayName', display);
     set('avatarUri', avatar);
+    setBusy(true);
+    try {
+      // Send the chosen display name to the server. Avatar URI stays local
+      // for now — real upload lands with the media module.
+      const updated = await patchMe({ display_name: display });
+      await setUser(updated);
+    } catch {
+      // Non-fatal — the user can edit later from Settings. Move on.
+    } finally {
+      setBusy(false);
+    }
     router.push('/auth/username');
   };
 
@@ -90,7 +105,11 @@ export default function ProfileScreen() {
 
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
         <View style={styles.footer}>
-          <PrimaryButton label={t('auth.continue')} onPress={handleContinue} disabled={!isValid} />
+          <PrimaryButton
+            label={busy ? t('auth.saving') : t('auth.continue')}
+            onPress={handleContinue}
+            disabled={!isValid || busy}
+          />
         </View>
       </KeyboardStickyView>
     </SafeAreaView>

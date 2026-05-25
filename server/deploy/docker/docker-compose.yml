@@ -4,7 +4,7 @@
 #
 #   1) Hybrid (recommended): Postgres on Supabase, everything else local.
 #        docker compose up -d redis              # just Redis
-#        docker compose --profile bridge up -d   # + mautrix sidecar
+#        docker compose --profile bridge up -d   # + Baileys sidecar
 #
 #   2) Fully local (offline dev): also runs Postgres locally.
 #        docker compose --profile local-pg up -d
@@ -47,19 +47,31 @@ services:
       timeout: 3s
       retries: 10
 
-  # Opt-in: the WhatsApp bridge sidecar (one process per linked user is
-  # spawned by mautrix itself once the API requests a link).
-  # See docs/tech/whatsapp-bridge.md for the link flow.
-  mautrix:
-    image: dock.mau.dev/mautrix/whatsapp:latest
+  # WhatsApp bridge sidecar — Baileys wrapped in a small HTTP service.
+  # The Go API talks to it on port 3001; the sidecar webhooks back into
+  # the Go API on connection events. Persists per-user creds on a docker
+  # volume so retries reuse the same identity (same key trick as Baileys'
+  # useMultiFileAuthState).
+  wa-bridge:
     profiles: ["bridge"]
+    build:
+      context: ../../wa-bridge
     restart: unless-stopped
+    ports:
+      - "3001:3001"
     volumes:
-      - mautrix-data:/data
+      - wa-bridge-auth:/app/auth_info
     environment:
-      MAUTRIX_LOG_LEVEL: info
+      PORT: 3001
+      # Both of these must match what the Go API uses.
+      SOCIALIZE_INTERNAL_TOKEN: ${SOCIALIZE_INTERNAL_TOKEN:?missing SOCIALIZE_INTERNAL_TOKEN}
+      SOCIALIZE_WEBHOOK_URL: ${SOCIALIZE_WEBHOOK_URL:-http://host.docker.internal:8080/api/internal/wa/events}
+      LOG_LEVEL: info
+    extra_hosts:
+      # Lets the sidecar reach the Go API running on the host (dev only).
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres-data:
   redis-data:
-  mautrix-data:
+  wa-bridge-auth:

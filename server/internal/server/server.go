@@ -16,6 +16,8 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/auth"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/bridges/whatsapp"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 	rdplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/redis"
 )
@@ -27,6 +29,7 @@ type Server struct {
 	router http.Handler
 	pg     *pgxpool.Pool
 	rdb    *redis.Client
+	wa     *whatsapp.Manager
 }
 
 // New constructs the Server: opens the platform connections, builds each
@@ -55,23 +58,51 @@ func New(cfg config.Config) (*Server, error) {
 	// Health is mounted on /api so a single load-balancer rule covers it.
 	health.New(pg, rdb).Register(api)
 
-	// Auth
+	// Public routes (no auth required).
 	authRepo := auth.NewRepository(pg)
 	authSvc := auth.NewService(authRepo, rdb, cfg.JWT)
 	authCtl := auth.NewController(authSvc, cfg)
 	auth.Register(api, authCtl)
 
-	// WhatsApp bridge (skeleton)
-	waSvc := whatsapp.NewService(pg, rdb)
-	whatsapp.Register(api, whatsapp.NewController(waSvc))
+	// Protected routes — every endpoint past this point needs a valid
+	// access token. Mounted as a sub-group so /auth/* stays open.
+	authed := api.Group("")
+	authed.Use(middleware.Auth([]byte(cfg.JWT.Secret)))
 
-	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb}, nil
+	usersRepo := users.NewRepository(pg)
+	usersCtl := users.NewController(users.NewService(usersRepo))
+	users.Register(authed, usersCtl)
+
+	// Pre-key bundles for X3DH. Reuses the users repository to resolve
+	// /by-username/:handle lookups.
+	keysCtl := keys.NewController(keys.NewService(keys.NewRepository(pg), usersRepo))
+	keys.Register(authed, keysCtl)
+
+	// WhatsApp bridge — thin HTTP client to the Baileys sidecar. The
+	// sidecar (server/wa-bridge) owns the WhatsApp WebSocket and creds;
+	// we only orchestrate from Go. Webhook events flow back via the
+	// internal route below, guarded by the shared internal token.
+	waRepo := whatsapp.NewRepository(pg)
+	waMgr := whatsapp.NewManager(cfg.WA.BridgeURL, cfg.WA.InternalToken)
+	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr))
+	whatsapp.Register(authed, waCtl)
+
+	// Inbound bridge webhook. Mounted OUTSIDE the authed group because it
+	// uses its own Bearer-token check against the shared internal token,
+	// not the user-facing JWT auth.
+	waWebhook := whatsapp.NewWebhookController(waRepo, cfg.WA.InternalToken)
+	api.POST("/internal/wa/events", waWebhook.PostEvent)
+
+	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.router }
 
 // Close releases platform connections. Safe to call after Shutdown.
 func (s *Server) Close() {
+	if s.wa != nil {
+		s.wa.Close()
+	}
 	if s.rdb != nil {
 		_ = s.rdb.Close()
 	}

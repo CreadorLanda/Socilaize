@@ -269,7 +269,7 @@ export default function ChannelScreen() {
           <Ionicons name="chevron-back" size={22} color={colors.text} />
         </Pressable>
         <Pressable
-          onPress={() => setShowInfo(true)}
+          onPress={() => router.push(`/channel-info/${channel.id}`)}
           style={({ pressed }) => [styles.headerInfo, pressed && { opacity: 0.7 }]}
           accessibilityRole="button"
           accessibilityLabel={t('channel.info_title')}

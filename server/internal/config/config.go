@@ -15,6 +15,20 @@ type Config struct {
 	Postgres PostgresConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
+	WA       WAConfig
+}
+
+// WAConfig wires the WhatsApp bridge sidecar (Baileys). The Go API only
+// talks to it via HTTP; this is the only place that needs to know the URL.
+type WAConfig struct {
+	// URL of the wa-bridge sidecar, e.g. http://wa-bridge:3001 in compose
+	// or http://localhost:3001 in dev. If empty, the bridge is disabled
+	// and /api/bridges/whatsapp/* returns 503.
+	BridgeURL string
+	// Shared bearer token. Both the Go API (when calling the sidecar) and
+	// the sidecar (when posting back webhooks) check this. Minimum 32
+	// bytes; mint with `openssl rand -hex 32`.
+	InternalToken string
 }
 
 type HTTPConfig struct {
@@ -51,6 +65,10 @@ func Load() (Config, error) {
 			Secret:          os.Getenv("JWT_SECRET"),
 			AccessTokenTTL:  getenvDuration("JWT_ACCESS_TTL", 15*time.Minute),
 			RefreshTokenTTL: getenvDuration("JWT_REFRESH_TTL", 30*24*time.Hour),
+		},
+		WA: WAConfig{
+			BridgeURL:     os.Getenv("WA_BRIDGE_URL"),
+			InternalToken: os.Getenv("SOCIALIZE_INTERNAL_TOKEN"),
 		},
 	}
 

@@ -36,8 +36,8 @@ docker-up: ## Start Redis locally (use Supabase for Postgres).
 docker-up-local: ## Start Redis + a local Postgres (fully offline dev).
 	docker compose -f deploy/docker/docker-compose.yml --profile local-pg up -d
 
-docker-bridge: ## Start the mautrix-whatsapp sidecar.
-	docker compose -f deploy/docker/docker-compose.yml --profile bridge up -d mautrix
+docker-bridge: ## Start the Baileys wa-bridge sidecar.
+	docker compose -f deploy/docker/docker-compose.yml --profile bridge up -d --build wa-bridge
 
 docker-down: ## Stop the local stack.
 	docker compose -f deploy/docker/docker-compose.yml --profile local-pg --profile bridge down

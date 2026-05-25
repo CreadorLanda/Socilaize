@@ -458,6 +458,10 @@ function ChatRow({ chat }: { chat: ChatPreview }) {
           <View style={[styles.groupBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
             <Ionicons name="sparkles" size={10} color={colors.onPrimary} />
           </View>
+        ) : chat.source === 'whatsapp' ? (
+          <View style={[styles.groupBadge, { backgroundColor: '#25D366', borderColor: colors.background }]}>
+            <Ionicons name="logo-whatsapp" size={11} color="#FFFFFF" />
+          </View>
         ) : chat.isGroup ? (
           <View style={[styles.groupBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
             <Ionicons name="people" size={11} color={colors.onPrimary} />

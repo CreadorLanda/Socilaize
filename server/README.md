@@ -77,16 +77,27 @@ curl -s -X POST localhost:8080/api/auth/verify \
 
 ## Implemented vs skeleton
 
-| Route                         | State                              | Lands in branch                 |
-|-------------------------------|------------------------------------|---------------------------------|
-| `GET /api/healthz`            | ✅ live                             | `backend/dev` (this)            |
-| `GET /api/readyz`             | ✅ live (pings pg + redis)          | `backend/dev`                   |
-| `POST /api/auth/start`        | ✅ happy-path skeleton              | `backend/auth` (full impl)      |
-| `POST /api/auth/verify`       | ✅ happy-path skeleton              | `backend/auth`                  |
-| `POST /api/auth/refresh`      | ⛔ 501 — to do                      | `backend/auth`                  |
-| `POST /api/bridges/whatsapp/link`   | ⛔ 501                       | `backend/bridge-whatsapp`       |
-| `DELETE /api/bridges/whatsapp/link` | ⛔ 501                       | `backend/bridge-whatsapp`       |
-| `GET /api/bridges/whatsapp/status`  | ⛔ 501                       | `backend/bridge-whatsapp`       |
+| Route                                    | Auth     | State                              |
+|------------------------------------------|----------|------------------------------------|
+| `GET  /api/healthz`                      | public   | ✅                                  |
+| `GET  /api/readyz`                       | public   | ✅ (pings pg + redis)               |
+| `POST /api/auth/start`                   | public   | ✅ OTP via Redis (5 min TTL)        |
+| `POST /api/auth/verify`                  | public   | ✅ creates user + issues JWT pair   |
+| `POST /api/auth/refresh`                 | public   | ✅ family rotation + replay detection |
+| `POST /api/auth/logout`                  | public   | ✅ revokes the refresh-token family |
+| `GET  /api/users/me`                     | required | ✅                                  |
+| `PATCH /api/users/me`                    | required | ✅ partial updates (username, name, bio, avatar, privacy) |
+| `GET  /api/users/availability?username=` | required | ✅ validates + checks uniqueness    |
+| `GET  /api/users/by-username/:username`  | required | ✅ honours username_public          |
+| `PUT  /api/users/me/keys`                | required | ✅ identity + signed + OTK upload   |
+| `GET  /api/users/me/keys/count`          | required | ✅ OTK reservoir gauge              |
+| `GET  /api/users/by-username/:username/keys` | required | ✅ X3DH bundle, consumes one OTK |
+| `POST   /api/bridges/whatsapp/link`      | required | ✅ phone-pairing via whatsmeow      |
+| `GET    /api/bridges/whatsapp/status`    | required | ✅ polled view + pairing code TTL   |
+| `DELETE /api/bridges/whatsapp/link`      | required | ✅ remote logout + drop session     |
+
+Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
+(`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.
 
 The skeletons exist so the route surface is real and the mobile client can be wired against them while the implementations are written on their dedicated branches.
 

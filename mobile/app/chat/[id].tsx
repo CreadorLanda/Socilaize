@@ -138,6 +138,11 @@ export default function ChatScreen() {
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [showAttach, setShowAttach] = useState(false);
   const [composeKind, setComposeKind] = useState<string | null>(null);
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<Message[]>([]);
+  const [forwardTargets, setForwardTargets] = useState<Message[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const selectionMode = selectedIds.size > 0;
   const [dandaraTyping, setDandaraTyping] = useState(false);
   const { colors, isDark } = useTheme();
 
@@ -191,6 +196,7 @@ export default function ChatScreen() {
 
   const isGroup = !!chat?.isGroup;
   const isAIChat = !!chat?.isAI;
+  const isWAChat = chat?.source === 'whatsapp';
   const group = useGroup(isGroup ? id : undefined);
 
   // Apply the group's history settings: hide pre-join messages when history is
@@ -436,6 +442,113 @@ export default function ChatScreen() {
     if (menuTarget?.msg.text) Clipboard.setStringAsync(menuTarget.msg.text).catch(() => {});
   };
 
+  const forwardFromMenu = () => {
+    if (menuTarget) setForwardTargets([menuTarget.msg]);
+  };
+
+  const editFromMenu = () => {
+    if (!menuTarget) return;
+    const msg = menuTarget.msg;
+    setEditingMsgId(msg.id);
+    setDraft(msg.text);
+    setReplyTarget(null);
+    setTimeout(() => composerInputRef.current?.focus(), 120);
+  };
+
+  const deleteFromMenu = () => {
+    if (menuTarget) setDeleteTargets([menuTarget.msg]);
+  };
+
+  const cancelEdit = () => {
+    setEditingMsgId(null);
+    setDraft('');
+  };
+
+  // ── Multi-select ─────────────────────────────────────────────────────────
+  const startSelection = (msg: Message) => {
+    setSelectedIds(new Set([msg.id]));
+    Haptics.selectionAsync().catch(() => {});
+  };
+
+  const toggleSelect = (msgId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(msgId)) next.delete(msgId);
+      else next.add(msgId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const selectFromMenu = () => {
+    if (menuTarget) startSelection(menuTarget.msg);
+  };
+
+  // Resolve currently-selected (and not-deleted) messages — used by bulk actions.
+  const selectedMessages = (): Message[] =>
+    visible.filter((m) => selectedIds.has(m.id) && !m.deletedAt);
+
+  const bulkForward = () => {
+    const list = selectedMessages();
+    if (list.length === 0) return;
+    setForwardTargets(list);
+  };
+
+  const bulkDelete = () => {
+    const list = selectedMessages();
+    if (list.length === 0) return;
+    setDeleteTargets(list);
+  };
+
+  const bulkCopy = () => {
+    const txt = selectedMessages()
+      .map((m) => m.text)
+      .filter(Boolean)
+      .join('\n\n');
+    if (txt) Clipboard.setStringAsync(txt).catch(() => {});
+    clearSelection();
+  };
+
+  // Apply the delete action chosen from the confirmation modal — handles
+  // single message (from the context menu) and bulk (from selection mode).
+  // 'me'  — local-only soft delete.
+  // 'all' — propagates to the bridge / other clients.
+  const confirmDelete = (scope: 'me' | 'all') => {
+    if (deleteTargets.length === 0) return;
+    const ids = new Set(deleteTargets.map((t) => t.id));
+    setMessages((prev) =>
+      prev.map((m) => (ids.has(m.id) ? { ...m, deletedAt: new Date().toISOString() } : m)),
+    );
+    Haptics.impactAsync(
+      scope === 'all' ? Haptics.ImpactFeedbackStyle.Rigid : Haptics.ImpactFeedbackStyle.Light,
+    ).catch(() => {});
+    setDeleteTargets([]);
+    clearSelection();
+  };
+
+  // Append the forwarded messages to another chat's mock store.
+  // Real implementation would call POST /messages for each.
+  const forwardTo = (destChatId: string) => {
+    if (forwardTargets.length === 0) return;
+    const arr = MESSAGES[destChatId] ?? [];
+    const base = Date.now();
+    const forwarded: Message[] = forwardTargets.map((msg, i) => ({
+      id: `m${base}${i}`,
+      text: msg.text,
+      media: msg.media,
+      attachment: msg.attachment,
+      fromMe: true,
+      timestamp: nowTime(),
+      status: 'sent',
+      forwarded: true,
+    }));
+    MESSAGES[destChatId] = [...arr, ...forwarded];
+    Haptics.selectionAsync().catch(() => {});
+    setForwardTargets([]);
+    clearSelection();
+  };
+
   const replyFromSwipe = (msg: Message) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setReplyTarget(msg);
@@ -443,6 +556,14 @@ export default function ChatScreen() {
 
   const submitText = (text: string) => {
     if (!text) return;
+    // If we're editing an existing message, update it in place and bail out.
+    if (editingMsgId) {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === editingMsgId ? { ...m, text, edited: true } : m)),
+      );
+      setEditingMsgId(null);
+      return;
+    }
     appendMessage({
       text,
       replyTo: replyTarget
@@ -498,13 +619,15 @@ export default function ChatScreen() {
 
   // One-line preview for a quoted/replied message.
   const replySnippet = (m: Message): string => {
+    if (m.deletedAt) return t(m.fromMe ? 'chat.deleted_self' : 'chat.deleted_other');
     if (m.attachment) {
-      const k = m.attachment.kind;
-      if (k === 'document') return t('chat.attach_document');
-      if (k === 'location') return t('chat.attach_location');
-      if (k === 'contact') return t('chat.attach_contact');
-      if (k === 'poll') return t('chat.poll_label');
-      if (k === 'event') return t('chat.event_label');
+      const a = m.attachment;
+      if (a.kind === 'document') return t('chat.attach_document');
+      if (a.kind === 'location') return a.live ? t('chat.live_location') : t('chat.attach_location');
+      if (a.kind === 'contact') return t('chat.attach_contact');
+      if (a.kind === 'sticker') return t('chat.sticker');
+      if (a.kind === 'poll') return t('chat.poll_label');
+      if (a.kind === 'event') return t('chat.event_label');
       return t('chat.game_invite');
     }
     if (m.media) {
@@ -515,11 +638,13 @@ export default function ChatScreen() {
 
   // Icon shown next to a quoted/replied message preview.
   const replyIcon = (m: Message): keyof typeof Ionicons.glyphMap | undefined => {
+    if (m.deletedAt) return 'ban-outline';
     if (m.attachment) {
       const k = m.attachment.kind;
       if (k === 'document') return 'document-text';
       if (k === 'location') return 'location';
       if (k === 'contact') return 'person';
+      if (k === 'sticker') return 'happy';
       if (k === 'poll') return 'stats-chart';
       if (k === 'event') return 'calendar';
       return 'game-controller';
@@ -594,6 +719,12 @@ export default function ChatScreen() {
     );
   };
 
+  // Mark a view-once message as opened. On a real backend this would also
+  // fire an event to the bridge so the sender sees "Opened".
+  const handleViewOnce = (msgId: string) => {
+    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, viewed: true } : m)));
+  };
+
   const hasDraft = draft.trim().length > 0;
   const memberCount = group?.members.length ?? chat.memberCount ?? 0;
 
@@ -606,6 +737,50 @@ export default function ChatScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
 
+      {/* Selection-mode header replaces both the normal and the search header
+          while messages are selected. Search and selection are mutually
+          exclusive — entering selection cancels search. */}
+      {selectionMode ? (
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.divider }]}>
+          <Pressable
+            onPress={clearSelection}
+            hitSlop={12}
+            style={({ pressed }) => [styles.backBtn, pressed && { backgroundColor: colors.surfaceMuted }]}
+            accessibilityLabel={t('chat.cancel')}
+          >
+            <Ionicons name="close" size={22} color={colors.text} />
+          </Pressable>
+          <Text style={[styles.peerName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+            {t('chat.selected_count', { count: selectedIds.size })}
+          </Text>
+          <View style={styles.headerActions}>
+            <Pressable
+              hitSlop={8}
+              style={styles.iconBtn}
+              onPress={bulkCopy}
+              accessibilityLabel={t('chat.copy')}
+            >
+              <Ionicons name="copy-outline" size={20} color={colors.text} />
+            </Pressable>
+            <Pressable
+              hitSlop={8}
+              style={styles.iconBtn}
+              onPress={bulkForward}
+              accessibilityLabel={t('chat.forward')}
+            >
+              <Ionicons name="arrow-redo-outline" size={20} color={colors.text} />
+            </Pressable>
+            <Pressable
+              hitSlop={8}
+              style={styles.iconBtn}
+              onPress={bulkDelete}
+              accessibilityLabel={t('chat.delete')}
+            >
+              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            </Pressable>
+          </View>
+        </View>
+      ) : (
       <StateTransition transitionKey={searchMode}>
       {searchMode ? (
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.divider }]}>
@@ -650,13 +825,9 @@ export default function ChatScreen() {
           <Pressable
             style={styles.peer}
             hitSlop={6}
-            onPress={
-              isGroup
-                ? () => router.push({ pathname: '/modal', params: { groupId: chat.id } })
-                : undefined
-            }
-            accessibilityRole={isGroup ? 'button' : undefined}
-            accessibilityLabel={isGroup ? t('chat.group_settings') : undefined}
+            onPress={() => router.push(`/chat-info/${chat.id}`)}
+            accessibilityRole="button"
+            accessibilityLabel={isGroup ? t('chat_info.group_title') : t('chat_info.title')}
           >
             <View>
               <Image
@@ -677,15 +848,22 @@ export default function ChatScreen() {
               <Text style={[styles.peerName, { color: colors.text }]} numberOfLines={1}>
                 {chat.name}
               </Text>
-              <Text style={[styles.peerStatus, { color: colors.textSecondary }]} numberOfLines={1}>
-                {isAIChat
-                  ? t('chat.ai_subtitle')
-                  : isGroup
-                    ? t('group.members_count', { count: memberCount })
-                    : chat.online
-                      ? t('chats.online')
-                      : t('chats.last_seen')}
-              </Text>
+              <View style={styles.peerStatusRow}>
+                {isWAChat ? <Ionicons name="logo-whatsapp" size={11} color="#25D366" /> : null}
+                <Text style={[styles.peerStatus, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {isWAChat
+                    ? isGroup
+                      ? t('chat.wa_group_subtitle', { count: memberCount })
+                      : t('chat.wa_subtitle')
+                    : isAIChat
+                      ? t('chat.ai_subtitle')
+                      : isGroup
+                        ? t('group.members_count', { count: memberCount })
+                        : chat.online
+                          ? t('chats.online')
+                          : t('chats.last_seen')}
+                </Text>
+              </View>
             </View>
           </Pressable>
 
@@ -702,8 +880,8 @@ export default function ChatScreen() {
               <Pressable
                 hitSlop={8}
                 style={styles.iconBtn}
-                onPress={() => router.push({ pathname: '/modal', params: { groupId: chat.id } })}
-                accessibilityLabel={t('chat.group_settings')}
+                onPress={() => router.push(`/chat-info/${chat.id}`)}
+                accessibilityLabel={t('chat_info.group_title')}
               >
                 <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
               </Pressable>
@@ -732,6 +910,7 @@ export default function ChatScreen() {
       )}
 
       </StateTransition>
+      )}
 
       <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <View style={[styles.thread, { backgroundColor: colors.surfaceMuted }]}>
@@ -749,10 +928,14 @@ export default function ChatScreen() {
                   isGroup={isGroup}
                   query={searching ? trimmedQuery : ''}
                   reactions={reactionsMap[item.id] ?? []}
+                  selectionMode={selectionMode}
+                  selected={selectedIds.has(item.id)}
+                  onToggleSelect={toggleSelect}
                   onOpenMenu={openMenu}
                   onReact={handleReact}
                   onReply={replyFromSwipe}
                   onVote={handleVote}
+                  onViewOnce={handleViewOnce}
                 />
               )
             }
@@ -777,12 +960,16 @@ export default function ChatScreen() {
                   )}
                   <View style={[styles.e2eNotice, { backgroundColor: colors.surface }]}>
                     <Ionicons
-                      name={isAIChat ? 'sparkles' : 'lock-closed'}
+                      name={isAIChat ? 'sparkles' : isWAChat ? 'logo-whatsapp' : 'lock-closed'}
                       size={11}
-                      color={colors.textSecondary}
+                      color={isWAChat ? '#25D366' : colors.textSecondary}
                     />
                     <Text style={[styles.e2eNoticeText, { color: colors.textSecondary }]}>
-                      {isAIChat ? t('chat.ai_disclaimer') : t('chat.encrypted_notice')}
+                      {isAIChat
+                        ? t('chat.ai_disclaimer')
+                        : isWAChat
+                          ? t('chat.wa_bridge_notice')
+                          : t('chat.encrypted_notice')}
                     </Text>
                   </View>
                 </View>
@@ -831,8 +1018,23 @@ export default function ChatScreen() {
               </ScrollView>
             ) : null}
 
-            {/* Reply preview bar — hidden while recording */}
-            {replyTarget && recordPhase === 'idle' ? (
+            {/* Editing bar — mutually exclusive with reply */}
+            {editingMsgId && recordPhase === 'idle' ? (
+              <View style={[styles.replyBar, { backgroundColor: colors.surface, borderTopColor: colors.divider }]}>
+                <Ionicons name="create-outline" size={18} color={colors.primary} />
+                <View style={styles.replyBarContent}>
+                  <Text style={[styles.replyBarName, { color: colors.primary }]} numberOfLines={1}>
+                    {t('chat.editing')}
+                  </Text>
+                </View>
+                <Pressable onPress={cancelEdit} hitSlop={10}>
+                  <Ionicons name="close" size={18} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* Reply preview bar — hidden while recording or editing */}
+            {!editingMsgId && replyTarget && recordPhase === 'idle' ? (
               <View style={[styles.replyBar, { backgroundColor: colors.surface, borderTopColor: colors.divider }]}>
                 <View style={[styles.replyBarStripe, { backgroundColor: colors.primary }]} />
                 <View style={styles.replyBarContent}>
@@ -955,9 +1157,28 @@ export default function ChatScreen() {
           onReact={reactFromMenu}
           onReply={replyFromMenu}
           onCopy={copyFromMenu}
+          onForward={forwardFromMenu}
+          onEdit={editFromMenu}
+          onDelete={deleteFromMenu}
+          onSelect={selectFromMenu}
           onClose={closeMenu}
         />
       ) : null}
+
+      {/* Delete confirmation */}
+      <DeleteMessageModal
+        targets={deleteTargets}
+        onCancel={() => setDeleteTargets([])}
+        onConfirm={confirmDelete}
+      />
+
+      {/* Forward to another chat */}
+      <ForwardChatPicker
+        targets={forwardTargets}
+        currentChatId={chat.id}
+        onClose={() => setForwardTargets([])}
+        onPick={forwardTo}
+      />
 
       {/* Attachment menu */}
       <AttachSheet
@@ -1027,31 +1248,71 @@ function HistoryBanner({
 function HighlightedText({
   text,
   query,
+  mentions,
   style,
   highlight,
+  mentionColor,
 }: {
   text: string;
   query: string;
+  mentions?: string[];
   style: StyleProp<TextStyle>;
   highlight: string;
+  mentionColor?: string;
 }) {
-  if (!query) return <Text style={style}>{text}</Text>;
-  const lower = text.toLowerCase();
-  const q = query.toLowerCase();
-  const parts: { text: string; match: boolean }[] = [];
-  let from = 0;
-  let idx = lower.indexOf(q, from);
-  while (idx !== -1) {
-    if (idx > from) parts.push({ text: text.slice(from, idx), match: false });
-    parts.push({ text: text.slice(idx, idx + q.length), match: true });
-    from = idx + q.length;
-    idx = lower.indexOf(q, from);
+  const q = (query ?? '').trim().toLowerCase();
+  const hasMentions = !!mentions && mentions.length > 0;
+  if (!q && !hasMentions) return <Text style={style}>{text}</Text>;
+
+  // 1) Split by mentions first so each "@user" is its own segment we won't recolor.
+  const mentionRe = hasMentions ? new RegExp(`@(?:${mentions!.join('|')})\\b`, 'gi') : null;
+  type Tok = { text: string; mention?: boolean };
+  const tokens: Tok[] = [];
+  if (mentionRe) {
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = mentionRe.exec(text)) !== null) {
+      if (m.index > last) tokens.push({ text: text.slice(last, m.index) });
+      tokens.push({ text: m[0], mention: true });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) tokens.push({ text: text.slice(last) });
+  } else {
+    tokens.push({ text });
   }
-  if (from < text.length) parts.push({ text: text.slice(from), match: false });
+
+  // 2) Within plain tokens, split by search-query matches.
+  type Part = { text: string; kind: 'plain' | 'match' | 'mention' };
+  const parts: Part[] = [];
+  for (const tok of tokens) {
+    if (tok.mention) {
+      parts.push({ text: tok.text, kind: 'mention' });
+      continue;
+    }
+    if (!q) {
+      parts.push({ text: tok.text, kind: 'plain' });
+      continue;
+    }
+    const lower = tok.text.toLowerCase();
+    let last = 0;
+    let i = lower.indexOf(q, last);
+    while (i !== -1) {
+      if (i > last) parts.push({ text: tok.text.slice(last, i), kind: 'plain' });
+      parts.push({ text: tok.text.slice(i, i + q.length), kind: 'match' });
+      last = i + q.length;
+      i = lower.indexOf(q, last);
+    }
+    if (last < tok.text.length) parts.push({ text: tok.text.slice(last), kind: 'plain' });
+  }
+
   return (
     <Text style={style}>
       {parts.map((p, i) =>
-        p.match ? (
+        p.kind === 'mention' ? (
+          <Text key={i} style={{ color: mentionColor, fontWeight: '700' }}>
+            {p.text}
+          </Text>
+        ) : p.kind === 'match' ? (
           <Text key={i} style={{ backgroundColor: highlight, fontWeight: '700' }}>
             {p.text}
           </Text>
@@ -1063,11 +1324,34 @@ function HighlightedText({
   );
 }
 
+// Short remaining-time label for ephemeral / live-location countdowns.
+function relativeRemaining(iso?: string): string | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return '0m';
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 function MetaRow({ msg, onMedia }: { msg: GroupedMessage; onMedia?: boolean }) {
   const { colors } = useTheme();
   const mine = msg.fromMe;
+  const dim = onMedia ? '#FFFFFF' : mine ? 'rgba(255,255,255,0.78)' : colors.textMuted;
+  const ttl = relativeRemaining(msg.expiresAt);
   return (
     <View style={[styles.metaRow, onMedia && styles.metaOverlay]}>
+      {msg.edited ? (
+        <Text style={[styles.metaTime, { color: dim }]}>{t('chat.edited')} ·</Text>
+      ) : null}
+      {ttl ? (
+        <View style={styles.metaInline}>
+          <Ionicons name="timer-outline" size={11} color={dim} />
+          <Text style={[styles.metaTime, { color: dim }]}>{ttl}</Text>
+        </View>
+      ) : null}
       <Text
         style={[
           styles.metaTime,
@@ -1373,12 +1657,14 @@ function BubbleBody({
   isGroup,
   query,
   onVote,
+  onViewOnce,
 }: {
   msg: GroupedMessage;
   mine: boolean;
   isGroup: boolean;
   query: string;
   onVote?: (optionId: string) => void;
+  onViewOnce?: (msgId: string) => void;
 }) {
   const { colors } = useTheme();
   const isAudio = msg.media?.type === 'audio';
@@ -1387,6 +1673,46 @@ function BubbleBody({
   const hasText = msg.text.trim().length > 0;
   const mediaOnly = isVisualMedia && !hasText;
   const showSender = (isGroup || !!msg.isAI) && !mine && msg.isFirstInGroup && !!msg.senderName;
+
+  // Deleted message → italic placeholder, no reactions, no swipe-reply target.
+  if (msg.deletedAt) {
+    const dim = mine ? 'rgba(255,255,255,0.75)' : colors.textMuted;
+    return (
+      <View style={styles.deletedRow}>
+        <Ionicons name="ban-outline" size={14} color={dim} />
+        <Text style={[styles.deletedText, { color: dim }]}>
+          {mine ? t('chat.deleted_self') : t('chat.deleted_other')}
+        </Text>
+        <MetaRow msg={msg} />
+      </View>
+    );
+  }
+
+  // View-once gate — until tapped, show sealed UI.
+  if (msg.viewOnce && !msg.viewed) {
+    const accent = mine ? colors.onPrimary : colors.primary;
+    return (
+      <Pressable
+        onPress={onViewOnce ? () => onViewOnce(msg.id) : undefined}
+        style={styles.viewOnceRow}
+        accessibilityRole="button"
+        accessibilityLabel={t('chat.view_once_tap')}
+      >
+        <View style={[styles.viewOnceIcon, { borderColor: accent }]}>
+          <Ionicons name="eye-outline" size={18} color={accent} />
+        </View>
+        <View style={styles.viewOnceText}>
+          <Text style={[styles.viewOnceTitle, { color: mine ? colors.onPrimary : colors.text }]}>
+            {t('chat.view_once')}
+          </Text>
+          <Text style={[styles.viewOnceHint, { color: mine ? 'rgba(255,255,255,0.75)' : colors.textSecondary }]}>
+            {t('chat.view_once_tap')}
+          </Text>
+        </View>
+        <MetaRow msg={msg} />
+      </Pressable>
+    );
+  }
 
   return (
     <>
@@ -1433,6 +1759,17 @@ function BubbleBody({
         </View>
       ) : null}
 
+      {/* "Reencaminhada" label is only shown on *incoming* forwards — when
+          I forward something, I already know, so we don't tag my own copy. */}
+      {msg.forwarded && !mine ? (
+        <View style={styles.forwardedRow}>
+          <Ionicons name="arrow-redo-outline" size={12} color={colors.textMuted} />
+          <Text style={[styles.forwardedText, { color: colors.textMuted }]}>
+            {t('chat.forwarded')}
+          </Text>
+        </View>
+      ) : null}
+
       {isVisualMedia ? <MediaContent media={msg.media!} /> : null}
 
       {isAudio ? (
@@ -1448,7 +1785,9 @@ function BubbleBody({
           <HighlightedText
             text={msg.text}
             query={query}
+            mentions={msg.mentions}
             highlight={colors.warning}
+            mentionColor={mine ? colors.onPrimary : colors.primary}
             style={[styles.bubbleText, { color: mine ? colors.onPrimary : colors.text }]}
           />
           <MetaRow msg={msg} />
@@ -1467,19 +1806,27 @@ function Bubble({
   isGroup,
   query,
   reactions,
+  selectionMode,
+  selected,
+  onToggleSelect,
   onOpenMenu,
   onReact,
   onReply,
   onVote,
+  onViewOnce,
 }: {
   msg: GroupedMessage;
   isGroup: boolean;
   query: string;
   reactions: ReactionEntry[];
+  selectionMode: boolean;
+  selected: boolean;
+  onToggleSelect: (msgId: string) => void;
   onOpenMenu: (target: MenuTarget) => void;
   onReact: (msgId: string, emoji: string) => void;
   onReply: (msg: GroupedMessage) => void;
   onVote: (msgId: string, optionId: string) => void;
+  onViewOnce: (msgId: string) => void;
 }) {
   const { colors } = useTheme();
   const mine = msg.fromMe;
@@ -1489,7 +1836,9 @@ function Bubble({
   const translateX = useSharedValue(0);
 
   // Swipe right to reply — drag the bubble, release past the threshold.
+  // Disabled in selection mode (taps toggle selection instead).
   const pan = Gesture.Pan()
+    .enabled(!selectionMode)
     .activeOffsetX(14)
     .failOffsetY([-12, 12])
     .onUpdate((e) => {
@@ -1511,6 +1860,7 @@ function Bubble({
   }));
 
   const handleLongPress = () => {
+    if (msg.deletedAt) return;
     bubbleRef.current?.measureInWindow((x, y, width, height) => {
       if (width > 0 && height > 0) {
         onOpenMenu({ msg, rect: { x, y, width, height }, mine });
@@ -1520,13 +1870,25 @@ function Bubble({
 
   return (
     <GestureDetector gesture={pan}>
-      <View
+      <Pressable
+        onPress={selectionMode ? () => onToggleSelect(msg.id) : undefined}
         style={[
           styles.bubbleRow,
           mine ? styles.bubbleRowMine : styles.bubbleRowTheirs,
           !msg.isLastInGroup && styles.bubbleRowGrouped,
+          selectionMode && styles.bubbleRowSelectable,
+          selected && { backgroundColor: `${colors.primary}14` },
         ]}
       >
+        {selectionMode ? (
+          <View style={styles.selectCheck}>
+            <Ionicons
+              name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+              size={22}
+              color={selected ? colors.primary : colors.textMuted}
+            />
+          </View>
+        ) : null}
         {showAvatar ? (
           msg.isLastInGroup ? (
             <Image
@@ -1549,7 +1911,8 @@ function Bubble({
 
           <Pressable
             ref={bubbleRef}
-            onLongPress={handleLongPress}
+            onLongPress={selectionMode ? undefined : handleLongPress}
+            onPress={selectionMode ? () => onToggleSelect(msg.id) : undefined}
             delayLongPress={260}
             style={[
               styles.bubble,
@@ -1567,6 +1930,7 @@ function Bubble({
               isGroup={isGroup}
               query={query}
               onVote={(optId) => onVote(msg.id, optId)}
+              onViewOnce={onViewOnce}
             />
           </Pressable>
 
@@ -1594,7 +1958,7 @@ function Bubble({
             </View>
           ) : null}
         </Animated.View>
-      </View>
+      </Pressable>
     </GestureDetector>
   );
 }
@@ -1608,6 +1972,10 @@ function ReactionMenu({
   onReact,
   onReply,
   onCopy,
+  onForward,
+  onEdit,
+  onDelete,
+  onSelect,
   onClose,
 }: {
   target: MenuTarget;
@@ -1616,6 +1984,10 @@ function ReactionMenu({
   onReact: (emoji: string) => void;
   onReply: () => void;
   onCopy: () => void;
+  onForward: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSelect: () => void;
   onClose: () => void;
 }) {
   const { colors, isDark } = useTheme();
@@ -1637,7 +2009,22 @@ function ReactionMenu({
 
   const hasText = msg.text.trim().length > 0;
   const isVisualMedia = !!msg.media && msg.media.type !== 'audio';
-  const menuItems = hasText ? 2 : 1;
+  // Visibility rules — match WhatsApp's conventions.
+  const showReply = true;
+  const showForward = true;
+  const showCopy = hasText;
+  // Forwarded messages cannot be edited — even if they're mine, the canonical
+  // content lives on the original sender's side.
+  const showEdit = mine && hasText && !msg.forwarded;
+  const showSelect = true;
+  const showDelete = true;
+  const menuItems =
+    Number(showReply) +
+    Number(showForward) +
+    Number(showCopy) +
+    Number(showEdit) +
+    Number(showSelect) +
+    Number(showDelete);
   const menuH = menuItems * MENU_ITEM_HEIGHT;
   const menuW = 230;
   const barW = CHAT_REACTIONS.length * 46 + 14;
@@ -1752,32 +2139,219 @@ function ReactionMenu({
           menuStyle,
         ]}
       >
-        <Pressable
-          onPress={() => {
-            onReply();
-            close();
-          }}
-          style={({ pressed }) => [styles.menuItem, pressed && { backgroundColor: colors.surfaceMuted }]}
-        >
-          <Text style={[styles.menuItemText, { color: colors.text }]}>{t('chat.reply')}</Text>
-          <Ionicons name="arrow-undo-outline" size={18} color={colors.text} />
-        </Pressable>
-        {hasText ? (
-          <>
-            <View style={[styles.menuSep, { backgroundColor: colors.divider }]} />
-            <Pressable
-              onPress={() => {
-                onCopy();
-                close();
-              }}
-              style={({ pressed }) => [styles.menuItem, pressed && { backgroundColor: colors.surfaceMuted }]}
-            >
-              <Text style={[styles.menuItemText, { color: colors.text }]}>{t('chat.copy')}</Text>
-              <Ionicons name="copy-outline" size={17} color={colors.text} />
-            </Pressable>
-          </>
-        ) : null}
+        {(
+          [
+            { show: showReply, label: t('chat.reply'), icon: 'arrow-undo-outline', onPress: onReply, destructive: false },
+            { show: showForward, label: t('chat.forward'), icon: 'arrow-redo-outline', onPress: onForward, destructive: false },
+            { show: showCopy, label: t('chat.copy'), icon: 'copy-outline', onPress: onCopy, destructive: false },
+            { show: showEdit, label: t('chat.edit'), icon: 'create-outline', onPress: onEdit, destructive: false },
+            { show: showSelect, label: t('chat.select'), icon: 'checkmark-circle-outline', onPress: onSelect, destructive: false },
+            { show: showDelete, label: t('chat.delete'), icon: 'trash-outline', onPress: onDelete, destructive: true },
+          ] as const
+        )
+          .filter((it) => it.show)
+          .map((it, i, arr) => (
+            <View key={it.label}>
+              <Pressable
+                onPress={() => {
+                  it.onPress();
+                  close();
+                }}
+                style={({ pressed }) => [styles.menuItem, pressed && { backgroundColor: colors.surfaceMuted }]}
+              >
+                <Text
+                  style={[
+                    styles.menuItemText,
+                    { color: it.destructive ? colors.danger : colors.text },
+                  ]}
+                >
+                  {it.label}
+                </Text>
+                <Ionicons
+                  name={it.icon as keyof typeof Ionicons.glyphMap}
+                  size={18}
+                  color={it.destructive ? colors.danger : colors.text}
+                />
+              </Pressable>
+              {i < arr.length - 1 ? (
+                <View style={[styles.menuSep, { backgroundColor: colors.divider }]} />
+              ) : null}
+            </View>
+          ))}
       </Animated.View>
+    </Modal>
+  );
+}
+
+// Confirmation modal for deleting one or many messages.
+// "Delete for everyone" only shows when ALL targets are own.
+function DeleteMessageModal({
+  targets,
+  onCancel,
+  onConfirm,
+}: {
+  targets: Message[];
+  onCancel: () => void;
+  onConfirm: (scope: 'me' | 'all') => void;
+}) {
+  const { colors } = useTheme();
+  if (targets.length === 0) return null;
+  const allMine = targets.every((t) => t.fromMe);
+  const count = targets.length;
+  const title =
+    count > 1 ? t('chat.delete_count_title', { count }) : t('chat.delete_confirm_title');
+  return (
+    <Modal transparent animationType="fade" visible={count > 0} onRequestClose={onCancel}>
+      <View style={styles.dimOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
+        <View style={[styles.deleteCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.deleteIcon, { backgroundColor: `${colors.danger}1F` }]}>
+            <Ionicons name="trash-outline" size={22} color={colors.danger} />
+          </View>
+          <Text style={[styles.deleteTitle, { color: colors.text }]}>{title}</Text>
+          <View style={styles.deleteActions}>
+            {allMine ? (
+              <Pressable
+                onPress={() => onConfirm('all')}
+                style={({ pressed }) => [
+                  styles.deleteBtn,
+                  { backgroundColor: colors.danger, borderColor: colors.danger },
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={[styles.deleteBtnText, { color: '#FFFFFF' }]}>
+                  {t('chat.delete_for_everyone')}
+                </Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => onConfirm('me')}
+              style={({ pressed }) => [
+                styles.deleteBtn,
+                { borderColor: colors.border },
+                pressed && { backgroundColor: colors.surfaceMuted },
+              ]}
+            >
+              <Text style={[styles.deleteBtnText, { color: colors.text }]}>
+                {t('chat.delete_for_me')}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={onCancel}
+              style={({ pressed }) => [
+                styles.deleteBtn,
+                { borderColor: 'transparent' },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={[styles.deleteBtnText, { color: colors.textSecondary }]}>
+                {t('chat.cancel')}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// Sheet to pick a destination chat for one or more forwarded messages.
+function ForwardChatPicker({
+  targets,
+  currentChatId,
+  onClose,
+  onPick,
+}: {
+  targets: Message[];
+  currentChatId: string;
+  onClose: () => void;
+  onPick: (chatId: string) => void;
+}) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [query, setQuery] = useState('');
+  const count = targets.length;
+  useEffect(() => {
+    if (count === 0) setQuery('');
+  }, [count]);
+
+  const list = CHATS.filter(
+    (c) =>
+      c.id !== currentChatId &&
+      !c.isAI &&
+      c.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+
+  return (
+    <Modal transparent animationType="slide" visible={count > 0} onRequestClose={onClose}>
+      <View style={styles.sheetOverlayDark}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <KeyboardAvoidingView behavior="padding">
+          <View style={[styles.forwardSheet, { backgroundColor: colors.surfaceElevated }]}>
+            <View style={styles.dragHandle}>
+              <View style={[styles.dragBar, { backgroundColor: colors.border }]} />
+            </View>
+            <View style={styles.forwardHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.forwardTitle, { color: colors.text }]}>
+                  {t('chat.forward_title')}
+                </Text>
+                {count > 1 ? (
+                  <Text style={[styles.forwardHint, { color: colors.textSecondary, marginTop: 2 }]}>
+                    {t('chat.selected_count', { count })}
+                  </Text>
+                ) : null}
+              </View>
+              <Pressable onPress={onClose} hitSlop={12}>
+                <Ionicons name="close" size={22} color={colors.text} />
+              </Pressable>
+            </View>
+            <View style={[styles.forwardSearch, { backgroundColor: colors.surfaceMuted }]}>
+              <Ionicons name="search" size={16} color={colors.textMuted} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder={t('chat.forward_search')}
+                placeholderTextColor={colors.textMuted}
+                style={[styles.forwardSearchInput, { color: colors.text }]}
+              />
+            </View>
+            <ScrollView
+              style={styles.forwardList}
+              contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, Spacing.md) }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {list.map((c) => (
+                <Pressable
+                  key={c.id}
+                  onPress={() => onPick(c.id)}
+                  style={({ pressed }) => [
+                    styles.forwardRow,
+                    pressed && { backgroundColor: colors.surfaceMuted },
+                  ]}
+                >
+                  <Image
+                    source={{ uri: c.avatarUri }}
+                    style={[styles.forwardAvatar, { backgroundColor: colors.surfaceMuted }]}
+                    contentFit="cover"
+                  />
+                  <View style={styles.forwardText}>
+                    <Text style={[styles.forwardName, { color: colors.text }]} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                    <Text style={[styles.forwardHint, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {c.isGroup ? t('group.members_count', { count: c.memberCount ?? 0 }) : c.username}
+                    </Text>
+                  </View>
+                  {c.source === 'whatsapp' ? (
+                    <Ionicons name="logo-whatsapp" size={16} color="#25D366" />
+                  ) : null}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -1833,7 +2407,8 @@ const styles = StyleSheet.create({
   },
   peerInfo: { flex: 1 },
   peerName: { ...Typography.bodyStrong, fontSize: 16 },
-  peerStatus: { ...Typography.caption, marginTop: 1 },
+  peerStatus: { ...Typography.caption },
+  peerStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
   headerActions: { flexDirection: 'row', gap: 2 },
 
   searchField: {
@@ -2087,6 +2662,36 @@ const styles = StyleSheet.create({
     gap: 3,
     marginTop: 2,
   },
+  metaInline: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+
+  // Deleted message placeholder.
+  deletedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  deletedText: { ...Typography.caption, fontStyle: 'italic', flexShrink: 1 },
+
+  // View-once sealed UI.
+  viewOnceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: 4,
+    minWidth: 200,
+  },
+  viewOnceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewOnceText: { flex: 1, gap: 1 },
+  viewOnceTitle: { ...Typography.caption, fontWeight: '700' },
+  viewOnceHint: { ...Typography.micro },
   metaOverlay: {
     position: 'absolute',
     right: 10,
@@ -2404,5 +3009,104 @@ const styles = StyleSheet.create({
     ...Typography.caption,
     fontWeight: '600',
     maxWidth: 210,
+  },
+
+  // ── Delete confirm modal ────────────────────────────────────────────────────
+  dimOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+  },
+  deleteCard: {
+    width: '100%',
+    borderRadius: Radii.xl,
+    borderWidth: 1,
+    padding: Spacing.lg,
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  deleteIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteTitle: { ...Typography.h3, textAlign: 'center', marginBottom: Spacing.xs },
+  deleteActions: { width: '100%', gap: Spacing.sm },
+  deleteBtn: {
+    paddingVertical: Spacing.sm + 2,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+    alignItems: 'center',
+  },
+  deleteBtnText: { ...Typography.caption, fontWeight: '700' },
+
+  // ── Forward picker sheet ────────────────────────────────────────────────────
+  sheetOverlayDark: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  forwardSheet: {
+    borderTopLeftRadius: Radii.xl,
+    borderTopRightRadius: Radii.xl,
+    paddingHorizontal: Spacing.lg,
+    maxHeight: '82%',
+  },
+  dragHandle: { alignItems: 'center', paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
+  dragBar: { width: 36, height: 4, borderRadius: Radii.pill },
+  forwardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.sm,
+  },
+  forwardTitle: { ...Typography.h3 },
+  forwardSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    borderRadius: Radii.pill,
+    paddingHorizontal: Spacing.md,
+    height: 42,
+    marginBottom: Spacing.sm,
+  },
+  forwardSearchInput: { flex: 1, ...Typography.body, fontSize: 15, padding: 0 },
+  forwardList: { marginTop: Spacing.xs },
+  forwardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.sm + 2,
+    paddingHorizontal: Spacing.xs,
+    borderRadius: Radii.md,
+  },
+  forwardAvatar: { width: 44, height: 44, borderRadius: Radii.pill },
+  forwardText: { flex: 1, gap: 2 },
+  forwardName: { ...Typography.body, fontSize: 15, fontWeight: '600' },
+  forwardHint: { ...Typography.caption },
+
+  // ── Selection mode ──────────────────────────────────────────────────────────
+  bubbleRowSelectable: { paddingLeft: 4, paddingRight: 4, borderRadius: Radii.md },
+  selectCheck: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+
+  // ── Forwarded indicator ─────────────────────────────────────────────────────
+  forwardedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginBottom: 2,
+  },
+  forwardedText: {
+    ...Typography.micro,
+    fontStyle: 'italic',
   },
 });

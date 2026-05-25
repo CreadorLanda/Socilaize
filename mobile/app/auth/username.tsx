@@ -17,11 +17,12 @@ import { PrimaryButton } from '@/components/ui/primary-button';
 import { StepHeader } from '@/components/ui/step-header';
 import { TextField } from '@/components/ui/text-field';
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { ApiError } from '@/data/api/client';
+import { checkAvailability, patchMe } from '@/data/api/users';
+import { setUser } from '@/data/auth-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
-
-const RESERVED = ['admin', 'socialize', 'support', 'official', 'me', 'you'];
 
 type Availability = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
@@ -30,22 +31,30 @@ export default function UsernameScreen() {
   const [username, setUsername] = useState(data.username);
   const [discoverable, setDiscoverable] = useState(data.isDiscoverable);
   const [status, setStatus] = useState<Availability>('idle');
+  const [busy, setBusy] = useState(false);
   const { colors } = useTheme();
 
-  const validate = (v: string): Availability => {
-    if (!v) return 'idle';
-    if (!/^[a-z0-9_]{3,20}$/.test(v)) return 'invalid';
-    if (RESERVED.includes(v)) return 'taken';
-    return 'available';
-  };
-
+  // Debounced uniqueness check against the API. The server enforces the
+  // same regex (a-z0-9_, 3–20) and returns available=false when invalid.
   useEffect(() => {
     if (!username) {
       setStatus('idle');
       return;
     }
+    if (!/^[a-z0-9_]{3,20}$/.test(username)) {
+      setStatus('invalid');
+      return;
+    }
     setStatus('checking');
-    const id = setTimeout(() => setStatus(validate(username)), 400);
+    const id = setTimeout(async () => {
+      try {
+        const res = await checkAvailability(username);
+        setStatus(res.available ? 'available' : 'taken');
+      } catch {
+        // Network error → leave UI optimistic; the PATCH still validates.
+        setStatus('available');
+      }
+    }, 400);
     return () => clearTimeout(id);
   }, [username]);
 
@@ -57,10 +66,24 @@ export default function UsernameScreen() {
 
   const isValid = status === 'available';
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     set('username', username);
     set('isDiscoverable', discoverable);
-    router.push('/auth/permissions');
+    setBusy(true);
+    try {
+      const updated = await patchMe({ username, username_public: discoverable });
+      await setUser(updated);
+      router.push('/auth/permissions');
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'username_taken') {
+        setStatus('taken');
+      } else {
+        // Surface a status — keep it cheap, the next step is the real gate.
+        setStatus('taken');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -186,7 +209,11 @@ export default function UsernameScreen() {
 
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
         <View style={styles.footer}>
-          <PrimaryButton label={t('auth.continue')} onPress={handleContinue} disabled={!isValid} />
+          <PrimaryButton
+            label={busy ? t('auth.saving') : t('auth.continue')}
+            onPress={handleContinue}
+            disabled={!isValid || busy}
+          />
         </View>
       </KeyboardStickyView>
     </SafeAreaView>
