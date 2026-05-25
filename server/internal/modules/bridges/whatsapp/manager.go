@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	whatsmeowEvents "go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -18,25 +19,38 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver for whatsmeow
 )
 
-// Manager owns the in-process whatsmeow.Client per linked user. The sqlstore
-// container is created once at startup and shared across all clients — it
-// auto-migrates the whatsmeow_* tables on first use.
+// Manager owns the in-process whatsmeow state per user.
+//
+// We keep ONE entry per user (the pendingPair below). The deviceStore is
+// preserved across pairing retries — Baileys' `useMultiFileAuthState`
+// does the same trick: WhatsApp sees one client retrying, not N fresh
+// clients, which makes their per-IP rate-limit kick in far less often.
 //
 // What's intentionally NOT here yet:
-//   - reconnect on process restart (linked users would need their clients
-//     spun up again on boot). Lands with the message-bridging chunk.
-//   - multi-device fanout. One client per user for now.
+//   - persisting the pre-pair device (noise key, identity key) to disk so
+//     identity survives a server restart. For now the in-memory cache
+//     is enough; if we restart, the user just starts a new pair cycle.
+//   - multi-device fanout. One device per user for now.
 type Manager struct {
 	container *sqlstore.Container
 	repo      *Repository
 	logger    waLog.Logger
 
-	mu      sync.Mutex
-	clients map[uuid.UUID]*whatsmeow.Client
+	mu       sync.Mutex
+	sessions map[uuid.UUID]*pendingPair
+}
+
+// pendingPair holds the per-user state. The device may be reused across
+// many StartPairing calls; the client is recreated whenever we need a
+// fresh WebSocket. Once a pair succeeds, the same struct still holds
+// the (now-paired) client.
+type pendingPair struct {
+	device *store.Device
+	client *whatsmeow.Client
 }
 
 // NewManager opens the whatsmeow sqlstore against the same Postgres we use
-// for the rest of the app, and prepares an empty client map.
+// for the rest of the app, and prepares an empty sessions map.
 func NewManager(ctx context.Context, postgresURL string, repo *Repository) (*Manager, error) {
 	dbLog := waLog.Stdout("wa-db", "WARN", true)
 	container, err := sqlstore.New(ctx, "pgx", postgresURL, dbLog)
@@ -47,7 +61,7 @@ func NewManager(ctx context.Context, postgresURL string, repo *Repository) (*Man
 		container: container,
 		repo:      repo,
 		logger:    waLog.Stdout("wa", "INFO", true),
-		clients:   make(map[uuid.UUID]*whatsmeow.Client),
+		sessions:  make(map[uuid.UUID]*pendingPair),
 	}, nil
 }
 
@@ -55,25 +69,47 @@ func NewManager(ctx context.Context, postgresURL string, repo *Repository) (*Man
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for id, c := range m.clients {
-		c.Disconnect()
-		delete(m.clients, id)
+	for id, s := range m.sessions {
+		if s.client != nil {
+			s.client.Disconnect()
+		}
+		delete(m.sessions, id)
 	}
 }
 
-// StartPairing creates a fresh device, connects anonymously to WhatsApp,
-// requests a phone-pairing code, and registers the event handlers that
-// persist a successful pair into wa_bridges. Returns the formatted code
-// (XXXX-XXXX) and its expiry timestamp.
+// StartPairing requests a phone-pairing code from WhatsApp and returns it
+// to the caller. The user types the code into WhatsApp → Linked devices →
+// Link with phone number.
+//
+// Device identity is reused across calls: if this user already has a
+// pre-pair device in our cache, we open a NEW WebSocket but with the
+// SAME noise/identity keys. That makes the retry look like one client
+// reconnecting (the Baileys default behaviour) rather than N strangers
+// — which is what WhatsApp's per-IP rate-limit punishes hardest.
 func (m *Manager) StartPairing(ctx context.Context, userID uuid.UUID, phone string) (string, time.Time, error) {
 	// Strip + and any spacing — whatsmeow wants pure digits for PairPhone.
 	cleanPhone := strings.NewReplacer("+", "", " ", "", "-", "").Replace(phone)
 
-	// Drop any previous client for this user — they're starting over.
-	m.dropClient(userID)
+	// Reuse the device store if we still have it around; only the
+	// WebSocket-bearing Client gets torn down between attempts.
+	m.mu.Lock()
+	session, exists := m.sessions[userID]
+	if !exists {
+		session = &pendingPair{device: m.container.NewDevice()}
+		m.sessions[userID] = session
+	} else if session.client != nil {
+		// Old client lingered from a previous attempt — close it cleanly
+		// before we create a new one over the same device store.
+		session.client.Disconnect()
+		session.client = nil
+	}
+	deviceStore := session.device
+	m.mu.Unlock()
 
-	deviceStore := m.container.NewDevice()
 	client := whatsmeow.NewClient(deviceStore, m.logger)
+	m.mu.Lock()
+	session.client = client
+	m.mu.Unlock()
 
 	client.AddEventHandler(m.eventHandler(userID))
 
@@ -82,16 +118,26 @@ func (m *Manager) StartPairing(ctx context.Context, userID uuid.UUID, phone stri
 		Str("phone", cleanPhone).
 		Msg("wa: connecting for pair")
 
+	// fail tears down the WebSocket but keeps the device store around so
+	// the next attempt reuses the same identity.
+	fail := func(wrap string, err error) (string, time.Time, error) {
+		client.Disconnect()
+		m.mu.Lock()
+		session.client = nil
+		m.mu.Unlock()
+		return "", time.Time{}, fmt.Errorf("%s: %w", wrap, err)
+	}
+
 	// Subscribe to the QR channel BEFORE Connect — whatsmeow's package docs
 	// say "wait for events.QR before PairPhone to ensure the connection is
 	// fully established". Without this, PairPhone can race the WS handshake
 	// and WhatsApp closes the socket (the EOF we kept seeing).
 	qrChan, err := client.GetQRChannel(ctx)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("qr channel: %w", err)
+		return fail("qr channel", err)
 	}
 	if err := client.Connect(); err != nil {
-		return "", time.Time{}, fmt.Errorf("connect to whatsapp: %w", err)
+		return fail("connect to whatsapp", err)
 	}
 
 	// Wait for the first QR-style signal — that proves the connection is
@@ -102,11 +148,9 @@ func (m *Manager) StartPairing(ctx context.Context, userID uuid.UUID, phone stri
 	case evt := <-qrChan:
 		log.Info().Str("user", userID.String()).Str("event", evt.Event).Msg("wa: qr channel ready")
 	case <-time.After(10 * time.Second):
-		client.Disconnect()
-		return "", time.Time{}, fmt.Errorf("connect to whatsapp: timed out waiting for handshake")
+		return fail("connect to whatsapp", fmt.Errorf("timed out waiting for handshake"))
 	case <-ctx.Done():
-		client.Disconnect()
-		return "", time.Time{}, ctx.Err()
+		return fail("connect to whatsapp", ctx.Err())
 	}
 
 	// `showPushNotification = false`: don't push to the target phone (we
@@ -124,8 +168,7 @@ func (m *Manager) StartPairing(ctx context.Context, userID uuid.UUID, phone stri
 			Str("phone", cleanPhone).
 			Str("raw_error", err.Error()).
 			Msg("wa: PairPhone failed")
-		client.Disconnect()
-		return "", time.Time{}, fmt.Errorf("pair phone: %w", err)
+		return fail("pair phone", err)
 	}
 	log.Info().
 		Str("user", userID.String()).
@@ -136,34 +179,32 @@ func (m *Manager) StartPairing(ctx context.Context, userID uuid.UUID, phone stri
 	// the client can show a countdown / refresh button at the right time.
 	expires := time.Now().Add(120 * time.Second)
 
-	m.mu.Lock()
-	m.clients[userID] = client
-	m.mu.Unlock()
-
+	// Session entry was created at the top — no need to re-set client here.
 	return formatPairingCode(code), expires, nil
 }
 
 // IsConnected reports whether we still have a live client and it's online.
 func (m *Manager) IsConnected(userID uuid.UUID) bool {
 	m.mu.Lock()
-	c, ok := m.clients[userID]
+	s, ok := m.sessions[userID]
 	m.mu.Unlock()
-	return ok && c != nil && c.IsConnected() && c.IsLoggedIn()
+	return ok && s != nil && s.client != nil && s.client.IsConnected() && s.client.IsLoggedIn()
 }
 
 // Unlink logs out from WhatsApp (server-side revoke) and drops the local
 // session. If the user wasn't connected, this is a no-op success.
 func (m *Manager) Unlink(ctx context.Context, userID uuid.UUID) error {
 	m.mu.Lock()
-	c, ok := m.clients[userID]
+	s, ok := m.sessions[userID]
 	if ok {
-		delete(m.clients, userID)
+		delete(m.sessions, userID)
 	}
 	m.mu.Unlock()
 
-	if !ok || c == nil {
+	if !ok || s == nil || s.client == nil {
 		return nil
 	}
+	c := s.client
 	if c.IsLoggedIn() {
 		if err := c.Logout(ctx); err != nil && !errors.Is(err, whatsmeow.ErrNotLoggedIn) {
 			c.Disconnect()
@@ -174,15 +215,17 @@ func (m *Manager) Unlink(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
-func (m *Manager) dropClient(userID uuid.UUID) {
+// dropSession discards both client and device cache for the user. Used
+// after a remote LoggedOut event — the device identity is now invalid.
+func (m *Manager) dropSession(userID uuid.UUID) {
 	m.mu.Lock()
-	c, ok := m.clients[userID]
+	s, ok := m.sessions[userID]
 	if ok {
-		delete(m.clients, userID)
+		delete(m.sessions, userID)
 	}
 	m.mu.Unlock()
-	if ok && c != nil {
-		c.Disconnect()
+	if ok && s != nil && s.client != nil {
+		s.client.Disconnect()
 	}
 }
 
@@ -216,7 +259,7 @@ func (m *Manager) eventHandler(userID uuid.UUID) func(any) {
 			log.Warn().Str("user", userID.String()).Str("reason", reason).Msg("wa: pair_error")
 		case *whatsmeowEvents.LoggedOut:
 			_ = m.repo.MarkDisconnected(ctx, userID)
-			m.dropClient(userID)
+			m.dropSession(userID)
 			log.Info().Str("user", userID.String()).Msg("wa: logged_out")
 		}
 	}
