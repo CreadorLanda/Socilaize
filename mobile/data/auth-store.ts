@@ -67,9 +67,17 @@ export async function clearSession(): Promise<void> {
   const refresh = await SecureStore.getItemAsync(REFRESH_KEY);
   if (refresh) {
     try {
-      await authLogout(refresh);
+      // Race against a 3s deadline — fetch in RN has no default timeout,
+      // so without this a flaky network would keep the user stuck on the
+      // logout dialog forever.
+      await Promise.race([
+        authLogout(refresh),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('logout_timeout')), 3000),
+        ),
+      ]);
     } catch {
-      /* network down / server unreachable — proceed with the local wipe */
+      /* server unreachable / timeout — proceed with the local wipe */
     }
   }
   await Promise.all([

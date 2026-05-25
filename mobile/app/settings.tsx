@@ -69,8 +69,13 @@ export default function SettingsScreen() {
       {
         text: t('settings.logout_confirm'),
         style: 'destructive',
-        onPress: async () => {
-          await clearSession();
+        onPress: () => {
+          // Fire-and-forget: never let a stuck network keep the user on
+          // this screen. Navigate first; the SecureStore wipe and the
+          // server revocation race their own deadlines in the background.
+          clearSession().catch(() => {
+            /* swallowed — local SecureStore wipe is best-effort */
+          });
           // replace, not push — the user shouldn't be able to swipe back
           // into a screen that still thinks it's authenticated.
           router.replace('/onboarding');
