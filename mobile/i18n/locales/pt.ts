@@ -16,12 +16,17 @@ export default {
     step_counter: 'Passo {{step}} de {{total}}',
     back: 'Voltar',
     continue: 'Continuar',
+    sending: 'A enviar…',
+    verifying: 'A verificar…',
+    saving: 'A guardar…',
 
     phone: {
       title: 'Qual é o teu número?',
       subtitle: 'Vamos enviar um código de verificação. Podem aplicar-se tarifas de SMS.',
       placeholder: '912 345 678',
       common_codes: 'Códigos comuns:',
+      rate_limited: 'Demasiadas tentativas — tenta daqui a um momento.',
+      send_failed: 'Não foi possível enviar o código. Confirma a tua ligação.',
     },
     verify: {
       title: 'Confirma o teu número',
@@ -29,6 +34,8 @@ export default {
       resend_in: 'Reenviar código em {{seconds}}s',
       resend: 'Reenviar código',
       cta: 'Confirmar',
+      invalid: 'O código está errado ou expirou.',
+      failed: 'Algo correu mal. Tenta novamente.',
     },
     profile: {
       title: 'Configura o teu perfil',

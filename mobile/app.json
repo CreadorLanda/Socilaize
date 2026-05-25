@@ -47,7 +47,8 @@
           "cameraPermission": "Socialize accesses your camera so you can take and record photos and videos to share."
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

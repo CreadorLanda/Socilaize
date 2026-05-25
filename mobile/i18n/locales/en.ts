@@ -16,12 +16,17 @@ export default {
     step_counter: 'Step {{step}} of {{total}}',
     back: 'Back',
     continue: 'Continue',
+    sending: 'Sending…',
+    verifying: 'Verifying…',
+    saving: 'Saving…',
 
     phone: {
       title: "What's your phone number?",
       subtitle: "We'll send you a verification code. Standard message rates may apply.",
       placeholder: '912 345 678',
       common_codes: 'Common codes:',
+      rate_limited: 'Too many attempts — try again in a moment.',
+      send_failed: 'Could not send the code. Check your connection.',
     },
     verify: {
       title: 'Verify your number',
@@ -29,6 +34,8 @@ export default {
       resend_in: 'Resend code in {{seconds}}s',
       resend: 'Resend code',
       cta: 'Verify',
+      invalid: 'That code is wrong or expired.',
+      failed: 'Something went wrong. Try again.',
     },
     profile: {
       title: 'Set up your profile',
