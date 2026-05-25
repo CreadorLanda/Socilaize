@@ -94,7 +94,7 @@ export default {
       continue_cta: 'Continue',
       error_invalid_phone: 'Enter a phone number in international format (e.g. +244912345678).',
       error_not_on_whatsapp: "This number isn't registered on WhatsApp. Try a different one.",
-      error_rate_limited: 'WhatsApp is asking us to slow down. Wait ~30 seconds and try again.',
+      error_rate_limited: "WhatsApp has rate-limited this number. Wait at least 5 minutes — or longer if you've tried often — before trying again. Pairing too often locks the number out for hours.",
       error_failed: "We couldn't reach WhatsApp. Try again, or skip and link later.",
     },
   },

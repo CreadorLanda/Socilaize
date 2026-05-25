@@ -56,6 +56,7 @@ type StatusResponse struct {
 }
 
 // bridgeRow is the persistence-level shape, populated from wa_bridges.
+// UpdatedAt is used by the service's local rate-limit cooldown check.
 type bridgeRow struct {
 	Phone            string
 	JID              *string
@@ -64,4 +65,5 @@ type bridgeRow struct {
 	PairingExpiresAt *time.Time
 	LastError        *string
 	LinkedAt         *time.Time
+	UpdatedAt        *time.Time
 }

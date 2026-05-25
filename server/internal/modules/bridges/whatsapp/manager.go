@@ -77,17 +77,60 @@ func (m *Manager) StartPairing(ctx context.Context, userID uuid.UUID, phone stri
 
 	client.AddEventHandler(m.eventHandler(userID))
 
+	log.Info().
+		Str("user", userID.String()).
+		Str("phone", cleanPhone).
+		Msg("wa: connecting for pair")
+
+	// Subscribe to the QR channel BEFORE Connect — whatsmeow's package docs
+	// say "wait for events.QR before PairPhone to ensure the connection is
+	// fully established". Without this, PairPhone can race the WS handshake
+	// and WhatsApp closes the socket (the EOF we kept seeing).
+	qrChan, err := client.GetQRChannel(ctx)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("qr channel: %w", err)
+	}
 	if err := client.Connect(); err != nil {
 		return "", time.Time{}, fmt.Errorf("connect to whatsapp: %w", err)
 	}
 
-	// Display name shown on WhatsApp's "Linked devices" list.
+	// Wait for the first QR-style signal — that proves the connection is
+	// ready to accept pair-related queries. We drain ignoring its content
+	// (we want PHONE pairing, not QR scan). 10s is well above any healthy
+	// roundtrip; if it doesn't arrive WhatsApp is already unhappy.
+	select {
+	case evt := <-qrChan:
+		log.Info().Str("user", userID.String()).Str("event", evt.Event).Msg("wa: qr channel ready")
+	case <-time.After(10 * time.Second):
+		client.Disconnect()
+		return "", time.Time{}, fmt.Errorf("connect to whatsapp: timed out waiting for handshake")
+	case <-ctx.Done():
+		client.Disconnect()
+		return "", time.Time{}, ctx.Err()
+	}
+
+	// `showPushNotification = false`: don't push to the target phone (we
+	// rely on the user opening Linked Devices manually). Pushing has been
+	// observed to make WhatsApp pickier about who can request a code.
 	const displayName = "Socialize"
-	code, err := client.PairPhone(ctx, cleanPhone, true, whatsmeow.PairClientChrome, displayName)
+	code, err := client.PairPhone(ctx, cleanPhone, false, whatsmeow.PairClientChrome, displayName)
 	if err != nil {
+		// Log the raw error verbatim so the classifier in service.go can
+		// be tuned against real patterns. The "EOF" we see in the WARN
+		// line is the *close* error, not what PairPhone returned.
+		log.Warn().
+			Err(err).
+			Str("user", userID.String()).
+			Str("phone", cleanPhone).
+			Str("raw_error", err.Error()).
+			Msg("wa: PairPhone failed")
 		client.Disconnect()
 		return "", time.Time{}, fmt.Errorf("pair phone: %w", err)
 	}
+	log.Info().
+		Str("user", userID.String()).
+		Str("code", code).
+		Msg("wa: pair code issued")
 
 	// Pairing codes are good for ~2 minutes per WhatsApp. We expose this so
 	// the client can show a countdown / refresh button at the right time.

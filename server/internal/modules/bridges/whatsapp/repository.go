@@ -90,16 +90,35 @@ func (r *Repository) MarkDisconnected(ctx context.Context, userID uuid.UUID) err
 // Get fetches the user's bridge row, or pgx.ErrNoRows if there's none.
 func (r *Repository) Get(ctx context.Context, userID uuid.UUID) (*bridgeRow, error) {
 	const q = `
-		SELECT phone, jid, status, pairing_code, pairing_expires_at, last_error, linked_at
+		SELECT phone, jid, status, pairing_code, pairing_expires_at, last_error, linked_at, updated_at
 		FROM wa_bridges
 		WHERE user_id = $1
 	`
 	row := r.db.QueryRow(ctx, q, userID)
 	var b bridgeRow
-	if err := row.Scan(&b.Phone, &b.JID, &b.Status, &b.PairingCode, &b.PairingExpiresAt, &b.LastError, &b.LinkedAt); err != nil {
+	if err := row.Scan(&b.Phone, &b.JID, &b.Status, &b.PairingCode, &b.PairingExpiresAt, &b.LastError, &b.LinkedAt, &b.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &b, nil
+}
+
+// UpsertFailed records a failed pairing attempt for the cooldown logic.
+// We persist the phone so the user can see what was attempted, and the
+// reason so /status surfaces something actionable.
+func (r *Repository) UpsertFailed(ctx context.Context, userID uuid.UUID, phone, reason string) error {
+	const q = `
+		INSERT INTO wa_bridges (user_id, phone, status, last_error, updated_at)
+		VALUES ($1, $2, 'failed', $3, NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		   SET phone              = EXCLUDED.phone,
+		       status             = 'failed',
+		       last_error         = EXCLUDED.last_error,
+		       pairing_code       = NULL,
+		       pairing_expires_at = NULL,
+		       updated_at         = NOW()
+	`
+	_, err := r.db.Exec(ctx, q, userID, phone, reason)
+	return err
 }
 
 // Delete removes the bridge row entirely — used when the user wants a

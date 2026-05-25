@@ -94,7 +94,7 @@ export default {
       continue_cta: 'Continuar',
       error_invalid_phone: 'Insere um número em formato internacional (ex.: +244912345678).',
       error_not_on_whatsapp: 'Este número não está registado no WhatsApp. Tenta outro.',
-      error_rate_limited: 'O WhatsApp está a pedir-nos para abrandar. Espera ~30 segundos e tenta de novo.',
+      error_rate_limited: 'O WhatsApp limitou este número. Espera pelo menos 5 minutos — ou mais se já tentaste várias vezes — antes de tentar de novo. Repetir muitas vezes bloqueia o número por várias horas.',
       error_failed: 'Não conseguimos contactar o WhatsApp. Tenta de novo ou salta para ligar depois.',
     },
   },

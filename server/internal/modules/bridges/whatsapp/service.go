@@ -31,12 +31,17 @@ func NewService(repo *Repository, m *Manager) *Service {
 	return &Service{repo: repo, manager: m}
 }
 
+// pairCooldown is how long we refuse to talk to WhatsApp again after a
+// rate-limit response. WhatsApp's own cooldown after a 429 tends to last
+// several minutes minimum; we wait 5 to give the IP time to recover.
+const pairCooldown = 5 * time.Minute
+
 // Link starts a phone-pairing session.
 //
-// Defends against accidental floods:
-//   - if a valid pending code already exists for this user (and the phone
-//     hasn't changed), reuse it. Hitting WhatsApp again for the same code
-//     wastes both rate-limit budget and a fresh device row.
+// Defends against accidental floods on three layers:
+//   - existing valid 'pending' row for same phone → reuse, no upstream call.
+//   - recent 'failed' row whose last error was a rate limit → refuse our own
+//     /link locally for `pairCooldown` to stop deepening WhatsApp's ban.
 //   - otherwise: request a new code, persist 'pending'.
 func (s *Service) Link(ctx context.Context, userID uuid.UUID, phone string) (LinkResponse, error) {
 	existing, err := s.repo.Get(ctx, userID)
@@ -58,10 +63,21 @@ func (s *Service) Link(ctx context.Context, userID uuid.UUID, phone string) (Lin
 			PairingExpiresAt: *existing.PairingExpiresAt,
 		}, nil
 	}
+	// Local backoff after a recent rate-limit. The repository's updated_at
+	// column rolls forward on each Mark*, so we look at the row's age.
+	if existing != nil && isRecentRateLimit(existing) {
+		return LinkResponse{}, ErrPairingRateLimited
+	}
 
 	code, expires, err := s.manager.StartPairing(ctx, userID, phone)
 	if err != nil {
-		return LinkResponse{}, classifyPairingError(err)
+		classified := classifyPairingError(err)
+		// Persist the rate-limit so the next /link inside `pairCooldown`
+		// short-circuits without bothering WhatsApp.
+		if errors.Is(classified, ErrPairingRateLimited) {
+			_ = s.repo.UpsertFailed(ctx, userID, phone, "rate-overlimit")
+		}
+		return LinkResponse{}, classified
 	}
 	if err := s.repo.UpsertPending(ctx, userID, phone, code, expires); err != nil {
 		return LinkResponse{}, fmt.Errorf("persist pending: %w", err)
@@ -74,16 +90,39 @@ func (s *Service) Link(ctx context.Context, userID uuid.UUID, phone string) (Lin
 	}, nil
 }
 
-// classifyPairingError maps whatsmeow's raw failure modes to typed sentinels
-// the controller can turn into useful HTTP codes / messages. The patterns
-// here come from observed behaviour:
+// isRecentRateLimit returns true when the row was last touched within the
+// cooldown window AND its last_error indicates a WhatsApp rate-limit.
+func isRecentRateLimit(b *bridgeRow) bool {
+	if b.Status != StatusFailed || b.LastError == nil {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(*b.LastError), "rate") {
+		return false
+	}
+	// The row doesn't carry updated_at directly (it's a select-shape thing);
+	// we use linked_at when set, otherwise fall through. The repository
+	// MarkFailed call sets last_error and we know it's "now-ish". For a
+	// stricter check we'd need updated_at on bridgeRow — added below.
+	if b.UpdatedAt == nil {
+		return false
+	}
+	return time.Since(*b.UpdatedAt) < pairCooldown
+}
+
+// classifyPairingError maps whatsmeow's raw failure modes to typed sentinels.
+// Patterns observed in the wild:
 //
-//   - "EOF" / "frame header" → WhatsApp closed the socket without a reason
-//     (typical of rate-limit and unsupported clients).
-//   - "info query returned status 400" → number isn't on WhatsApp.
+//   - "status 429" / "rate-overlimit"     → WhatsApp's pair rate limit (the
+//                                            actual error returned for our
+//                                            repeat attempts).
+//   - "EOF" / "frame header"              → WhatsApp closed the socket;
+//                                            usually downstream of a 429.
+//   - "status 400" / "bad-request"        → number isn't on WhatsApp.
 func classifyPairingError(err error) error {
 	msg := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(msg, "status 429"), strings.Contains(msg, "rate-overlimit"):
+		return ErrPairingRateLimited
 	case strings.Contains(msg, "eof"), strings.Contains(msg, "frame header"):
 		return ErrPairingRateLimited
 	case strings.Contains(msg, "status 400"), strings.Contains(msg, "bad-request"):
