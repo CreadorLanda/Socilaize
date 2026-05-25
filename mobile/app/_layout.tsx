@@ -53,7 +53,9 @@ export default function RootLayout() {
             <Stack.Screen name="auth" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-info/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="channel-info/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
             <Stack.Screen name="calls" options={{ headerShown: false }} />

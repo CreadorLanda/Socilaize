@@ -825,13 +825,9 @@ export default function ChatScreen() {
           <Pressable
             style={styles.peer}
             hitSlop={6}
-            onPress={
-              isGroup
-                ? () => router.push({ pathname: '/modal', params: { groupId: chat.id } })
-                : undefined
-            }
-            accessibilityRole={isGroup ? 'button' : undefined}
-            accessibilityLabel={isGroup ? t('chat.group_settings') : undefined}
+            onPress={() => router.push(`/chat-info/${chat.id}`)}
+            accessibilityRole="button"
+            accessibilityLabel={isGroup ? t('chat_info.group_title') : t('chat_info.title')}
           >
             <View>
               <Image
@@ -884,8 +880,8 @@ export default function ChatScreen() {
               <Pressable
                 hitSlop={8}
                 style={styles.iconBtn}
-                onPress={() => router.push({ pathname: '/modal', params: { groupId: chat.id } })}
-                accessibilityLabel={t('chat.group_settings')}
+                onPress={() => router.push(`/chat-info/${chat.id}`)}
+                accessibilityLabel={t('chat_info.group_title')}
               >
                 <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
               </Pressable>
