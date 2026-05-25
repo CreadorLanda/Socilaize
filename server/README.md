@@ -88,6 +88,9 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `PATCH /api/users/me`                    | required | ✅ partial updates (username, name, bio, avatar, privacy) |
 | `GET  /api/users/availability?username=` | required | ✅ validates + checks uniqueness    |
 | `GET  /api/users/by-username/:username`  | required | ✅ honours username_public          |
+| `PUT  /api/users/me/keys`                | required | ✅ identity + signed + OTK upload   |
+| `GET  /api/users/me/keys/count`          | required | ✅ OTK reservoir gauge              |
+| `GET  /api/users/by-username/:username/keys` | required | ✅ X3DH bundle, consumes one OTK |
 | `POST   /api/bridges/whatsapp/link`      | required | ⛔ 501 — `backend/bridge-whatsapp`  |
 | `DELETE /api/bridges/whatsapp/link`      | required | ⛔ 501 — `backend/bridge-whatsapp`  |
 | `GET    /api/bridges/whatsapp/status`    | required | ⛔ 501 — `backend/bridge-whatsapp`  |

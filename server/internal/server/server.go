@@ -16,6 +16,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/auth"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/bridges/whatsapp"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 	rdplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/redis"
@@ -67,8 +68,14 @@ func New(cfg config.Config) (*Server, error) {
 	authed := api.Group("")
 	authed.Use(middleware.Auth([]byte(cfg.JWT.Secret)))
 
-	usersCtl := users.NewController(users.NewService(users.NewRepository(pg)))
+	usersRepo := users.NewRepository(pg)
+	usersCtl := users.NewController(users.NewService(usersRepo))
 	users.Register(authed, usersCtl)
+
+	// Pre-key bundles for X3DH. Reuses the users repository to resolve
+	// /by-username/:handle lookups.
+	keysCtl := keys.NewController(keys.NewService(keys.NewRepository(pg), usersRepo))
+	keys.Register(authed, keysCtl)
 
 	// WhatsApp bridge (skeleton). Sits behind auth — only signed-in users
 	// can link/unlink/inspect their bridge.
