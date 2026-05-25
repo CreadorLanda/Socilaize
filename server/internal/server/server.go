@@ -78,18 +78,20 @@ func New(cfg config.Config) (*Server, error) {
 	keysCtl := keys.NewController(keys.NewService(keys.NewRepository(pg), usersRepo))
 	keys.Register(authed, keysCtl)
 
-	// WhatsApp bridge — embeds whatsmeow directly. The Manager owns the
-	// per-user whatsmeow.Client lifecycle; closing the server disconnects
-	// every active client.
+	// WhatsApp bridge — thin HTTP client to the Baileys sidecar. The
+	// sidecar (server/wa-bridge) owns the WhatsApp WebSocket and creds;
+	// we only orchestrate from Go. Webhook events flow back via the
+	// internal route below, guarded by the shared internal token.
 	waRepo := whatsapp.NewRepository(pg)
-	waMgr, err := whatsapp.NewManager(ctx, cfg.Postgres.URL, waRepo)
-	if err != nil {
-		pg.Close()
-		_ = rdb.Close()
-		return nil, err
-	}
+	waMgr := whatsapp.NewManager(cfg.WA.BridgeURL, cfg.WA.InternalToken)
 	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr))
 	whatsapp.Register(authed, waCtl)
+
+	// Inbound bridge webhook. Mounted OUTSIDE the authed group because it
+	// uses its own Bearer-token check against the shared internal token,
+	// not the user-facing JWT auth.
+	waWebhook := whatsapp.NewWebhookController(waRepo, cfg.WA.InternalToken)
+	api.POST("/internal/wa/events", waWebhook.PostEvent)
 
 	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr}, nil
 }
