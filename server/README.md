@@ -92,9 +92,9 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `PUT  /api/users/me/keys`                | required | ✅ identity + signed + OTK upload   |
 | `GET  /api/users/me/keys/count`          | required | ✅ OTK reservoir gauge              |
 | `GET  /api/users/by-username/:username/keys` | required | ✅ X3DH bundle, consumes one OTK |
-| `POST   /api/bridges/whatsapp/link`      | required | ⛔ 501 — `backend/bridge-whatsapp`  |
-| `DELETE /api/bridges/whatsapp/link`      | required | ⛔ 501 — `backend/bridge-whatsapp`  |
-| `GET    /api/bridges/whatsapp/status`    | required | ⛔ 501 — `backend/bridge-whatsapp`  |
+| `POST   /api/bridges/whatsapp/link`      | required | ✅ phone-pairing via whatsmeow      |
+| `GET    /api/bridges/whatsapp/status`    | required | ✅ polled view + pairing code TTL   |
+| `DELETE /api/bridges/whatsapp/link`      | required | ✅ remote logout + drop session     |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.

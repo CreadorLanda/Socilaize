@@ -29,6 +29,7 @@ type Server struct {
 	router http.Handler
 	pg     *pgxpool.Pool
 	rdb    *redis.Client
+	wa     *whatsapp.Manager
 }
 
 // New constructs the Server: opens the platform connections, builds each
@@ -77,18 +78,29 @@ func New(cfg config.Config) (*Server, error) {
 	keysCtl := keys.NewController(keys.NewService(keys.NewRepository(pg), usersRepo))
 	keys.Register(authed, keysCtl)
 
-	// WhatsApp bridge (skeleton). Sits behind auth — only signed-in users
-	// can link/unlink/inspect their bridge.
-	waCtl := whatsapp.NewController(whatsapp.NewService(pg, rdb))
+	// WhatsApp bridge — embeds whatsmeow directly. The Manager owns the
+	// per-user whatsmeow.Client lifecycle; closing the server disconnects
+	// every active client.
+	waRepo := whatsapp.NewRepository(pg)
+	waMgr, err := whatsapp.NewManager(ctx, cfg.Postgres.URL, waRepo)
+	if err != nil {
+		pg.Close()
+		_ = rdb.Close()
+		return nil, err
+	}
+	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr))
 	whatsapp.Register(authed, waCtl)
 
-	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb}, nil
+	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.router }
 
 // Close releases platform connections. Safe to call after Shutdown.
 func (s *Server) Close() {
+	if s.wa != nil {
+		s.wa.Close()
+	}
 	if s.rdb != nil {
 		_ = s.rdb.Close()
 	}
