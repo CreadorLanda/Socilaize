@@ -8,6 +8,7 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View }
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { clearSession } from '@/data/auth-store';
 import { useProfile } from '@/data/profile-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
@@ -60,6 +61,21 @@ export default function SettingsScreen() {
     Alert.alert(t('settings.clear_cache'), t('settings.clear_cache_confirm', { size: '248 MB' }), [
       { text: t('settings.cancel'), style: 'cancel' },
       { text: t('settings.clear'), style: 'destructive' },
+    ]);
+
+  const confirmLogout = () =>
+    Alert.alert(t('settings.logout_title'), t('settings.logout_body'), [
+      { text: t('settings.cancel'), style: 'cancel' },
+      {
+        text: t('settings.logout_confirm'),
+        style: 'destructive',
+        onPress: async () => {
+          await clearSession();
+          // replace, not push — the user shouldn't be able to swipe back
+          // into a screen that still thinks it's authenticated.
+          router.replace('/onboarding');
+        },
+      },
     ]);
 
   return (
@@ -259,6 +275,16 @@ export default function SettingsScreen() {
             icon="document-text-outline"
             label={t('settings.about_terms')}
             onPress={() => Linking.openURL('https://socialize.app/terms')}
+            last
+          />
+        </Group>
+
+        <Group title={t('settings.section_session')}>
+          <Row
+            icon="log-out-outline"
+            label={t('settings.logout')}
+            danger
+            onPress={confirmLogout}
             last
           />
         </Group>

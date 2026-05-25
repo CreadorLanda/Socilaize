@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { useSyncExternalStore } from 'react';
 
+import { authLogout } from './api/auth';
 import type { ApiUser, Tokens } from './api/auth';
 import { ACCESS_KEY, REFRESH_KEY } from './api/client';
 
@@ -59,6 +60,18 @@ export async function setUser(user: ApiUser): Promise<void> {
 }
 
 export async function clearSession(): Promise<void> {
+  // Best-effort server-side revocation BEFORE we wipe the token locally.
+  // If the network is gone, we still proceed — the local wipe is what the
+  // user expects from "logout". The family-tracking on the server means a
+  // stale token won't be reusable for long anyway.
+  const refresh = await SecureStore.getItemAsync(REFRESH_KEY);
+  if (refresh) {
+    try {
+      await authLogout(refresh);
+    } catch {
+      /* network down / server unreachable — proceed with the local wipe */
+    }
+  }
   await Promise.all([
     SecureStore.deleteItemAsync(ACCESS_KEY),
     SecureStore.deleteItemAsync(REFRESH_KEY),

@@ -41,3 +41,7 @@ export const authVerify = (input: {
 
 export const authRefresh = (refresh_token: string) =>
   api.post<{ tokens: Tokens }>('/api/auth/refresh', { refresh_token }, { auth: false });
+
+/** Server-side revocation of the refresh-token family. Idempotent. */
+export const authLogout = (refresh_token: string) =>
+  api.post<void>('/api/auth/logout', { refresh_token }, { auth: false });
