@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/CreadorLanda/Socilaize/server/internal/config"
+	"github.com/CreadorLanda/Socilaize/server/internal/platform/tokens"
 )
 
 // Sentinel errors translated to HTTP status by the controller.
@@ -21,6 +21,7 @@ var (
 	ErrInvalidCode    = errors.New("invalid_code")
 	ErrCodeExpired    = errors.New("code_expired")
 	ErrRateLimited    = errors.New("rate_limited")
+	ErrInvalidRefresh = errors.New("invalid_refresh")
 	ErrNotImplemented = errors.New("not_implemented")
 )
 
@@ -99,30 +100,60 @@ func (s *Service) Verify(ctx context.Context, in VerifyRequest) (*Tokens, *User,
 	return tokens, user, nil
 }
 
-// Refresh rotates a refresh token. The repository layer should track the
-// refresh family to detect re-use; this skeleton emits a fresh pair.
-func (s *Service) Refresh(_ context.Context, _ string) (*Tokens, error) {
-	return nil, ErrNotImplemented
+// Refresh rotates an existing refresh token into a new pair, in place on the
+// same session row. The session is looked up by the hash of the presented
+// refresh token, which doubles as a fast revocation point — if the row is
+// gone (logout / wipe), the token is dead.
+//
+// What's intentionally NOT here yet: refresh-token family tracking (replay
+// detection). Lands in a follow-up with a small schema change. For now the
+// happy path is the only path.
+func (s *Service) Refresh(ctx context.Context, refresh string) (*Tokens, error) {
+	claims, err := tokens.Parse([]byte(s.cfg.Secret), refresh)
+	if err != nil || claims.Type != tokens.TypeRefresh {
+		return nil, ErrInvalidRefresh
+	}
+
+	session, err := s.repo.SessionByRefreshHash(ctx, sha256Bytes(refresh))
+	if IsNoRows(err) {
+		return nil, ErrInvalidRefresh
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup session: %w", err)
+	}
+	if session.ExpiresAt.Before(time.Now()) {
+		return nil, ErrInvalidRefresh
+	}
+
+	out, err := s.issueTokens(session.UserID, session.DeviceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.RotateSession(ctx, session.ID,
+		sha256Bytes(out.AccessToken), sha256Bytes(out.RefreshToken)); err != nil {
+		return nil, fmt.Errorf("rotate session: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Service) issueTokens(userID, deviceID uuid.UUID) (*Tokens, error) {
 	now := time.Now()
-	access, err := s.signJWT(jwt.MapClaims{
-		"sub": userID.String(),
-		"dev": deviceID.String(),
-		"iat": now.Unix(),
-		"exp": now.Add(s.cfg.AccessTokenTTL).Unix(),
-		"typ": "access",
+	access, err := tokens.Sign([]byte(s.cfg.Secret), tokens.Claims{
+		UserID:   userID,
+		DeviceID: deviceID,
+		Type:     tokens.TypeAccess,
+		IssuedAt: now,
+		Expires:  now.Add(s.cfg.AccessTokenTTL),
 	})
 	if err != nil {
 		return nil, err
 	}
-	refresh, err := s.signJWT(jwt.MapClaims{
-		"sub": userID.String(),
-		"dev": deviceID.String(),
-		"iat": now.Unix(),
-		"exp": now.Add(s.cfg.RefreshTokenTTL).Unix(),
-		"typ": "refresh",
+	refresh, err := tokens.Sign([]byte(s.cfg.Secret), tokens.Claims{
+		UserID:   userID,
+		DeviceID: deviceID,
+		Type:     tokens.TypeRefresh,
+		IssuedAt: now,
+		Expires:  now.Add(s.cfg.RefreshTokenTTL),
 	})
 	if err != nil {
 		return nil, err
@@ -132,11 +163,6 @@ func (s *Service) issueTokens(userID, deviceID uuid.UUID) (*Tokens, error) {
 		RefreshToken: refresh,
 		ExpiresAt:    now.Add(s.cfg.AccessTokenTTL),
 	}, nil
-}
-
-func (s *Service) signJWT(claims jwt.MapClaims) (string, error) {
-	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return t.SignedString([]byte(s.cfg.Secret))
 }
 
 // takeBucket implements a tiny fixed-window rate limit on Redis. Returns

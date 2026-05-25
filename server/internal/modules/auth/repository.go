@@ -2,11 +2,21 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// SessionRow is the slice of the sessions table the auth service needs.
+type SessionRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	DeviceID  uuid.UUID
+	ExpiresAt time.Time
+}
 
 // Repository owns SQL access for this module. Queries live next to each
 // other so a reviewer can see "all auth SQL" in one file.
@@ -58,6 +68,44 @@ func (r *Repository) CreateSession(ctx context.Context, userID, deviceID uuid.UU
 	`
 	_, err := r.db.Exec(ctx, q, uuid.New(), userID, deviceID, tokenHash, refreshHash)
 	return err
+}
+
+// SessionByRefreshHash looks up an active session by the hashed refresh token.
+// Returns pgx.ErrNoRows when the token doesn't match (caller treats as
+// 401 — no information leakage).
+func (r *Repository) SessionByRefreshHash(ctx context.Context, refreshHash []byte) (*SessionRow, error) {
+	const q = `
+		SELECT id, user_id, device_id, expires_at
+		FROM sessions
+		WHERE refresh_hash = $1
+	`
+	row := r.db.QueryRow(ctx, q, refreshHash)
+	var s SessionRow
+	if err := row.Scan(&s.ID, &s.UserID, &s.DeviceID, &s.ExpiresAt); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// RotateSession swaps the (token_hash, refresh_hash) pair on a session row in
+// place. We keep the same row to preserve creation history and identity —
+// rotation is logically the same session continuing with fresh credentials.
+func (r *Repository) RotateSession(ctx context.Context, sessionID uuid.UUID, tokenHash, refreshHash []byte) error {
+	const q = `
+		UPDATE sessions
+		SET token_hash = $1,
+		    refresh_hash = $2,
+		    expires_at = NOW() + INTERVAL '30 days'
+		WHERE id = $3
+	`
+	ct, err := r.db.Exec(ctx, q, tokenHash, refreshHash, sessionID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errors.New("session not found")
+	}
+	return nil
 }
 
 // RegisterDevice inserts or updates a device row, returning its id.

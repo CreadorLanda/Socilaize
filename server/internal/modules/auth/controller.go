@@ -68,7 +68,7 @@ func (c *Controller) PostRefresh(ctx *gin.Context) {
 
 func writeAuthError(ctx *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrCodeExpired):
+	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrCodeExpired), errors.Is(err, ErrInvalidRefresh):
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrRateLimited):
 		ctx.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
