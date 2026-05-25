@@ -19,6 +19,7 @@ export default function AuthLayout() {
         <Stack.Screen name="profile" />
         <Stack.Screen name="username" />
         <Stack.Screen name="permissions" />
+        <Stack.Screen name="whatsapp" />
       </Stack>
     </RegistrationProvider>
   );
