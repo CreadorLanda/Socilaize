@@ -66,6 +66,22 @@ func (c *Controller) PostRefresh(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"tokens": tokens})
 }
 
+// PostLogout revokes the family this refresh token belongs to. We accept
+// the token in the body (instead of the Authorization header) so a client
+// whose access token already expired can still cleanly sign out.
+func (c *Controller) PostLogout(ctx *gin.Context) {
+	var req RefreshRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	if err := c.svc.Logout(ctx.Request.Context(), req.RefreshToken); err != nil {
+		writeAuthError(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 func writeAuthError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidCode), errors.Is(err, ErrCodeExpired), errors.Is(err, ErrInvalidRefresh):

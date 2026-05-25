@@ -93,21 +93,26 @@ func (s *Service) Verify(ctx context.Context, in VerifyRequest) (*Tokens, *User,
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := s.repo.CreateSession(ctx, user.ID, deviceID,
+	if _, _, err := s.repo.CreateSession(ctx, user.ID, deviceID,
 		sha256Bytes(tokens.AccessToken), sha256Bytes(tokens.RefreshToken)); err != nil {
 		return nil, nil, fmt.Errorf("persist session: %w", err)
 	}
 	return tokens, user, nil
 }
 
-// Refresh rotates an existing refresh token into a new pair, in place on the
-// same session row. The session is looked up by the hash of the presented
-// refresh token, which doubles as a fast revocation point — if the row is
-// gone (logout / wipe), the token is dead.
+// Refresh rotates an existing refresh token into a new pair, advancing a
+// session family by one. Replay detection is the centrepiece here:
 //
-// What's intentionally NOT here yet: refresh-token family tracking (replay
-// detection). Lands in a follow-up with a small schema change. For now the
-// happy path is the only path.
+//   - happy path: present a live refresh token. The old session row is
+//     marked revoked and a new row joins the same family with fresh
+//     hashes. The new tokens go back to the caller.
+//   - reuse: present a *revoked* refresh token. The only legitimate
+//     caller has the live token; the revoked one can only be in the
+//     hands of a thief who captured it before rotation. We kill the
+//     entire family — both the attacker and the legitimate device are
+//     forced to re-auth, but the user finds out their account was
+//     touched (their next refresh fails) and the thief can't pivot.
+//   - unknown / expired / wrong-type: ErrInvalidRefresh.
 func (s *Service) Refresh(ctx context.Context, refresh string) (*Tokens, error) {
 	claims, err := tokens.Parse([]byte(s.cfg.Secret), refresh)
 	if err != nil || claims.Type != tokens.TypeRefresh {
@@ -121,6 +126,12 @@ func (s *Service) Refresh(ctx context.Context, refresh string) (*Tokens, error) 
 	if err != nil {
 		return nil, fmt.Errorf("lookup session: %w", err)
 	}
+	if session.Revoked {
+		// Replay! Burn the whole family. The legitimate device will
+		// notice next time it tries to refresh.
+		_ = s.repo.RevokeFamily(ctx, session.FamilyID)
+		return nil, ErrInvalidRefresh
+	}
 	if session.ExpiresAt.Before(time.Now()) {
 		return nil, ErrInvalidRefresh
 	}
@@ -129,11 +140,37 @@ func (s *Service) Refresh(ctx context.Context, refresh string) (*Tokens, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.RotateSession(ctx, session.ID,
+	if _, err := s.repo.RotateSession(ctx, *session,
 		sha256Bytes(out.AccessToken), sha256Bytes(out.RefreshToken)); err != nil {
+		if errors.Is(err, ErrAlreadyRevoked) {
+			// Lost the race against another rotation/replay — same
+			// signal as a reuse. Kill the family and refuse.
+			_ = s.repo.RevokeFamily(ctx, session.FamilyID)
+			return nil, ErrInvalidRefresh
+		}
 		return nil, fmt.Errorf("rotate session: %w", err)
 	}
 	return out, nil
+}
+
+// Logout revokes the family the presented refresh token belongs to. It's
+// idempotent and information-free — an unknown token returns success so
+// a caller without state can always "log out" safely.
+func (s *Service) Logout(ctx context.Context, refresh string) error {
+	if refresh == "" {
+		return nil
+	}
+	session, err := s.repo.SessionByRefreshHash(ctx, sha256Bytes(refresh))
+	if IsNoRows(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lookup session: %w", err)
+	}
+	if err := s.repo.RevokeFamily(ctx, session.FamilyID); err != nil {
+		return fmt.Errorf("revoke family: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) issueTokens(userID, deviceID uuid.UUID) (*Tokens, error) {

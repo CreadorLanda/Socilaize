@@ -83,7 +83,8 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `GET  /api/readyz`                       | public   | ✅ (pings pg + redis)               |
 | `POST /api/auth/start`                   | public   | ✅ OTP via Redis (5 min TTL)        |
 | `POST /api/auth/verify`                  | public   | ✅ creates user + issues JWT pair   |
-| `POST /api/auth/refresh`                 | public   | ✅ rotates the pair in place        |
+| `POST /api/auth/refresh`                 | public   | ✅ family rotation + replay detection |
+| `POST /api/auth/logout`                  | public   | ✅ revokes the refresh-token family |
 | `GET  /api/users/me`                     | required | ✅                                  |
 | `PATCH /api/users/me`                    | required | ✅ partial updates (username, name, bio, avatar, privacy) |
 | `GET  /api/users/availability?username=` | required | ✅ validates + checks uniqueness    |
