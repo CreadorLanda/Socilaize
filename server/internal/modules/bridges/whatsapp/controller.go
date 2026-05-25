@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -25,9 +26,18 @@ func (c *Controller) PostLink(ctx *gin.Context) {
 	}
 	res, err := c.svc.Link(ctx.Request.Context(), middleware.UserIDFrom(ctx), req.Phone)
 	if err != nil {
-		// Linking failures are usually upstream (WhatsApp servers, network).
-		// We don't try to distinguish — the client polls /status for detail.
-		ctx.JSON(http.StatusBadGateway, gin.H{"error": "pairing_failed", "detail": err.Error()})
+		switch {
+		case errors.Is(err, ErrPairingRateLimited):
+			// 429 with a hint — try again in ~30s; usually it's WhatsApp's
+			// per-IP cooldown after repeated attempts.
+			ctx.JSON(http.StatusTooManyRequests, gin.H{"error": "pairing_rate_limited"})
+		case errors.Is(err, ErrPhoneNotOnWhatsApp):
+			// 422 — the number itself is rejected by WhatsApp, not a server
+			// problem. The client can prompt for a different number.
+			ctx.JSON(http.StatusUnprocessableEntity, gin.H{"error": "phone_not_on_whatsapp"})
+		default:
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": "pairing_failed", "detail": err.Error()})
+		}
 		return
 	}
 	ctx.JSON(http.StatusOK, res)

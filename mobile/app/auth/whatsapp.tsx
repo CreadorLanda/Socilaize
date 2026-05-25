@@ -101,7 +101,13 @@ export default function WhatsappStepScreen() {
       setView('pending');
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.message || t('auth.whatsapp.error_failed'));
+        if (err.code === 'phone_not_on_whatsapp') {
+          setError(t('auth.whatsapp.error_not_on_whatsapp'));
+        } else if (err.code === 'pairing_rate_limited') {
+          setError(t('auth.whatsapp.error_rate_limited'));
+        } else {
+          setError(err.message || t('auth.whatsapp.error_failed'));
+        }
       } else {
         setError(t('auth.whatsapp.error_failed'));
       }

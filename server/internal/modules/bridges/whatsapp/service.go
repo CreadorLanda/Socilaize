@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -11,6 +13,13 @@ import (
 var (
 	ErrNotFound     = errors.New("bridge_not_found")
 	ErrPairingBusy  = errors.New("pairing_in_progress")
+	// ErrPairingRateLimited is returned when WhatsApp closes the socket too
+	// fast (typical of repeated attempts from one IP). Surface a clear UX
+	// message instead of the raw "EOF" the lib emits.
+	ErrPairingRateLimited = errors.New("pairing_rate_limited")
+	// ErrPhoneNotOnWhatsApp covers WhatsApp's "info query 400 bad-request"
+	// — that's how they refuse pairing for a number not on the platform.
+	ErrPhoneNotOnWhatsApp = errors.New("phone_not_on_whatsapp")
 )
 
 type Service struct {
@@ -22,12 +31,37 @@ func NewService(repo *Repository, m *Manager) *Service {
 	return &Service{repo: repo, manager: m}
 }
 
-// Link starts a phone-pairing session: request a code from WhatsApp,
-// persist a 'pending' row, return both to the controller.
+// Link starts a phone-pairing session.
+//
+// Defends against accidental floods:
+//   - if a valid pending code already exists for this user (and the phone
+//     hasn't changed), reuse it. Hitting WhatsApp again for the same code
+//     wastes both rate-limit budget and a fresh device row.
+//   - otherwise: request a new code, persist 'pending'.
 func (s *Service) Link(ctx context.Context, userID uuid.UUID, phone string) (LinkResponse, error) {
+	existing, err := s.repo.Get(ctx, userID)
+	if err != nil && !IsNoRows(err) {
+		return LinkResponse{}, fmt.Errorf("read existing bridge: %w", err)
+	}
+	if existing != nil &&
+		existing.Status == StatusPending &&
+		existing.Phone == phone &&
+		existing.PairingCode != nil &&
+		existing.PairingExpiresAt != nil &&
+		time.Until(*existing.PairingExpiresAt) > 10*time.Second {
+		// Same number, code still has > 10s to live — let the client use
+		// the one we already issued. Saves a roundtrip to WhatsApp.
+		return LinkResponse{
+			Status:           StatusPending,
+			Phone:            existing.Phone,
+			PairingCode:      *existing.PairingCode,
+			PairingExpiresAt: *existing.PairingExpiresAt,
+		}, nil
+	}
+
 	code, expires, err := s.manager.StartPairing(ctx, userID, phone)
 	if err != nil {
-		return LinkResponse{}, fmt.Errorf("start pairing: %w", err)
+		return LinkResponse{}, classifyPairingError(err)
 	}
 	if err := s.repo.UpsertPending(ctx, userID, phone, code, expires); err != nil {
 		return LinkResponse{}, fmt.Errorf("persist pending: %w", err)
@@ -38,6 +72,25 @@ func (s *Service) Link(ctx context.Context, userID uuid.UUID, phone string) (Lin
 		PairingCode:      code,
 		PairingExpiresAt: expires,
 	}, nil
+}
+
+// classifyPairingError maps whatsmeow's raw failure modes to typed sentinels
+// the controller can turn into useful HTTP codes / messages. The patterns
+// here come from observed behaviour:
+//
+//   - "EOF" / "frame header" → WhatsApp closed the socket without a reason
+//     (typical of rate-limit and unsupported clients).
+//   - "info query returned status 400" → number isn't on WhatsApp.
+func classifyPairingError(err error) error {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "eof"), strings.Contains(msg, "frame header"):
+		return ErrPairingRateLimited
+	case strings.Contains(msg, "status 400"), strings.Contains(msg, "bad-request"):
+		return ErrPhoneNotOnWhatsApp
+	default:
+		return fmt.Errorf("start pairing: %w", err)
+	}
 }
 
 // Status — the polled view. Reads the row, and if the row says "linked"
