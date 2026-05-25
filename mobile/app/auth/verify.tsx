@@ -86,6 +86,13 @@ export default function VerifyScreen() {
         platform: devicePlatform(),
       });
       await setSession(res.user, res.tokens);
+      // Returning users land straight in the app. The backend marks a fresh
+      // account with an empty display_name + a `u<hash>` placeholder username
+      // — so a non-empty display_name is a reliable "already onboarded" flag.
+      if (res.user.display_name.trim().length > 0) {
+        router.replace('/(tabs)');
+        return;
+      }
       // Seed the registration store so the profile/username steps can prefill.
       set('username', res.user.username);
       set('displayName', res.user.display_name);
