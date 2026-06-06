@@ -65,8 +65,17 @@ services:
       PORT: 3001
       # Both of these must match what the Go API uses.
       SOCIALIZE_INTERNAL_TOKEN: ${SOCIALIZE_INTERNAL_TOKEN:?missing SOCIALIZE_INTERNAL_TOKEN}
-      SOCIALIZE_WEBHOOK_URL: ${SOCIALIZE_WEBHOOK_URL:-http://host.docker.internal:8080/api/internal/wa/events}
+      # When mTLS is enabled, use the internal HTTPS port:
+      SOCIALIZE_WEBHOOK_URL: ${SOCIALIZE_WEBHOOK_URL:-https://host.docker.internal:9090/api/internal/wa/events}
       LOG_LEVEL: info
+      # mTLS client certs — must match the CA that signed the server cert.
+      # Mounted from the host via the volume below.
+      TLS_CA_CERT:      /app/certs/ca.pem
+      TLS_CLIENT_CERT:  /app/certs/client.pem
+      TLS_CLIENT_KEY:   /app/certs/client-key.pem
+    volumes:
+      - wa-bridge-auth:/app/auth_info
+      - ../../certs:/app/certs:ro
     extra_hosts:
       # Lets the sidecar reach the Go API running on the host (dev only).
       - "host.docker.internal:host-gateway"

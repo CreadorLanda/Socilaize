@@ -16,23 +16,35 @@ type Config struct {
 	Redis    RedisConfig
 	JWT      JWTConfig
 	WA       WAConfig
+	Crypto   CryptoConfig
 }
 
 // WAConfig wires the WhatsApp bridge sidecar (Baileys). The Go API only
 // talks to it via HTTP; this is the only place that needs to know the URL.
 type WAConfig struct {
-	// URL of the wa-bridge sidecar, e.g. http://wa-bridge:3001 in compose
-	// or http://localhost:3001 in dev. If empty, the bridge is disabled
-	// and /api/bridges/whatsapp/* returns 503.
-	BridgeURL string
-	// Shared bearer token. Both the Go API (when calling the sidecar) and
-	// the sidecar (when posting back webhooks) check this. Minimum 32
-	// bytes; mint with `openssl rand -hex 32`.
+	BridgeURL     string
 	InternalToken string
+	// InternalAddr is the mTLS-protected address for internal bridge
+	// webhooks (e.g. ":9090"). If empty the internal server is not started.
+	InternalAddr string
+}
+
+// CryptoConfig holds keys for at-rest encryption of message content.
+type CryptoConfig struct {
+	// MessageKey is a hex-encoded 32-byte AES-256 key. If empty, messages
+	// are stored in plaintext (dev fallback). Generate with:
+	//   openssl rand -hex 32
+	MessageKey string
 }
 
 type HTTPConfig struct {
 	Addr string
+	// TLS cert paths — when set the public server also supports HTTPS.
+	// For mTLS with the bridge, see WA.InternalAddr and TLSCA.
+	TLSCert     string
+	TLSKey      string
+	TLSCACert   string
+	TLSClientCA string
 }
 
 type PostgresConfig struct {
@@ -44,16 +56,20 @@ type RedisConfig struct {
 }
 
 type JWTConfig struct {
-	Secret             string
-	AccessTokenTTL     time.Duration
-	RefreshTokenTTL    time.Duration
+	Secret          string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
 		Env: getenv("APP_ENV", "dev"),
 		HTTP: HTTPConfig{
-			Addr: getenv("HTTP_ADDR", ":8080"),
+			Addr:        getenv("HTTP_ADDR", ":8080"),
+			TLSCert:     os.Getenv("TLS_SERVER_CERT"),
+			TLSKey:      os.Getenv("TLS_SERVER_KEY"),
+			TLSCACert:   os.Getenv("TLS_CA_CERT"),
+			TLSClientCA: os.Getenv("TLS_CLIENT_CA_CERT"),
 		},
 		Postgres: PostgresConfig{
 			URL: os.Getenv("POSTGRES_URL"),
@@ -69,6 +85,10 @@ func Load() (Config, error) {
 		WA: WAConfig{
 			BridgeURL:     os.Getenv("WA_BRIDGE_URL"),
 			InternalToken: os.Getenv("SOCIALIZE_INTERNAL_TOKEN"),
+			InternalAddr:  os.Getenv("WA_INTERNAL_ADDR"),
+		},
+		Crypto: CryptoConfig{
+			MessageKey: os.Getenv("WA_MESSAGE_KEY"),
 		},
 	}
 
@@ -103,7 +123,6 @@ func getenvDuration(key string, fallback time.Duration) time.Duration {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
-		// also accept seconds as an integer for convenience
 		if secs, err := strconv.Atoi(v); err == nil {
 			return time.Duration(secs) * time.Second
 		}

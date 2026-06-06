@@ -1,13 +1,11 @@
 // Package whatsapp is the Socialize API side of the WhatsApp bridge.
 //
-// Unlike the typical mautrix-whatsapp setup (which proxies through a Matrix
-// homeserver), this module embeds the whatsmeow library directly. We're not
-// a Matrix bridge — we relay messages between our own users and WhatsApp.
+// The Go API talks HTTP to a Baileys sidecar (server/wa-bridge). The
+// sidecar owns the WhatsApp WebSocket and per-user auth state on disk;
+// we handle persistence, routing, and the user-facing REST API.
 //
-// Each linked user has one in-process whatsmeow.Client driven by the bridge
-// Manager. Their session bytes live in the whatsmeow_* tables that the
-// sqlstore container manages automatically; everything we own
-// (status, pairing code, last error) lives in wa_bridges.
+// Each linked user has one entry in wa_bridges (status, pairing code).
+// Incoming messages land in wa_messages.
 package whatsapp
 
 import "time"
