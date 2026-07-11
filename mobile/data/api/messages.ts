@@ -1,11 +1,14 @@
 import { api } from './client';
 
+export type ChatStatus = 'active' | 'pending' | 'blocked';
+
 export interface ChatDTO {
   id: string;
   type: 'direct' | 'group';
   title?: string;
   avatar_url?: string;
   created_by: string;
+  status?: ChatStatus;
   created_at: string;
   last_message?: {
     content: string;
@@ -25,6 +28,8 @@ export interface MessageDTO {
   created_at: string;
   edited_at?: string;
   deleted_at?: string;
+  sender_name?: string;
+  sender_avatar?: string;
 }
 
 export interface SessionInitResponse {
@@ -64,6 +69,16 @@ export function sendMessage(
     message_type: messageType ?? 'text',
     reply_to_id: replyToId,
   });
+}
+
+/** Accept a pending friend request chat */
+export function acceptChat(chatId: string) {
+  return api.post<ChatDTO>(`/api/chats/${chatId}/accept`);
+}
+
+/** Block/decline a chat */
+export function blockChat(chatId: string) {
+  return api.post<void>(`/api/chats/${chatId}/block`);
 }
 
 /** List messages in a chat (newest first, paginated) */

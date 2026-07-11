@@ -11,6 +11,7 @@ export default {
     camera: 'Câmara',
     search: 'Pesquisar',
     more: 'Mais',
+    cancel: 'Cancelar',
   },
   auth: {
     step_counter: 'Passo {{step}} de {{total}}',
@@ -115,6 +116,7 @@ export default {
     filter_unread: 'Não lidas',
     filter_read: 'Lidas',
     filter_groups: 'Grupos',
+    filter_pending: 'Pedidos',
     filter_create_title: 'Novo filtro',
     filter_name_placeholder: 'Nome do filtro',
     filter_select_chats: 'Escolhe conversas',
@@ -124,6 +126,19 @@ export default {
     filter_delete_title: 'Remover filtro?',
     filter_delete: 'Remover',
     filter_cancel: 'Cancelar',
+  },
+  search: {
+    type_to_search: 'Digita pelo menos 2 caracteres para pesquisar…',
+    no_results: 'Nenhum utilizador encontrado. Tenta outro nome.',
+  },
+  friend_request: {
+    sent_waiting: 'Pedido de amizade enviado. Aguarda aceitação.',
+    pending_for_you: 'Pedido de amizade pendente',
+    waiting_placeholder: 'A aguardar aceitação…',
+    introduce_placeholder: 'Diz olá com uma mensagem…',
+    accept: 'Aceitar',
+    decline: 'Recusar',
+    declined: 'Pedido recusado',
   },
   discover: {
     title: 'Descobrir',
@@ -462,6 +477,7 @@ export default {
     section_help: 'Ajuda',
     section_about: 'Sobre',
     phone: 'Número de telefone',
+    phone_hidden: 'Oculto (verificado)',
     email: 'Endereço de email',
     email_empty: 'Adicionar email',
     delete_account: 'Eliminar conta',

@@ -75,6 +75,7 @@ export default function RootLayout() {
             <Stack.Screen name="chat-info/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel-info/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="search" options={{ headerShown: false, presentation: 'modal' }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
             <Stack.Screen name="calls" options={{ headerShown: false }} />

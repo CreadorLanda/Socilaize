@@ -22,6 +22,8 @@ export type ChatPreview = {
   source?: 'native' | 'whatsapp';
   /** WhatsApp JID for bridged chats (only meaningful when source='whatsapp'). */
   bridgeJid?: string;
+  /** Pending friend request chat */
+  isPending?: boolean;
 };
 
 /** The Dandara AI assistant — her own chat plus an in-chat helper. */

@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
-import { Dimensions, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton } from '@/components/ui/primary-button';
@@ -12,34 +12,32 @@ import { StateTransition } from '@/components/ui/state-transition';
 import { TextField } from '@/components/ui/text-field';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { updateProfile, useProfile } from '@/data/profile-store';
-import { PROFILE_MEDIA, PROFILE_NOTES, STORIES, type UserProfile } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
-
-type Tab = 'media' | 'stories' | 'notes';
-
-const GRID_GAP = 2;
-const TILE = (Dimensions.get('window').width - GRID_GAP * 2) / 3;
 
 export default function ProfileScreen() {
   const { colors, isDark } = useTheme();
   const profile = useProfile();
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<UserProfile>(profile);
-  const [tab, setTab] = useState<Tab>('media');
+  const [draftName, setDraftName] = useState(profile.name);
+  const [draftBio, setDraftBio] = useState(profile.bio);
+  const [draftUsername, setDraftUsername] = useState(profile.username.replace(/^@/, ''));
+  const [draftAvatarUri, setDraftAvatarUri] = useState(profile.avatarUri);
 
   const enterEdit = () => {
-    setDraft(profile);
+    setDraftName(profile.name);
+    setDraftBio(profile.bio);
+    setDraftUsername(profile.username.replace(/^@/, ''));
+    setDraftAvatarUri(profile.avatarUri);
     setEditing(true);
   };
 
   const save = () => {
     updateProfile({
-      name: draft.name.trim() || profile.name,
-      username: draft.username,
-      bio: draft.bio.trim(),
-      location: draft.location.trim(),
-      avatarUri: draft.avatarUri,
+      name: draftName.trim() || profile.name,
+      bio: draftBio.trim(),
+      username: draftUsername,
+      avatarUri: draftAvatarUri !== profile.avatarUri ? draftAvatarUri : undefined,
     });
     setEditing(false);
   };
@@ -50,11 +48,10 @@ export default function ProfileScreen() {
 
   const pickAvatar = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-    const asset = result.canceled ? undefined : result.assets[0];
-    if (asset) setDraft((d) => ({ ...d, avatarUri: asset.uri }));
+    if (!result.canceled && result.assets[0]) {
+      setDraftAvatarUri(result.assets[0].uri);
+    }
   };
-
-  const usernameValue = (editing ? draft.username : profile.username).replace(/^@/, '');
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
@@ -96,7 +93,7 @@ export default function ProfileScreen() {
             <View style={styles.editAvatarRow}>
               <Pressable onPress={pickAvatar} accessibilityLabel={t('profile.change_photo')}>
                 <Image
-                  source={{ uri: draft.avatarUri }}
+                  source={{ uri: draftAvatarUri }}
                   style={[styles.editAvatar, { backgroundColor: colors.surfaceMuted }]}
                   contentFit="cover"
                 />
@@ -113,39 +110,23 @@ export default function ProfileScreen() {
 
             <TextField
               label={t('profile.name_label')}
-              value={draft.name}
-              onChangeText={(v) => setDraft((d) => ({ ...d, name: v }))}
+              value={draftName}
+              onChangeText={setDraftName}
               maxLength={40}
             />
             <TextField
               label={t('profile.username_label')}
-              value={usernameValue}
-              onChangeText={(v) =>
-                setDraft((d) => ({
-                  ...d,
-                  username: `@${v.toLowerCase().replace(/[^a-z0-9_]/g, '')}`,
-                }))
-              }
+              value={draftUsername}
+              onChangeText={(v) => setDraftUsername(v.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
               autoCapitalize="none"
               autoCorrect={false}
               maxLength={20}
               leftAdornment={<Text style={[styles.atSign, { color: colors.textSecondary }]}>@</Text>}
             />
             <TextField
-              label={t('profile.bio_label')}
-              value={draft.bio}
-              onChangeText={(v) => setDraft((d) => ({ ...d, bio: v }))}
-              placeholder={t('profile.bio_placeholder')}
-              multiline
-              maxLength={160}
-              style={styles.bioInput}
-            />
-            <TextField
-              label={t('profile.location_label')}
-              value={draft.location}
-              onChangeText={(v) => setDraft((d) => ({ ...d, location: v }))}
-              placeholder={t('profile.location_placeholder')}
-              maxLength={60}
+              label={t('profile.link_label')}
+              value={profile.link}
+              editable={false}
             />
           </View>
         ) : (
@@ -163,14 +144,6 @@ export default function ProfileScreen() {
                 <Text style={[styles.username, { color: colors.primary }]} numberOfLines={1}>
                   {profile.username}
                 </Text>
-                {profile.location ? (
-                  <View style={styles.locationRow}>
-                    <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
-                    <Text style={[styles.location, { color: colors.textSecondary }]} numberOfLines={1}>
-                      {profile.location}
-                    </Text>
-                  </View>
-                ) : null}
               </View>
             </View>
 
@@ -179,11 +152,11 @@ export default function ProfileScreen() {
             ) : null}
 
             <View style={[styles.stats, { borderColor: colors.divider }]}>
-              <Stat value={profile.stats.chats} label={t('profile.stat_chats')} />
+              <Stat value={0} label={t('profile.stat_chats')} />
               <View style={[styles.statDivider, { backgroundColor: colors.divider }]} />
-              <Stat value={profile.stats.stories} label={t('profile.stat_stories')} />
+              <Stat value={0} label={t('profile.stat_stories')} />
               <View style={[styles.statDivider, { backgroundColor: colors.divider }]} />
-              <Stat value={profile.stats.contacts} label={t('profile.stat_contacts')} />
+              <Stat value={0} label={t('profile.stat_contacts')} />
             </View>
 
             <View style={styles.actions}>
@@ -204,39 +177,6 @@ export default function ProfileScreen() {
               </Pressable>
             </View>
 
-            <View style={[styles.tabs, { borderBottomColor: colors.divider }]}>
-              {(['media', 'stories', 'notes'] as const).map((key) => {
-                const active = tab === key;
-                return (
-                  <Pressable
-                    key={key}
-                    onPress={() => setTab(key)}
-                    style={styles.tab}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                  >
-                    <Text
-                      style={[
-                        styles.tabText,
-                        { color: active ? colors.text : colors.textSecondary },
-                      ]}
-                    >
-                      {t(`profile.tab_${key}`)}
-                    </Text>
-                    <View
-                      style={[
-                        styles.tabIndicator,
-                        { backgroundColor: active ? colors.primary : 'transparent' },
-                      ]}
-                    />
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <StateTransition transitionKey={tab}>
-              <TabContent tab={tab} />
-            </StateTransition>
           </>
         )}
         </StateTransition>
@@ -251,40 +191,6 @@ function Stat({ value, label }: { value: number; label: string }) {
     <View style={styles.stat}>
       <Text style={[styles.statValue, { color: colors.text }]}>{value}</Text>
       <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{label}</Text>
-    </View>
-  );
-}
-
-function TabContent({ tab }: { tab: Tab }) {
-  const { colors } = useTheme();
-
-  if (tab === 'notes') {
-    return (
-      <View style={styles.notes}>
-        {PROFILE_NOTES.map((note) => (
-          <View
-            key={note.id}
-            style={[styles.note, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          >
-            <Text style={[styles.noteText, { color: colors.text }]}>{note.text}</Text>
-            <Text style={[styles.noteTime, { color: colors.textMuted }]}>{note.timestamp}</Text>
-          </View>
-        ))}
-      </View>
-    );
-  }
-
-  const tiles = tab === 'media' ? PROFILE_MEDIA : STORIES.map((s) => s.coverUri);
-  return (
-    <View style={styles.grid}>
-      {tiles.map((uri, i) => (
-        <Image
-          key={i}
-          source={{ uri }}
-          style={[styles.tile, { backgroundColor: colors.surfaceMuted }]}
-          contentFit="cover"
-        />
-      ))}
     </View>
   );
 }
@@ -395,20 +301,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 2,
   },
 
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: GRID_GAP,
-  },
-  tile: {
-    width: TILE,
-    height: TILE,
-  },
 
-  notes: {
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
   note: {
     borderRadius: Radii.lg,
     borderWidth: 1,

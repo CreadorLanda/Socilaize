@@ -57,12 +57,6 @@ export default function SettingsScreen() {
       { text: t('settings.delete'), style: 'destructive' },
     ]);
 
-  const confirmClearCache = () =>
-    Alert.alert(t('settings.clear_cache'), t('settings.clear_cache_confirm', { size: '248 MB' }), [
-      { text: t('settings.cancel'), style: 'cancel' },
-      { text: t('settings.clear'), style: 'destructive' },
-    ]);
-
   const confirmLogout = () =>
     Alert.alert(t('settings.logout_title'), t('settings.logout_body'), [
       { text: t('settings.cancel'), style: 'cancel' },
@@ -128,7 +122,7 @@ export default function SettingsScreen() {
         </Pressable>
 
         <Group title={t('settings.section_account')}>
-          <Row icon="call-outline" label={t('settings.phone')} value="+244 912 345 678" />
+          <Row icon="call-outline" label={t('settings.phone')} value={t('settings.phone_hidden')} />
           <Row
             icon="mail-outline"
             label={t('settings.email')}
@@ -242,30 +236,6 @@ export default function SettingsScreen() {
                 })}
               </View>
             }
-          />
-        </Group>
-
-        <Group title={t('settings.section_storage')}>
-          <Row
-            icon="server-outline"
-            label={t('settings.storage_usage')}
-            below={
-              <View style={styles.storage}>
-                <View style={[styles.storageTrack, { backgroundColor: colors.surfaceMuted }]}>
-                  <View style={[styles.storageFill, { backgroundColor: colors.primary }]} />
-                </View>
-                <Text style={[styles.storageLabel, { color: colors.textSecondary }]}>
-                  {t('settings.storage_used', { used: '1.2 GB', total: '4 GB' })}
-                </Text>
-              </View>
-            }
-          />
-          <Row
-            icon="trash-bin-outline"
-            label={t('settings.clear_cache')}
-            value="248 MB"
-            onPress={confirmClearCache}
-            last
           />
         </Group>
 
@@ -452,16 +422,5 @@ const styles = StyleSheet.create({
   },
   segmentText: { ...Typography.caption, fontWeight: '600' },
 
-  storage: { gap: Spacing.sm },
-  storageTrack: {
-    height: 8,
-    borderRadius: Radii.pill,
-    overflow: 'hidden',
-  },
-  storageFill: {
-    height: '100%',
-    width: '30%',
-    borderRadius: Radii.pill,
-  },
-  storageLabel: { ...Typography.caption },
+
 });

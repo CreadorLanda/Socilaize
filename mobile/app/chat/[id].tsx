@@ -53,6 +53,7 @@ import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { dandaraReply, dandaraSuggestions } from '@/data/dandara';
 import { useGroup } from '@/data/group-store';
+import { acceptChat, blockChat, listChats, listMessages, sendMessage, type ChatDTO } from '@/data/api/messages';
 import {
   CHATS,
   DANDARA,
@@ -62,6 +63,7 @@ import {
   type MessageAttachment,
 } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
+import { useCurrentUser } from '@/data/auth-store';
 import { t } from '@/i18n';
 
 const CHAT_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
@@ -128,8 +130,9 @@ function nowTime(): string {
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const chat = useMemo(() => CHATS.find((c) => c.id === id), [id]);
-  const initial = useMemo<Message[]>(() => MESSAGES[id ?? ''] ?? [], [id]);
-  const [messages, setMessages] = useState<Message[]>(initial);
+  const mockMessages = useMemo<Message[]>(() => MESSAGES[id ?? ''] ?? [], [id]);
+  const [messages, setMessages] = useState<Message[]>(mockMessages);
+  const [apiChatInfo, setApiChatInfo] = useState<ChatDTO | null>(null);
   const [draft, setDraft] = useState('');
   const [searchMode, setSearchMode] = useState(false);
   const [query, setQuery] = useState('');
@@ -144,6 +147,7 @@ export default function ChatScreen() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectionMode = selectedIds.size > 0;
   const [dandaraTyping, setDandaraTyping] = useState(false);
+  const currentUser = useCurrentUser();
   const { colors, isDark } = useTheme();
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -187,6 +191,41 @@ export default function ChatScreen() {
     };
   }, []);
 
+  // Load real chat messages from the API once we know who "me" is.
+  useEffect(() => {
+    if (!id || !currentUser?.id) return;
+    listMessages(id, 50)
+      .then((apiMsgs) => {
+        if (!apiMsgs || apiMsgs.length === 0) return;
+        const mapped: Message[] = apiMsgs
+          .filter((m) => !m.deleted_at)
+          .map((m) => ({
+            id: String(m.id),
+            text: m.content,
+            fromMe: m.sender_id === currentUser.id,
+            timestamp: new Date(m.created_at).toLocaleTimeString(),
+            senderName: m.sender_name,
+            senderAvatarUri: m.sender_avatar,
+            edited: !!m.edited_at,
+            deletedAt: m.deleted_at,
+          }));
+        // Prefer API messages over mock data.
+        setMessages(mapped);
+      })
+      .catch(() => {});
+  }, [id, currentUser?.id]);
+
+  // Load chat info from the API.
+  useEffect(() => {
+    if (!id) return;
+    listChats()
+      .then((chats) => {
+        const found = chats.find((c) => c.id === id);
+        if (found) setApiChatInfo(found);
+      })
+      .catch(() => {});
+  }, [id]);
+
   // Keep the latest message (and Dandara's typing bubble) in view.
   useEffect(() => {
     if (searchMode) return;
@@ -197,6 +236,13 @@ export default function ChatScreen() {
   const isGroup = !!chat?.isGroup;
   const isAIChat = !!chat?.isAI;
   const isWAChat = chat?.source === 'whatsapp';
+  const isPending = apiChatInfo?.status === 'pending';
+  const isBlocked = apiChatInfo?.status === 'blocked';
+  const iSentRequest = isPending && apiChatInfo?.created_by === currentUser?.id;
+  // Requester may send one intro message while pending; recipient only accept/block.
+  const hasMyIntro = messages.some((m) => m.fromMe);
+  const canCompose =
+    !isBlocked && (!isPending || (iSentRequest && !hasMyIntro));
   const group = useGroup(isGroup ? id : undefined);
 
   // Apply the group's history settings: hide pre-join messages when history is
@@ -221,14 +267,6 @@ export default function ChatScreen() {
   }, [visible, searching, trimmedQuery]);
 
   const grouped = useMemo(() => groupMessages(filtered), [filtered]);
-
-  if (!chat) {
-    return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
-        <Text style={[styles.fallback, { color: colors.text }]}>{t('chat.not_found')}</Text>
-      </SafeAreaView>
-    );
-  }
 
   const appendMessage = (msg: Omit<Message, 'id' | 'timestamp' | 'fromMe' | 'status'>) => {
     setMessages((prev) => [
@@ -576,19 +614,26 @@ export default function ChatScreen() {
 
   const handleSend = () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text || !canCompose) return;
     submitText(text);
     setDraft('');
+    if (id) {
+      sendMessage(id, text).catch(() => {
+        // Keep optimistic bubble; failed sync surfaces on next open/reload.
+      });
+    }
   };
 
   const addAsset = (asset: ImagePicker.ImagePickerAsset) => {
+    if (!canCompose) return;
+    const caption = draft.trim();
     const media: MediaAttachment = {
       type: asset.type === 'video' ? 'video' : 'image',
       uri: asset.uri,
       durationSec: asset.duration ? Math.round(asset.duration / 1000) : undefined,
     };
     appendMessage({
-      text: draft.trim(),
+      text: caption,
       media,
       replyTo: replyTarget
         ? { id: replyTarget.id, text: replySnippet(replyTarget), fromMe: replyTarget.fromMe, senderName: replyTarget.senderName, icon: replyIcon(replyTarget) }
@@ -596,6 +641,29 @@ export default function ChatScreen() {
     });
     setDraft('');
     setReplyTarget(null);
+    if (id) {
+      sendMessage(id, caption || '📎', asset.type === 'video' ? 'video' : 'image').catch(() => {});
+    }
+  };
+
+  const handleAcceptRequest = async () => {
+    if (!id) return;
+    try {
+      const updated = await acceptChat(id);
+      setApiChatInfo(updated);
+    } catch {
+      // stay pending; user can retry
+    }
+  };
+
+  const handleDeclineRequest = async () => {
+    if (!id) return;
+    try {
+      await blockChat(id);
+      setApiChatInfo((prev) => (prev ? { ...prev, status: 'blocked' } : prev));
+    } catch {
+      // stay pending
+    }
   };
 
   const pickFromLibrary = async () => {
@@ -726,7 +794,7 @@ export default function ChatScreen() {
   };
 
   const hasDraft = draft.trim().length > 0;
-  const memberCount = group?.members.length ?? chat.memberCount ?? 0;
+  const memberCount = group?.members.length ?? (chat?.memberCount ?? 0);
 
   const closeSearch = () => {
     setSearchMode(false);
@@ -825,17 +893,17 @@ export default function ChatScreen() {
           <Pressable
             style={styles.peer}
             hitSlop={6}
-            onPress={() => router.push(`/chat-info/${chat.id}`)}
+            onPress={() => router.push(`/chat-info/${id!}`)}
             accessibilityRole="button"
             accessibilityLabel={isGroup ? t('chat_info.group_title') : t('chat_info.title')}
           >
             <View>
               <Image
-                source={{ uri: chat.avatarUri }}
+                source={{ uri: chat?.avatarUri || apiChatInfo?.avatar_url }}
                 style={[styles.peerAvatar, { backgroundColor: colors.surfaceMuted }]}
                 contentFit="cover"
               />
-              {chat.online && !isGroup ? (
+              {(chat?.online) && !isGroup ? (
                 <View
                   style={[
                     styles.peerOnlineDot,
@@ -846,7 +914,7 @@ export default function ChatScreen() {
             </View>
             <View style={styles.peerInfo}>
               <Text style={[styles.peerName, { color: colors.text }]} numberOfLines={1}>
-                {chat.name}
+                {chat?.name || apiChatInfo?.title || 'Chat'}
               </Text>
               <View style={styles.peerStatusRow}>
                 {isWAChat ? <Ionicons name="logo-whatsapp" size={11} color="#25D366" /> : null}
@@ -859,7 +927,7 @@ export default function ChatScreen() {
                       ? t('chat.ai_subtitle')
                       : isGroup
                         ? t('group.members_count', { count: memberCount })
-                        : chat.online
+                        : chat?.online
                           ? t('chats.online')
                           : t('chats.last_seen')}
                 </Text>
@@ -880,7 +948,7 @@ export default function ChatScreen() {
               <Pressable
                 hitSlop={8}
                 style={styles.iconBtn}
-                onPress={() => router.push(`/chat-info/${chat.id}`)}
+                onPress={() => router.push(`/chat-info/${id!}`)}
                 accessibilityLabel={t('chat_info.group_title')}
               >
                 <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
@@ -890,7 +958,7 @@ export default function ChatScreen() {
                 <Pressable
                   hitSlop={8}
                   style={styles.iconBtn}
-                  onPress={() => router.push(`/call/${chat.id}?mode=video`)}
+                  onPress={() => router.push(`/call/${id!}?mode=video`)}
                   accessibilityLabel={t('call.video_call')}
                 >
                   <Ionicons name="videocam-outline" size={22} color={colors.text} />
@@ -898,7 +966,7 @@ export default function ChatScreen() {
                 <Pressable
                   hitSlop={8}
                   style={styles.iconBtn}
-                  onPress={() => router.push(`/call/${chat.id}?mode=voice`)}
+                  onPress={() => router.push(`/call/${id!}?mode=voice`)}
                   accessibilityLabel={t('call.voice_call')}
                 >
                   <Ionicons name="call-outline" size={20} color={colors.text} />
@@ -991,6 +1059,53 @@ export default function ChatScreen() {
 
         {searchMode ? null : (
           <View style={[styles.composerWrap, { backgroundColor: colors.surfaceMuted }]}>
+            {/* Pending / blocked friend-request banner */}
+            {isBlocked ? (
+              <View style={[styles.pendingBanner, { backgroundColor: colors.surface, borderTopColor: colors.divider }]}>
+                <Ionicons name="ban-outline" size={18} color={colors.danger} />
+                <Text style={[styles.pendingText, { color: colors.textSecondary }]} numberOfLines={2}>
+                  {t('friend_request.declined')}
+                </Text>
+              </View>
+            ) : isPending ? (
+              <View style={[styles.pendingBanner, { backgroundColor: colors.surface, borderTopColor: colors.divider }]}>
+                <Ionicons name="time-outline" size={18} color={colors.warning} />
+                <Text style={[styles.pendingText, { color: colors.textSecondary }]} numberOfLines={2}>
+                  {iSentRequest
+                    ? t('friend_request.sent_waiting')
+                    : t('friend_request.pending_for_you')}
+                </Text>
+                {!iSentRequest ? (
+                  <View style={styles.pendingActions}>
+                    <Pressable
+                      onPress={handleDeclineRequest}
+                      style={({ pressed }) => [
+                        styles.acceptBtn,
+                        { backgroundColor: colors.surfaceMuted },
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={[styles.acceptBtnText, { color: colors.text }]}>
+                        {t('friend_request.decline')}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleAcceptRequest}
+                      style={({ pressed }) => [
+                        styles.acceptBtn,
+                        { backgroundColor: colors.primary },
+                        pressed && { opacity: 0.85 },
+                      ]}
+                    >
+                      <Text style={[styles.acceptBtnText, { color: colors.onPrimary }]}>
+                        {t('friend_request.accept')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
             {/* Dandara suggestion chips — before the first message */}
             {isAIChat && recordPhase === 'idle' && !messages.some((m) => m.fromMe) ? (
               <ScrollView
@@ -1039,7 +1154,7 @@ export default function ChatScreen() {
                 <View style={[styles.replyBarStripe, { backgroundColor: colors.primary }]} />
                 <View style={styles.replyBarContent}>
                   <Text style={[styles.replyBarName, { color: colors.primary }]} numberOfLines={1}>
-                    {replyTarget.fromMe ? t('chat.you') : replyTarget.senderName ?? chat.name}
+                    {replyTarget.fromMe ? t('chat.you') : replyTarget.senderName ?? chat?.name ?? apiChatInfo?.title ?? 'Chat'}
                   </Text>
                   <View style={styles.replySnippetRow}>
                     {replyIcon(replyTarget) ? (
@@ -1061,26 +1176,39 @@ export default function ChatScreen() {
               {recordPhase === 'idle' ? (
                 <View style={[styles.composer, { backgroundColor: colors.surface }]}>
                   <Pressable hitSlop={8} style={styles.composerLeft}>
-                    <Ionicons name="happy-outline" size={22} color={colors.textSecondary} />
+                    <Ionicons name="happy-outline" size={22} color={canCompose ? colors.textSecondary : colors.textMuted} />
                   </Pressable>
                   <TextInput
                     ref={composerInputRef}
                     value={draft}
                     onChangeText={setDraft}
-                    placeholder={t('chat.composer_placeholder')}
+                    placeholder={
+                      !canCompose
+                        ? iSentRequest
+                          ? t('friend_request.waiting_placeholder')
+                          : isBlocked
+                            ? t('friend_request.declined')
+                            : t('friend_request.pending_for_you')
+                        : isPending && iSentRequest
+                          ? t('friend_request.introduce_placeholder')
+                          : t('chat.composer_placeholder')
+                    }
                     placeholderTextColor={colors.textMuted}
                     multiline
-                    style={[styles.composerInput, { color: colors.text }]}
+                    editable={canCompose}
+                    style={[styles.composerInput, { color: canCompose ? colors.text : colors.textMuted }]}
                   />
-                  <Pressable
-                    hitSlop={8}
-                    style={styles.composerRight}
-                    onPress={() => setShowAttach(true)}
-                    accessibilityLabel={t('chat.attach')}
-                  >
-                    <Ionicons name="attach" size={22} color={colors.textSecondary} />
-                  </Pressable>
-                  {!hasDraft ? (
+                  {canCompose ? (
+                    <Pressable
+                      hitSlop={8}
+                      style={styles.composerRight}
+                      onPress={() => setShowAttach(true)}
+                      accessibilityLabel={t('chat.attach')}
+                    >
+                      <Ionicons name="attach" size={22} color={colors.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                  {canCompose && !hasDraft ? (
                     <Pressable
                       hitSlop={8}
                       style={styles.composerRight}
@@ -1101,48 +1229,50 @@ export default function ChatScreen() {
                 />
               )}
 
-              {recordPhase === 'locked' ? (
-                <Pressable
-                  onPress={finishRecording}
-                  style={({ pressed }) => [
-                    styles.sendBtn,
-                    { backgroundColor: colors.primary, shadowColor: colors.primary },
-                    pressed && styles.sendBtnPressed,
-                  ]}
-                  accessibilityLabel={t('chat.send')}
-                >
-                  <Ionicons name="arrow-up" size={22} color={colors.onPrimary} />
-                </Pressable>
-              ) : hasDraft ? (
-                <Pressable
-                  onPress={handleSend}
-                  style={({ pressed }) => [
-                    styles.sendBtn,
-                    { backgroundColor: colors.primary, shadowColor: colors.primary },
-                    pressed && styles.sendBtnPressed,
-                  ]}
-                  accessibilityLabel={t('chat.send')}
-                >
-                  <Ionicons name="arrow-up" size={22} color={colors.onPrimary} />
-                </Pressable>
-              ) : (
-                <View style={styles.micWrap}>
-                  {recordPhase === 'recording' ? <MicHalo halo={micHalo} /> : null}
-                  {recordPhase === 'recording' ? <LockIndicator dragY={dragY} /> : null}
-                  <GestureDetector gesture={recordGesture}>
-                    <Animated.View
-                      accessibilityLabel={t('chat.record_voice')}
-                      style={[
-                        styles.sendBtn,
-                        { backgroundColor: colors.primary, shadowColor: colors.primary },
-                        micStyle,
-                      ]}
-                    >
-                      <Ionicons name="mic" size={22} color={colors.onPrimary} />
-                    </Animated.View>
-                  </GestureDetector>
-                </View>
-              )}
+              {canCompose ? (
+                recordPhase === 'locked' ? (
+                  <Pressable
+                    onPress={finishRecording}
+                    style={({ pressed }) => [
+                      styles.sendBtn,
+                      { backgroundColor: colors.primary, shadowColor: colors.primary },
+                      pressed && styles.sendBtnPressed,
+                    ]}
+                    accessibilityLabel={t('chat.send')}
+                  >
+                    <Ionicons name="arrow-up" size={22} color={colors.onPrimary} />
+                  </Pressable>
+                ) : hasDraft ? (
+                  <Pressable
+                    onPress={handleSend}
+                    style={({ pressed }) => [
+                      styles.sendBtn,
+                      { backgroundColor: colors.primary, shadowColor: colors.primary },
+                      pressed && styles.sendBtnPressed,
+                    ]}
+                    accessibilityLabel={t('chat.send')}
+                  >
+                    <Ionicons name="arrow-up" size={22} color={colors.onPrimary} />
+                  </Pressable>
+                ) : (
+                  <View style={styles.micWrap}>
+                    {recordPhase === 'recording' ? <MicHalo halo={micHalo} /> : null}
+                    {recordPhase === 'recording' ? <LockIndicator dragY={dragY} /> : null}
+                    <GestureDetector gesture={recordGesture}>
+                      <Animated.View
+                        accessibilityLabel={t('chat.record_voice')}
+                        style={[
+                          styles.sendBtn,
+                          { backgroundColor: colors.primary, shadowColor: colors.primary },
+                          micStyle,
+                        ]}
+                      >
+                        <Ionicons name="mic" size={22} color={colors.onPrimary} />
+                      </Animated.View>
+                    </GestureDetector>
+                  </View>
+                )
+              ) : null}
             </View>
           </View>
         )}
@@ -1175,7 +1305,7 @@ export default function ChatScreen() {
       {/* Forward to another chat */}
       <ForwardChatPicker
         targets={forwardTargets}
-        currentChatId={chat.id}
+        currentChatId={id!}
         onClose={() => setForwardTargets([])}
         onPick={forwardTo}
       />
@@ -3108,5 +3238,32 @@ const styles = StyleSheet.create({
   forwardedText: {
     ...Typography.micro,
     fontStyle: 'italic',
+  },
+
+  pendingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm + 2,
+    borderTopWidth: 1,
+  },
+  pendingText: {
+    ...Typography.caption,
+    flex: 1,
+  },
+  pendingActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  acceptBtn: {
+    paddingHorizontal: Spacing.md + 2,
+    paddingVertical: Spacing.xs + 2,
+    borderRadius: Radii.pill,
+  },
+  acceptBtnText: {
+    ...Typography.caption,
+    fontWeight: '700',
   },
 });
