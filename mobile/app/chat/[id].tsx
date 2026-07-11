@@ -53,7 +53,24 @@ import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { dandaraReply, dandaraSuggestions } from '@/data/dandara';
 import { useGroup } from '@/data/group-store';
-import { acceptChat, blockChat, listChats, listMessages, sendMessage, type ChatDTO } from '@/data/api/messages';
+import {
+  acceptChat,
+  addReaction,
+  blockChat,
+  connectRealtime,
+  deleteMessage as apiDeleteMessage,
+  editMessage as apiEditMessage,
+  listChats,
+  listMessages,
+  markRead,
+  postReceipts,
+  removeReaction,
+  sendMessage as apiSendMessage,
+  setTyping as apiSetTyping,
+  type ChatDTO,
+  type MessageDTO,
+  type RealtimeEvent,
+} from '@/data/api/messages';
 import {
   CHATS,
   DANDARA,
@@ -62,6 +79,11 @@ import {
   type Message,
   type MessageAttachment,
 } from '@/data/mock';
+import {
+  collapseReactions,
+  mapApiMessage,
+  serverMessageId,
+} from '@/data/message-map';
 import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
@@ -148,7 +170,12 @@ export default function ChatScreen() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectionMode = selectedIds.size > 0;
   const [dandaraTyping, setDandaraTyping] = useState(false);
+  /** Peer typing from realtime backend (non-AI chats). */
+  const [peerTyping, setPeerTyping] = useState(false);
+  const peerTypingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingSentRef = useRef(false);
   const currentUser = useCurrentUser();
+  const meId = currentUser?.id;
   const { colors, isDark, chat: chrome, layout, metrics } = useTheme();
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -194,27 +221,34 @@ export default function ChatScreen() {
 
   // Load real chat messages from the API once we know who "me" is.
   useEffect(() => {
-    if (!id || !currentUser?.id) return;
+    if (!id || !meId) return;
+    let cancelled = false;
     listMessages(id, 50)
       .then((apiMsgs) => {
-        if (!apiMsgs || apiMsgs.length === 0) return;
-        const mapped: Message[] = apiMsgs
-          .filter((m) => !m.deleted_at)
-          .map((m) => ({
-            id: String(m.id),
-            text: m.content,
-            fromMe: m.sender_id === currentUser.id,
-            timestamp: new Date(m.created_at).toLocaleTimeString(),
-            senderName: m.sender_name,
-            senderAvatarUri: m.sender_avatar,
-            edited: !!m.edited_at,
-            deletedAt: m.deleted_at,
-          }));
-        // Prefer API messages over mock data.
+        if (cancelled || !apiMsgs || apiMsgs.length === 0) return;
+        // API returns newest-first; UI expects chronological (oldest first).
+        const ordered = [...apiMsgs].reverse();
+        const mapped = ordered.map((m) => mapApiMessage(m, meId));
         setMessages(mapped);
+
+        // Ack delivery for inbound, then mark the latest as read.
+        const inboundIds = ordered
+          .filter((m) => m.sender_id !== meId && !m.deleted_at)
+          .map((m) => m.id);
+        if (inboundIds.length > 0) {
+          postReceipts(id, inboundIds, 'delivered').catch(() => {});
+          const last = inboundIds[inboundIds.length - 1];
+          markRead(id, last).catch(() => {});
+          postReceipts(id, [last], 'read').catch(() => {});
+        }
       })
-      .catch(() => {});
-  }, [id, currentUser?.id]);
+      .catch(() => {
+        /* keep mock seed when offline / mock-only chat */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, meId]);
 
   // Load chat info from the API.
   useEffect(() => {
@@ -227,12 +261,133 @@ export default function ChatScreen() {
       .catch(() => {});
   }, [id]);
 
-  // Keep the latest message (and Dandara's typing bubble) in view.
+  // Realtime WebSocket — message / typing / receipt / reaction fan-out.
+  useEffect(() => {
+    if (!id || !meId) return;
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleEvent = (ev: RealtimeEvent) => {
+      if (ev.chat_id && ev.chat_id !== id) return;
+      const payload = ev.payload as Record<string, unknown> | null | undefined;
+
+      if (ev.type === 'message.new' && payload) {
+        const dto = payload as unknown as MessageDTO;
+        if (String(dto.chat_id) !== id && ev.chat_id !== id) return;
+        const mapped = mapApiMessage(dto, meId);
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === mapped.id)) return prev;
+          // Drop matching optimistic bubble (temp id) with same text from me.
+          if (mapped.fromMe) {
+            const withoutOpt = prev.filter(
+              (m) => !(m.fromMe && m.id.startsWith('tmp_') && m.text === mapped.text),
+            );
+            return [...withoutOpt, mapped];
+          }
+          return [...prev, mapped];
+        });
+        if (!mapped.fromMe && !mapped.deletedAt) {
+          const mid = Number(mapped.id);
+          if (Number.isFinite(mid)) {
+            postReceipts(id, [mid], 'delivered').catch(() => {});
+            markRead(id, mid).catch(() => {});
+            postReceipts(id, [mid], 'read').catch(() => {});
+          }
+        }
+        return;
+      }
+
+      if (ev.type === 'message.edited' && payload) {
+        const dto = payload as unknown as MessageDTO;
+        const mapped = mapApiMessage(dto, meId);
+        setMessages((prev) => prev.map((m) => (m.id === mapped.id ? { ...m, ...mapped } : m)));
+        return;
+      }
+
+      if (ev.type === 'message.deleted' && payload) {
+        const dto = payload as unknown as MessageDTO;
+        const mid = String(dto.id);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === mid
+              ? { ...m, deletedAt: dto.deleted_at ?? new Date().toISOString(), text: '' }
+              : m,
+          ),
+        );
+        return;
+      }
+
+      if (ev.type === 'typing' && payload) {
+        const uid = String(payload.user_id ?? '');
+        if (uid && uid === meId) return;
+        const typing = !!payload.typing;
+        setPeerTyping(typing);
+        if (peerTypingClearRef.current) clearTimeout(peerTypingClearRef.current);
+        if (typing) {
+          peerTypingClearRef.current = setTimeout(() => setPeerTyping(false), 4000);
+        }
+        return;
+      }
+
+      if (ev.type === 'receipt' && payload) {
+        const mid = String(payload.message_id ?? '');
+        const status = payload.status === 'read' ? 'read' : 'delivered';
+        if (!mid) return;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== mid || !m.fromMe) return m;
+            // Don't downgrade read → delivered.
+            if (m.status === 'read') return m;
+            return { ...m, status };
+          }),
+        );
+        return;
+      }
+
+      if (ev.type === 'message.reaction' && payload) {
+        const mid = String(payload.message_id ?? '');
+        const reactions = payload.reactions as
+          | { message_id: number; user_id: string; emoji: string; created_at: string }[]
+          | undefined;
+        if (!mid || !reactions) return;
+        setReactionsMap((prev) => ({
+          ...prev,
+          [mid]: collapseReactions(reactions, meId),
+        }));
+      }
+    };
+
+    const connect = () => {
+      connectRealtime(handleEvent, () => {
+        if (closed) return;
+        reconnectTimer = setTimeout(connect, 2500);
+      }).then((sock) => {
+        if (closed) {
+          sock?.close();
+          return;
+        }
+        ws = sock;
+      });
+    };
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (peerTypingClearRef.current) clearTimeout(peerTypingClearRef.current);
+      ws?.close();
+      // Stop typing on leave.
+      apiSetTyping(id, false).catch(() => {});
+    };
+  }, [id, meId]);
+
+  // Keep the latest message (and typing bubble) in view.
   useEffect(() => {
     if (searchMode) return;
-    const id = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
-    return () => clearTimeout(id);
-  }, [messages.length, dandaraTyping, searchMode]);
+    const tId = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
+    return () => clearTimeout(tId);
+  }, [messages.length, dandaraTyping, peerTyping, searchMode]);
 
   const isGroup = !!chat?.isGroup;
   const isAIChat = !!chat?.isAI;
@@ -245,6 +400,27 @@ export default function ChatScreen() {
   const canCompose =
     !isBlocked && (!isPending || (iSentRequest && !hasMyIntro));
   const group = useGroup(isGroup ? id : undefined);
+
+  // Broadcast typing while the user is composing.
+  useEffect(() => {
+    if (!id || !canCompose || isAIChat) return;
+    const hasText = draft.trim().length > 0;
+    if (hasText && !typingSentRef.current) {
+      typingSentRef.current = true;
+      apiSetTyping(id, true).catch(() => {});
+    }
+    if (!hasText && typingSentRef.current) {
+      typingSentRef.current = false;
+      apiSetTyping(id, false).catch(() => {});
+    }
+    const stop = setTimeout(() => {
+      if (typingSentRef.current) {
+        typingSentRef.current = false;
+        apiSetTyping(id, false).catch(() => {});
+      }
+    }, 3000);
+    return () => clearTimeout(stop);
+  }, [draft, id, isAIChat, canCompose]);
 
   // Apply the group's history settings: hide pre-join messages when history is
   // off, and cap how many of them a new member can see.
@@ -269,10 +445,18 @@ export default function ChatScreen() {
 
   const grouped = useMemo(() => groupMessages(filtered), [filtered]);
 
-  const appendMessage = (msg: Omit<Message, 'id' | 'timestamp' | 'fromMe' | 'status'>) => {
+  const appendMessage = (
+    msg: Omit<Message, 'id' | 'timestamp' | 'fromMe' | 'status'> & { id?: string },
+  ) => {
     setMessages((prev) => [
       ...prev,
-      { id: `m${prev.length + 1}`, fromMe: true, timestamp: nowTime(), status: 'sent', ...msg },
+      {
+        id: msg.id ?? `tmp_${Date.now()}`,
+        fromMe: true,
+        timestamp: nowTime(),
+        status: 'sent',
+        ...msg,
+      },
     ]);
   };
 
@@ -448,6 +632,12 @@ export default function ChatScreen() {
   const closeMenu = () => setMenuTarget(null);
 
   const handleReact = (msgId: string, emoji: string) => {
+    const mid = serverMessageId(msgId);
+    const existing = reactionsMap[msgId] ?? [];
+    const mine = existing.find((r) => r.mine);
+    const removing = mine?.emoji === emoji;
+
+    // Optimistic UI
     setReactionsMap((prev) => {
       const list = [...(prev[msgId] ?? [])];
       const mineIdx = list.findIndex((r) => r.mine);
@@ -465,6 +655,25 @@ export default function ChatScreen() {
 
       return { ...prev, [msgId]: list };
     });
+
+    if (layout.hapticsOnReact) {
+      Haptics.selectionAsync().catch(() => {});
+    }
+    if (id && mid != null) {
+      const req = removing
+        ? removeReaction(id, mid, emoji)
+        : addReaction(id, mid, emoji);
+      req
+        .then((rows) => {
+          setReactionsMap((prev) => ({
+            ...prev,
+            [msgId]: collapseReactions(rows, meId),
+          }));
+        })
+        .catch(() => {
+          /* keep optimistic */
+        });
+    }
   };
 
   const reactFromMenu = (emoji: string) => {
@@ -555,10 +764,32 @@ export default function ChatScreen() {
   // 'all' — propagates to the bridge / other clients.
   const confirmDelete = (scope: 'me' | 'all') => {
     if (deleteTargets.length === 0) return;
-    const ids = new Set(deleteTargets.map((t) => t.id));
+    const targets = [...deleteTargets];
+    const ids = new Set(targets.map((t) => t.id));
     setMessages((prev) =>
-      prev.map((m) => (ids.has(m.id) ? { ...m, deletedAt: new Date().toISOString() } : m)),
+      prev.map((m) =>
+        ids.has(m.id)
+          ? { ...m, deletedAt: new Date().toISOString(), text: '' }
+          : m,
+      ),
     );
+    // Propagate soft-delete to API for own messages with server ids.
+    if (id && scope === 'all') {
+      for (const t of targets) {
+        const mid = serverMessageId(t.id);
+        if (mid != null && t.fromMe) {
+          apiDeleteMessage(id, mid).catch(() => {});
+        }
+      }
+    } else if (id) {
+      // delete for me — still soft-delete on server when we are the sender
+      for (const t of targets) {
+        const mid = serverMessageId(t.id);
+        if (mid != null && t.fromMe) {
+          apiDeleteMessage(id, mid).catch(() => {});
+        }
+      }
+    }
     Haptics.impactAsync(
       scope === 'all' ? Haptics.ImpactFeedbackStyle.Rigid : Haptics.ImpactFeedbackStyle.Light,
     ).catch(() => {});
@@ -597,20 +828,64 @@ export default function ChatScreen() {
     if (!text) return;
     // If we're editing an existing message, update it in place and bail out.
     if (editingMsgId) {
+      const editId = editingMsgId;
       setMessages((prev) =>
-        prev.map((m) => (m.id === editingMsgId ? { ...m, text, edited: true } : m)),
+        prev.map((m) => (m.id === editId ? { ...m, text, edited: true } : m)),
       );
       setEditingMsgId(null);
+      const mid = serverMessageId(editId);
+      if (id && mid != null) {
+        apiEditMessage(id, mid, text)
+          .then((dto) => {
+            const mapped = mapApiMessage(dto, meId);
+            setMessages((prev) => prev.map((m) => (m.id === editId ? mapped : m)));
+          })
+          .catch(() => {
+            /* keep optimistic edit */
+          });
+      }
       return;
     }
+    const tempId = `tmp_${Date.now()}`;
+    const reply = replyTarget
+      ? {
+          id: replyTarget.id,
+          text: replySnippet(replyTarget),
+          fromMe: replyTarget.fromMe,
+          senderName: replyTarget.senderName,
+          icon: replyIcon(replyTarget),
+        }
+      : undefined;
     appendMessage({
+      id: tempId,
       text,
-      replyTo: replyTarget
-        ? { id: replyTarget.id, text: replySnippet(replyTarget), fromMe: replyTarget.fromMe, senderName: replyTarget.senderName, icon: replyIcon(replyTarget) }
-        : undefined,
+      replyTo: reply,
     });
     setReplyTarget(null);
     if (isAIChat || /@dandara/i.test(text)) triggerDandara(text);
+
+    if (id && !isAIChat) {
+      const replyTo = reply ? serverMessageId(reply.id) ?? undefined : undefined;
+      apiSendMessage(id, text, 'text', replyTo ?? undefined)
+        .then((dto) => {
+          const mapped = mapApiMessage(dto, meId);
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === mapped.id)) {
+              return prev.filter((m) => m.id !== tempId);
+            }
+            const idx = prev.findIndex((m) => m.id === tempId);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = mapped;
+              return next;
+            }
+            return [...prev, mapped];
+          });
+        })
+        .catch(() => {
+          // Keep optimistic bubble; failed sync surfaces on next open/reload.
+        });
+    }
   };
 
   const handleSend = () => {
@@ -618,11 +893,8 @@ export default function ChatScreen() {
     if (!text || !canCompose) return;
     submitText(text);
     setDraft('');
-    if (id) {
-      sendMessage(id, text).catch(() => {
-        // Keep optimistic bubble; failed sync surfaces on next open/reload.
-      });
-    }
+    typingSentRef.current = false;
+    if (id && !isAIChat) apiSetTyping(id, false).catch(() => {});
   };
 
   const addAsset = (asset: ImagePicker.ImagePickerAsset) => {
@@ -642,8 +914,12 @@ export default function ChatScreen() {
     });
     setDraft('');
     setReplyTarget(null);
-    if (id) {
-      sendMessage(id, caption || '📎', asset.type === 'video' ? 'video' : 'image').catch(() => {});
+    if (id && !isAIChat) {
+      apiSendMessage(
+        id,
+        caption || '📎',
+        asset.type === 'video' ? 'video' : 'image',
+      ).catch(() => {});
     }
   };
 
@@ -1084,7 +1360,11 @@ export default function ChatScreen() {
                 </View>
               )
             }
-            ListFooterComponent={dandaraTyping ? <TypingBubble /> : null}
+            ListFooterComponent={
+              dandaraTyping || (peerTyping && layout.showTypingDots !== false) ? (
+                <TypingBubble />
+              ) : null
+            }
             ListEmptyComponent={
               searching ? (
                 <EmptyState
