@@ -715,6 +715,7 @@ export default {
     notif_messages: 'Messages',
     notif_groups: 'Groups',
     notif_calls: 'Calls',
+    notif_stories: 'Stories',
     theme: 'Theme',
     theme_system: 'System',
     theme_light: 'Light',

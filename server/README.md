@@ -119,6 +119,11 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `DELETE /api/groups/:id/members/:userId` | required | ✅ remove / kick                    |
 | `PATCH  /api/groups/:id/members/:userId` | required | ✅ set role                         |
 | `POST   /api/groups/:id/leave`           | required | ✅ leave group                      |
+| `PUT    /api/notifications/devices`      | required | ✅ register push token              |
+| `DELETE /api/notifications/devices`      | required | ✅ unregister device                |
+| `GET    /api/notifications/prefs`        | required | ✅ notification toggles             |
+| `PATCH  /api/notifications/prefs`        | required | ✅ update toggles                   |
+| `POST   /api/notifications/test`         | required | ✅ enqueue smoke push               |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.

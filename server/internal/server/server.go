@@ -26,6 +26,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/groups"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/media"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/notifications"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 	"github.com/CreadorLanda/Socilaize/server/internal/platform/realtime"
@@ -94,9 +95,15 @@ func New(cfg config.Config) (*Server, error) {
 	// Realtime hub (WebSocket fan-out for messaging events).
 	hub := realtime.NewHub()
 
-	// Native E2E-encrypted messaging.
+	// Notifications — device tokens, prefs, Redis push queue.
+	notifRepo := notifications.NewRepository(pg)
+	notifSvc := notifications.NewService(notifRepo, rdb)
+	notifCtl := notifications.NewController(notifSvc)
+	notifications.Register(authed, notifCtl)
+
+	// Native E2E-encrypted messaging (push for offline peers via notifSvc).
 	msgRepo := messages.NewRepository(pg, cfg.Crypto.MessageKey)
-	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo, hub)
+	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo, hub, notifSvc)
 	msgCtl := messages.NewController(msgSvc, hub, []byte(cfg.JWT.Secret))
 	messages.Register(authed, msgCtl)
 	// WS lives on the public /api group — token is validated inside the handler.

@@ -34,6 +34,12 @@ var (
 // messages module does not import the WS stack into unit tests.
 type Broadcaster interface {
 	PublishJSON(userIDs []uuid.UUID, typ, chatID string, payload any)
+	Online(userID uuid.UUID) bool
+}
+
+// PushNotifier enqueues offline push jobs (notifications module).
+type PushNotifier interface {
+	NotifyUser(ctx context.Context, userID uuid.UUID, category, title, body string, data map[string]string) error
 }
 
 type Service struct {
@@ -41,10 +47,11 @@ type Service struct {
 	keysSvc *keys.Service
 	users   *users.Repository
 	hub     Broadcaster
+	push    PushNotifier
 }
 
-func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository, hub Broadcaster) *Service {
-	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo, hub: hub}
+func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
+	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo, hub: hub, push: push}
 }
 
 // ── Session Init ────────────────────────────────────────────────────────────
@@ -211,6 +218,7 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 		return Message{}, err
 	}
 	s.broadcast(ctx, chatID, "message.new", msg)
+	s.notifyOffline(ctx, chatID, senderID, msg)
 	return msg, nil
 }
 
@@ -428,6 +436,47 @@ func (s *Service) broadcast(ctx context.Context, chatID uuid.UUID, typ string, p
 		return
 	}
 	s.hub.PublishJSON(ids, typ, chatID.String(), payload)
+}
+
+func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID, msg Message) {
+	if s.push == nil {
+		return
+	}
+	ids, err := s.repo.ParticipantIDs(ctx, chatID)
+	if err != nil {
+		return
+	}
+	// Preview body — decrypted content is already available on msg.
+	body := msg.Content
+	if len(body) > 120 {
+		body = body[:117] + "…"
+	}
+	if body == "" {
+		body = "New message"
+	}
+	title := msg.SenderName
+	if title == "" {
+		title = "Socialize"
+	}
+	category := "messages"
+	// Groups use same chats table; treat multi-party as groups category.
+	if len(ids) > 2 {
+		category = "groups"
+	}
+	data := map[string]string{
+		"type":     "message.new",
+		"chat_id":  chatID.String(),
+		"message_id": fmt.Sprintf("%d", msg.ID),
+	}
+	for _, uid := range ids {
+		if uid == senderID {
+			continue
+		}
+		if s.hub != nil && s.hub.Online(uid) {
+			continue // live WS already delivers
+		}
+		_ = s.push.NotifyUser(ctx, uid, category, title, body, data)
+	}
 }
 
 // ── HKDF ────────────────────────────────────────────────────────────────────
