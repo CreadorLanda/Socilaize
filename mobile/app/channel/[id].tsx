@@ -7,6 +7,7 @@ import {
   Dimensions,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -26,9 +27,17 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { formatCount } from '@/components/ui/follow-button';
+import { ReactionTray } from '@/components/ui/reaction-tray';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { toggleFollow, useIsFollowing } from '@/data/channel-store';
-import { CHANNELS, CURRENT_USER, type ChannelComment, type ChannelPost } from '@/data/mock';
+import {
+  addChannelPost,
+  canManage,
+  canPublish,
+  toggleFollow,
+  useChannel,
+  useIsFollowing,
+} from '@/data/channel-store';
+import { CURRENT_USER, type ChannelComment, type ChannelPost } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -45,13 +54,23 @@ const countComments = (list: ChannelComment[]) =>
 
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const channel = useMemo(() => CHANNELS.find((c) => c.id === id), [id]);
+  const channel = useChannel(id);
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
   const followId = channel?.id ?? id ?? '';
   const isFollowing = useIsFollowing(followId);
+  const publishOk = canPublish(channel);
+  const manageOk = canManage(channel);
   const [posts, setPosts] = useState<ChannelPost[]>([]);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [postDraft, setPostDraft] = useState('');
+  const [postKind, setPostKind] = useState<
+    'text' | 'image' | 'video' | 'game' | 'live' | 'voice'
+  >('text');
+  const [postGame, setPostGame] = useState<
+    'trivia' | 'dice' | 'would_you_rather' | 'quick_draw' | 'emoji_race'
+  >('trivia');
   const [actionPostId, setActionPostId] = useState<string | null>(null);
   const [actionAnchor, setActionAnchor] = useState<{ x: number; y: number } | null>(null);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
@@ -59,6 +78,7 @@ export default function ChannelScreen() {
   const [commentAnonymous, setCommentAnonymous] = useState(false);
   const [commentReplyTo, setCommentReplyTo] = useState<{ id: string; author: string } | null>(null);
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
+  const [commentFocused, setCommentFocused] = useState(false);
   const commentInputRef = useRef<TextInput>(null);
   const commentScrollRef = useRef<ScrollView>(null);
   const [showNotifPrompt, setShowNotifPrompt] = useState(false);
@@ -89,7 +109,7 @@ export default function ChannelScreen() {
 
   useEffect(() => {
     setPosts(channel?.posts ?? []);
-  }, [channel]);
+  }, [channel, channel?.posts]);
 
   const actionPost = useMemo(
     () => posts.find((post) => post.id === actionPostId),
@@ -155,6 +175,9 @@ export default function ChannelScreen() {
   }
 
   const openCommentSheet = (postId: string) => {
+    if (channel?.settings && channel.settings.commentsEnabled === false) {
+      return;
+    }
     closeActionBar();
     setCommentPostId(postId);
     setCommentDraft('');
@@ -167,6 +190,7 @@ export default function ChannelScreen() {
     setCommentAnonymous(false);
     setCommentReplyTo(null);
     setExpandedComments(new Set());
+    setCommentFocused(false);
   };
 
   const handleFollowPress = () => {
@@ -259,7 +283,15 @@ export default function ChannelScreen() {
       <StatusBar style={isDark ? 'light' : 'dark'} />
 
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.divider }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: isDark ? colors.surface : colors.surface,
+            borderBottomColor: colors.divider,
+          },
+        ]}
+      >
         <Pressable
           onPress={() => router.back()}
           hitSlop={12}
@@ -274,11 +306,13 @@ export default function ChannelScreen() {
           accessibilityRole="button"
           accessibilityLabel={t('channel.info_title')}
         >
-          <Image
-            source={{ uri: channel.avatarUri }}
-            style={[styles.headerAvatar, { backgroundColor: colors.surfaceMuted }]}
-            contentFit="cover"
-          />
+          <View style={[styles.headerAvatarRing, { borderColor: colors.primary }]}>
+            <Image
+              source={{ uri: channel.avatarUri }}
+              style={[styles.headerAvatar, { backgroundColor: colors.surfaceMuted }]}
+              contentFit="cover"
+            />
+          </View>
           <View style={styles.headerText}>
             <View style={styles.headerNameRow}>
               <Text style={[styles.headerName, { color: colors.text }]} numberOfLines={1}>
@@ -289,30 +323,47 @@ export default function ChannelScreen() {
               ) : null}
             </View>
             <Text style={[styles.headerHandle, { color: colors.textSecondary }]} numberOfLines={1}>
-              {channel.handle}
+              {channel.handle} · {t('channel.members', { count: formatCount(channel.members) })}
             </Text>
           </View>
         </Pressable>
         <View style={styles.headerActions}>
-          <Pressable
-            onPress={handleFollowPress}
-            style={({ pressed }) => [
-              styles.followBtn,
-              isFollowing
-                ? { backgroundColor: colors.surfaceMuted, borderColor: colors.border }
-                : { backgroundColor: colors.primary, borderColor: colors.primary },
-              pressed && { opacity: 0.85 },
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel={isFollowing ? t('discover.following') : t('discover.follow')}
-          >
-            {isFollowing && notifEnabled ? (
-              <Ionicons name="notifications" size={12} color={colors.text} />
-            ) : null}
-            <Text style={[styles.followBtnText, { color: isFollowing ? colors.text : colors.onPrimary }]}>
-              {isFollowing ? t('discover.following') : t('discover.follow')}
-            </Text>
-          </Pressable>
+          {manageOk ? (
+            <Pressable
+              onPress={() => router.push(`/channel/settings/${channel.id}`)}
+              style={({ pressed }) => [
+                styles.followBtn,
+                { backgroundColor: colors.surfaceMuted, borderColor: colors.border },
+                pressed && { opacity: 0.85 },
+              ]}
+              accessibilityLabel={t('channel_settings.title')}
+            >
+              <Ionicons name="settings-outline" size={14} color={colors.text} />
+              <Text style={[styles.followBtnText, { color: colors.text }]}>
+                {t('channel_settings.manage_short')}
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={handleFollowPress}
+              style={({ pressed }) => [
+                styles.followBtn,
+                isFollowing
+                  ? { backgroundColor: colors.surfaceMuted, borderColor: colors.border }
+                  : { backgroundColor: colors.primary, borderColor: colors.primary },
+                pressed && { opacity: 0.85 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={isFollowing ? t('discover.following') : t('discover.follow')}
+            >
+              {isFollowing && notifEnabled ? (
+                <Ionicons name="notifications" size={12} color={colors.text} />
+              ) : null}
+              <Text style={[styles.followBtnText, { color: isFollowing ? colors.text : colors.onPrimary }]}>
+                {isFollowing ? t('discover.following') : t('discover.follow')}
+              </Text>
+            </Pressable>
+          )}
           <Pressable
             onPress={() => setShowMoreMenu(true)}
             hitSlop={8}
@@ -332,48 +383,88 @@ export default function ChannelScreen() {
         renderItem={({ item }) => (
           <Post
             post={item}
+            channelId={channel.id}
             onLongPress={(event) => openActionBar(item.id, event)}
             onOpenComments={() => openCommentSheet(item.id)}
           />
         )}
         ListHeaderComponent={
           <View style={styles.listHeader}>
-            <View style={[styles.channelCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.cardHead}>
+            {/* Cinematic channel hero */}
+            <Pressable
+              onPress={() => router.push(`/channel-info/${channel.id}`)}
+              style={styles.hero}
+            >
+              <Image
+                source={{ uri: channel.coverUri }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+              />
+              <View style={styles.heroScrim} />
+              <View style={styles.heroBottom}>
                 <Image
                   source={{ uri: channel.avatarUri }}
-                  style={[styles.cardAvatar, { backgroundColor: colors.surfaceMuted }]}
+                  style={styles.heroAvatar}
                   contentFit="cover"
                 />
-                <View style={styles.cardTitle}>
+                <View style={styles.heroMeta}>
                   <View style={styles.nameRow}>
-                    <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
+                    <Text style={styles.heroName} numberOfLines={1}>
                       {channel.name}
                     </Text>
                     {channel.verified ? (
-                      <Ionicons name="checkmark-circle" size={17} color={colors.primary} />
+                      <Ionicons name="checkmark-circle" size={16} color="#6F8BFF" />
                     ) : null}
                   </View>
-                  <Text style={[styles.handle, { color: colors.textSecondary }]}>{channel.handle}</Text>
-                </View>
-              </View>
-              <View style={styles.metaRow}>
-                <Text style={[styles.handle, { color: colors.textSecondary }]}>
-                  {t('channel.members', { count: formatCount(channel.members) })}
-                </Text>
-                <View style={[styles.dot, { backgroundColor: colors.textMuted }]} />
-                <View style={[styles.categoryChip, { backgroundColor: colors.surfaceMuted }]}>
-                  <Text style={[styles.categoryText, { color: colors.textSecondary }]}>
-                    {t(`discover.cat_${channel.category}`)}
+                  <Text style={styles.heroSub} numberOfLines={1}>
+                    {channel.handle} · {t('channel.members', { count: formatCount(channel.members) })}
+                  </Text>
+                  <Text style={styles.heroDesc} numberOfLines={2}>
+                    {channel.description}
                   </Text>
                 </View>
               </View>
+            </Pressable>
+
+            {/* Stats strip */}
+            <View style={[styles.statsStrip, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.statCell}>
+                <Text style={[styles.statValue, { color: colors.text }]}>{posts.length}</Text>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                  {t('channel.stats_posts')}
+                </Text>
+              </View>
+              <View style={[styles.statSep, { backgroundColor: colors.divider }]} />
+              <View style={styles.statCell}>
+                <Text style={[styles.statValue, { color: colors.text }]}>{mediaCount}</Text>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                  {t('channel.stats_media')}
+                </Text>
+              </View>
+              <View style={[styles.statSep, { backgroundColor: colors.divider }]} />
+              <View style={styles.statCell}>
+                <Text style={[styles.statValue, { color: colors.text }]}>
+                  {formatCount(channel.members)}
+                </Text>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                  {t('channel.stats_followers')}
+                </Text>
+              </View>
             </View>
 
-            <View style={[styles.adminNote, { borderColor: colors.divider }]}>
-              <Ionicons name="megaphone-outline" size={14} color={colors.textSecondary} />
+            <View
+              style={[
+                styles.adminNote,
+                { backgroundColor: colors.surfaceMuted, borderColor: colors.border },
+              ]}
+            >
+              <Ionicons name="megaphone-outline" size={14} color={colors.primary} />
               <Text style={[styles.adminNoteText, { color: colors.textSecondary }]}>
-                {t('channel.admins_only')}
+                {channel.settings?.whoCanPost === 'everyone'
+                  ? t('channel_create.post_everyone_hint')
+                  : channel.settings?.whoCanPost === 'publishers'
+                    ? t('channel_create.post_publishers_hint')
+                    : t('channel.admins_only')}
               </Text>
             </View>
 
@@ -389,92 +480,352 @@ export default function ChannelScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Floating reaction bar */}
-      <Modal transparent animationType="fade" visible={!!actionPost} onRequestClose={closeActionBar}>
-        <View style={StyleSheet.absoluteFill}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closeActionBar} />
-          <View
-            style={[
-              styles.actionBar,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-              actionBarStyle,
-            ]}
-          >
-            {QUICK_REACTIONS.map((emoji) => {
-              const active = actionPost?.myReaction === emoji;
-              return (
-                <Pressable
-                  key={emoji}
-                  onPress={() => handleReaction(emoji)}
-                  style={[
-                    styles.actionEmoji,
-                    active && { backgroundColor: colors.surfaceMuted, borderColor: colors.primary },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('channel.react', { emoji })}
-                >
-                  <Text style={styles.actionEmojiText}>{emoji}</Text>
-                </Pressable>
-              );
-            })}
-            <View style={[styles.actionSep, { backgroundColor: colors.border }]} />
-            <Pressable
-              onPress={() => actionPostId && openCommentSheet(actionPostId)}
-              style={({ pressed }) => [
-                styles.actionCommentBtn,
-                pressed && { backgroundColor: colors.surfaceMuted },
+      {publishOk ? (
+        <Pressable
+          onPress={() => setComposerOpen(true)}
+          style={({ pressed }) => [
+            styles.postFab,
+            {
+              backgroundColor: colors.primary,
+              shadowColor: colors.primary,
+              bottom: insets.bottom + Spacing.lg,
+            },
+            pressed && { transform: [{ scale: 0.96 }] },
+          ]}
+          accessibilityLabel={t('channel_create.new_post')}
+        >
+          <Ionicons name="create-outline" size={22} color={colors.onPrimary} />
+        </Pressable>
+      ) : null}
+
+      {/* New post composer */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={composerOpen}
+        onRequestClose={() => setComposerOpen(false)}
+      >
+        <View style={styles.postComposerOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setComposerOpen(false)} />
+          <KeyboardAvoidingView behavior="padding" style={styles.postComposerKav}>
+            <View
+              style={[
+                styles.postComposerSheet,
+                {
+                  backgroundColor: colors.surfaceElevated,
+                  borderColor: colors.border,
+                  paddingBottom: Math.max(insets.bottom, Spacing.md),
+                },
               ]}
-              accessibilityRole="button"
-              accessibilityLabel={t('channel.comment')}
             >
-              <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.text} />
-              <Text style={[styles.actionCommentText, { color: colors.text }]}>
-                {t('channel.comment')}
-              </Text>
-            </Pressable>
-          </View>
+              <View style={styles.postComposerHeader}>
+                <Text style={[styles.postComposerTitle, { color: colors.text }]}>
+                  {t('channel_create.new_post')}
+                </Text>
+                <Pressable onPress={() => setComposerOpen(false)} hitSlop={10}>
+                  <Ionicons name="close" size={22} color={colors.text} />
+                </Pressable>
+              </View>
+
+              {/* Post type picker */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.postKindRow}
+              >
+                {(
+                  [
+                    ['text', 'text', t('channel_post.kind_text')],
+                    ['image', 'image', t('channel_post.kind_image')],
+                    ['video', 'videocam', t('channel_post.kind_video')],
+                    ['game', 'game-controller', t('channel_post.kind_game')],
+                    ['live', 'radio', t('channel_post.kind_live')],
+                    ['voice', 'mic', t('channel_post.kind_voice')],
+                  ] as const
+                ).map(([kind, icon, label]) => {
+                  const active = postKind === kind;
+                  return (
+                    <Pressable
+                      key={kind}
+                      onPress={() => setPostKind(kind)}
+                      style={[
+                        styles.postKindChip,
+                        {
+                          borderColor: active ? colors.primary : colors.border,
+                          backgroundColor: active ? `${colors.primary}14` : colors.surfaceMuted,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={icon}
+                        size={16}
+                        color={active ? colors.primary : colors.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.postKindText,
+                          { color: active ? colors.primary : colors.textSecondary },
+                        ]}
+                      >
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              {postKind === 'game' ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.postKindRow}
+                >
+                  {(
+                    [
+                      ['trivia', t('hangout.game_trivia')],
+                      ['dice', t('hangout.game_dice')],
+                      ['would_you_rather', t('hangout.game_wyr')],
+                      ['quick_draw', t('hangout.game_draw')],
+                      ['emoji_race', t('hangout.game_emoji')],
+                    ] as const
+                  ).map(([g, label]) => {
+                    const active = postGame === g;
+                    return (
+                      <Pressable
+                        key={g}
+                        onPress={() => setPostGame(g)}
+                        style={[
+                          styles.postKindChip,
+                          {
+                            borderColor: active ? colors.primary : colors.border,
+                            backgroundColor: active ? `${colors.primary}14` : colors.surface,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.postKindText,
+                            { color: active ? colors.primary : colors.textSecondary },
+                          ]}
+                        >
+                          {label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              ) : null}
+
+              {(postKind === 'live' || postKind === 'voice') && channel ? (
+                <Pressable
+                  onPress={() => {
+                    setComposerOpen(false);
+                    router.push(
+                      `/hangout/${channel.id}?mode=${postKind === 'live' ? 'live' : 'voice'}`,
+                    );
+                  }}
+                  style={[styles.hangoutLaunch, { backgroundColor: `${colors.primary}14`, borderColor: colors.primary }]}
+                >
+                  <Ionicons
+                    name={postKind === 'live' ? 'radio' : 'mic'}
+                    size={18}
+                    color={colors.primary}
+                  />
+                  <Text style={[styles.hangoutLaunchText, { color: colors.primary }]}>
+                    {postKind === 'live'
+                      ? t('channel_post.open_live')
+                      : t('channel_post.open_voice')}
+                  </Text>
+                  <Ionicons name="arrow-forward" size={16} color={colors.primary} />
+                </Pressable>
+              ) : null}
+
+              <TextInput
+                value={postDraft}
+                onChangeText={setPostDraft}
+                placeholder={
+                  postKind === 'game'
+                    ? t('channel_post.game_caption')
+                    : postKind === 'live'
+                      ? t('channel_post.live_caption')
+                      : postKind === 'voice'
+                        ? t('channel_post.voice_caption')
+                        : t('channel_create.post_placeholder')
+                }
+                placeholderTextColor={colors.textMuted}
+                multiline
+                autoFocus
+                style={[
+                  styles.postComposerInput,
+                  { color: colors.text, backgroundColor: colors.surfaceMuted },
+                ]}
+              />
+              <Pressable
+                onPress={() => {
+                  if (!channel) return;
+                  const needsText = postKind === 'text' || postKind === 'game';
+                  if (needsText && !postDraft.trim()) return;
+
+                  const defaults: Record<string, string> = {
+                    image: t('channel_post.default_image'),
+                    video: t('channel_post.default_video'),
+                    live: t('channel_post.default_live'),
+                    voice: t('channel_post.default_voice'),
+                    game: t('channel_post.default_game'),
+                  };
+
+                  const post = addChannelPost(channel.id, {
+                    text: postDraft.trim() || defaults[postKind] || t('channel_create.post_placeholder'),
+                    type: postKind,
+                    mediaUri:
+                      postKind === 'image' || postKind === 'video'
+                        ? `https://picsum.photos/seed/ch-post-${Date.now()}/900/700`
+                        : undefined,
+                    gameKind: postKind === 'game' ? postGame : undefined,
+                    isLive: postKind === 'live' || postKind === 'voice',
+                    liveViewers: postKind === 'live' || postKind === 'voice' ? 1 : undefined,
+                  });
+                  if (post) {
+                    setPosts((prev) => [post, ...prev]);
+                    setPostDraft('');
+                    setPostKind('text');
+                    setComposerOpen(false);
+                    if (postKind === 'live' || postKind === 'voice') {
+                      router.push(
+                        `/hangout/${channel.id}?mode=${postKind === 'live' ? 'live' : 'voice'}`,
+                      );
+                    }
+                  }
+                }}
+                disabled={
+                  (postKind === 'text' || postKind === 'game') && !postDraft.trim()
+                }
+                style={[
+                  styles.postComposerSend,
+                  {
+                    backgroundColor:
+                      (postKind !== 'text' && postKind !== 'game') || postDraft.trim()
+                        ? postKind === 'live'
+                          ? '#EF4444'
+                          : colors.primary
+                        : colors.surfaceMuted,
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    ...Typography.bodyStrong,
+                    color:
+                      (postKind !== 'text' && postKind !== 'game') || postDraft.trim()
+                        ? colors.onPrimary
+                        : colors.textMuted,
+                  }}
+                >
+                  {postKind === 'live'
+                    ? t('channel_post.go_live')
+                    : postKind === 'voice'
+                      ? t('channel_post.start_voice')
+                      : t('channel_create.publish_post')}
+                </Text>
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
-      {/* ── Comment sheet — TikTok style ──────────────────────────────── */}
+      {/* Premium reaction tray */}
+      <ReactionTray
+        visible={!!actionPost}
+        activeEmoji={actionPost?.myReaction}
+        emojis={QUICK_REACTIONS}
+        anchor={actionBarPosition ? { ...actionBarStyle, width: actionBarWidth } : null}
+        onSelect={handleReaction}
+        onComment={() => actionPostId && openCommentSheet(actionPostId)}
+        onClose={closeActionBar}
+        commentLabel={t('channel.comment')}
+      />
+
+      {/* ── Comment sheet ───────────────────────────────────────────────── */}
       <Modal
         transparent
         animationType="slide"
         visible={!!commentPost}
         onRequestClose={closeCommentSheet}
+        statusBarTranslucent
       >
         <View style={styles.commentOverlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeCommentSheet} />
-          <KeyboardAvoidingView behavior="padding">
-            <View style={[styles.commentSheet, { backgroundColor: colors.surfaceElevated }]}>
-
-              {/* Drag pill */}
+          <KeyboardAvoidingView
+            behavior="padding"
+            keyboardVerticalOffset={0}
+            style={styles.commentKav}
+          >
+            <View
+              style={[
+                styles.commentSheet,
+                {
+                  backgroundColor: isDark ? '#12141A' : colors.surfaceElevated,
+                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : colors.border,
+                  // Cap height so the sheet sits on the bottom edge; keyboard pushes it up.
+                  maxHeight: screenHeight * (commentFocused ? 0.92 : 0.78),
+                },
+              ]}
+            >
               <View style={styles.dragHandle}>
                 <View style={[styles.dragHandleBar, { backgroundColor: colors.border }]} />
               </View>
 
-              {/* Header */}
+              {/* Header — compact */}
               <View style={[styles.commentSheetHeader, { borderBottomColor: colors.divider }]}>
-                <Text style={[styles.commentSheetTitle, { color: colors.text }]}>
-                  {t('channel.comments')}
-                  {comments.length > 0 ? (
-                    <Text style={[styles.commentSheetCount, { color: colors.textSecondary }]}>
-                      {' '}·{' '}{countComments(comments)}
-                    </Text>
-                  ) : null}
-                </Text>
-                <Pressable onPress={closeCommentSheet} hitSlop={12}>
-                  <Ionicons name="close" size={22} color={colors.text} />
+                <View style={styles.commentSheetHeaderLeft}>
+                  <Text style={[styles.commentSheetTitle, { color: colors.text }]}>
+                    {t('channel.comments')}
+                  </Text>
+                  <Text style={[styles.commentSheetCount, { color: colors.textSecondary }]}>
+                    {countComments(comments)}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={closeCommentSheet}
+                  hitSlop={12}
+                  style={[styles.commentCloseBtn, { backgroundColor: colors.surfaceMuted }]}
+                >
+                  <Ionicons name="close" size={18} color={colors.text} />
                 </Pressable>
               </View>
 
-              {/* Comment list */}
+              {/* Post context — hide while typing to free vertical space */}
+              {commentPost && !commentFocused ? (
+                <View
+                  style={[
+                    styles.postContext,
+                    {
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.surfaceMuted,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  <Ionicons name="document-text-outline" size={13} color={colors.textMuted} />
+                  <Text
+                    style={[styles.postContextText, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {commentPost.text}
+                  </Text>
+                </View>
+              ) : null}
+
               <ScrollView
                 ref={commentScrollRef}
                 style={styles.commentScroll}
-                contentContainerStyle={styles.commentScrollContent}
+                contentContainerStyle={
+                  comments.length === 0
+                    ? styles.commentScrollEmpty
+                    : styles.commentScrollContent
+                }
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="interactive"
               >
                 {comments.length ? (
                   comments.map((comment) => (
@@ -489,7 +840,14 @@ export default function ChannelScreen() {
                   ))
                 ) : (
                   <View style={styles.commentEmpty}>
-                    <Ionicons name="chatbubbles-outline" size={40} color={colors.textMuted} />
+                    <View
+                      style={[
+                        styles.commentEmptyOrb,
+                        { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.surfaceMuted },
+                      ]}
+                    >
+                      <Ionicons name="chatbubble-ellipses-outline" size={28} color={colors.primary} />
+                    </View>
                     <Text style={[styles.commentEmptyTitle, { color: colors.text }]}>
                       {t('channel.no_comments')}
                     </Text>
@@ -500,74 +858,192 @@ export default function ChannelScreen() {
                 )}
               </ScrollView>
 
-              {/* Quick emoji bar */}
-              <View style={[styles.emojiBar, { borderTopColor: colors.divider }]}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.emojiBarScroll}
-                >
-                  {COMMENT_EMOJIS.map((emoji) => (
-                    <Pressable
-                      key={emoji}
-                      onPress={() => setCommentDraft((d) => d + emoji)}
-                      style={({ pressed }) => [styles.emojiBarBtn, pressed && { opacity: 0.6 }]}
-                    >
-                      <Text style={styles.emojiBarText}>{emoji}</Text>
+              {/* Bottom dock — hugs the screen bottom; only safe-area when keyboard is closed */}
+              <View
+                style={[
+                  styles.composerDock,
+                  {
+                    backgroundColor: isDark ? '#0E1016' : colors.surface,
+                    borderTopColor: colors.divider,
+                    paddingBottom: commentFocused
+                      ? Spacing.sm
+                      : Math.max(insets.bottom, Spacing.sm),
+                  },
+                ]}
+              >
+                {/* Emojis only when not typing — avoids pushing the input up */}
+                {!commentFocused ? (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.emojiBarScroll}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {COMMENT_EMOJIS.map((emoji) => (
+                      <Pressable
+                        key={emoji}
+                        onPress={() => {
+                          setCommentDraft((d) => d + emoji);
+                          commentInputRef.current?.focus();
+                        }}
+                        style={[
+                          styles.emojiBarBtn,
+                          {
+                            backgroundColor: isDark
+                              ? 'rgba(255,255,255,0.07)'
+                              : colors.surfaceMuted,
+                            borderColor: colors.border,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.emojiBarText}>{emoji}</Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : null}
+
+                {commentReplyTo ? (
+                  <View
+                    style={[
+                      styles.replyingBar,
+                      {
+                        backgroundColor: isDark ? 'rgba(45,91,255,0.12)' : `${colors.primary}12`,
+                        borderColor: colors.primary,
+                      },
+                    ]}
+                  >
+                    <Ionicons name="return-down-forward" size={14} color={colors.primary} />
+                    <Text style={[styles.replyingText, { color: colors.text }]} numberOfLines={1}>
+                      {t('channel.replying_to', { name: commentReplyTo.author })}
+                    </Text>
+                    <Pressable onPress={() => setCommentReplyTo(null)} hitSlop={8}>
+                      <Ionicons name="close-circle" size={18} color={colors.textMuted} />
                     </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
+                  </View>
+                ) : null}
 
-              {/* Replying-to bar */}
-              {commentReplyTo ? (
-                <View style={[styles.replyingBar, { backgroundColor: colors.surfaceMuted, borderTopColor: colors.divider }]}>
-                  <Ionicons name="arrow-undo-outline" size={14} color={colors.textSecondary} />
-                  <Text style={[styles.replyingText, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {t('channel.replying_to', { name: commentReplyTo.author })}
-                  </Text>
-                  <Pressable onPress={() => setCommentReplyTo(null)} hitSlop={8}>
-                    <Ionicons name="close" size={16} color={colors.textMuted} />
-                  </Pressable>
-                </View>
-              ) : null}
+                {/* Identity chips only when dock is expanded */}
+                {!commentFocused ? (
+                  <View style={styles.identityRow}>
+                    <Pressable
+                      onPress={() => setCommentAnonymous(false)}
+                      style={[
+                        styles.identityChip,
+                        {
+                          borderColor: !commentAnonymous ? colors.primary : colors.border,
+                          backgroundColor: !commentAnonymous
+                            ? `${colors.primary}14`
+                            : 'transparent',
+                        },
+                      ]}
+                    >
+                      <View style={[styles.identityDot, { backgroundColor: colors.primary }]}>
+                        <Text style={styles.identityDotText}>
+                          {CURRENT_USER.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.identityLabel,
+                          { color: !commentAnonymous ? colors.primary : colors.textSecondary },
+                        ]}
+                      >
+                        {CURRENT_USER.name.split(' ')[0]}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setCommentAnonymous(true)}
+                      style={[
+                        styles.identityChip,
+                        {
+                          borderColor: commentAnonymous ? colors.primary : colors.border,
+                          backgroundColor: commentAnonymous
+                            ? `${colors.primary}14`
+                            : 'transparent',
+                        },
+                      ]}
+                    >
+                      <View style={[styles.identityDot, { backgroundColor: colors.surfaceMuted }]}>
+                        <Ionicons name="eye-off" size={12} color={colors.textMuted} />
+                      </View>
+                      <Text
+                        style={[
+                          styles.identityLabel,
+                          { color: commentAnonymous ? colors.primary : colors.textSecondary },
+                        ]}
+                      >
+                        {t('channel.anonymous')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
 
-              {/* Composer — TikTok style: avatar + pill input + Post/GIF */}
-              <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, Spacing.sm) }]}>
-                <View
-                  style={[
-                    styles.composerAvatar,
-                    { backgroundColor: `${colors.primary}22` },
-                  ]}
-                >
-                  <Text style={[styles.composerAvatarText, { color: colors.primary }]}>
-                    {CURRENT_USER.name.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-                <View style={[styles.composerInputWrap, { backgroundColor: colors.surfaceMuted }]}>
-                  <TextInput
-                    ref={commentInputRef}
-                    value={commentDraft}
-                    onChangeText={setCommentDraft}
-                    placeholder={t('channel.comment_placeholder')}
-                    placeholderTextColor={colors.textMuted}
-                    style={[styles.composerInput, { color: colors.text }]}
-                    multiline
-                  />
+                <View style={styles.composer}>
                   <Pressable
-                    onPress={commentDraft.trim() ? submitComment : undefined}
-                    hitSlop={8}
+                    onPress={() => {
+                      // Quick toggle identity while typing
+                      if (commentFocused) setCommentAnonymous((v) => !v);
+                    }}
+                    style={[
+                      styles.composerAvatar,
+                      {
+                        backgroundColor: commentAnonymous
+                          ? colors.surfaceMuted
+                          : `${colors.primary}22`,
+                      },
+                    ]}
+                  >
+                    {commentAnonymous ? (
+                      <Ionicons name="eye-off" size={15} color={colors.textMuted} />
+                    ) : (
+                      <Text style={[styles.composerAvatarText, { color: colors.primary }]}>
+                        {CURRENT_USER.name.charAt(0).toUpperCase()}
+                      </Text>
+                    )}
+                  </Pressable>
+                  <View
+                    style={[
+                      styles.composerInputWrap,
+                      {
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.surfaceMuted,
+                        borderColor: commentFocused ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <TextInput
+                      ref={commentInputRef}
+                      value={commentDraft}
+                      onChangeText={setCommentDraft}
+                      onFocus={() => setCommentFocused(true)}
+                      onBlur={() => setCommentFocused(false)}
+                      placeholder={t('channel.comment_placeholder')}
+                      placeholderTextColor={colors.textMuted}
+                      style={[styles.composerInput, { color: colors.text }]}
+                      multiline
+                      maxLength={500}
+                      textAlignVertical="center"
+                    />
+                  </View>
+                  <Pressable
+                    onPress={submitComment}
+                    disabled={!commentDraft.trim()}
+                    style={({ pressed }) => [
+                      styles.composerSend,
+                      {
+                        backgroundColor: commentDraft.trim()
+                          ? colors.primary
+                          : colors.surfaceMuted,
+                      },
+                      pressed && commentDraft.trim() && { opacity: 0.88 },
+                    ]}
                     accessibilityRole="button"
                     accessibilityLabel={t('channel.comment_post')}
                   >
-                    <Text
-                      style={[
-                        styles.composerPost,
-                        { color: commentDraft.trim() ? colors.primary : colors.textMuted },
-                      ]}
-                    >
-                      {commentDraft.trim() ? t('channel.comment_post') : 'GIF'}
-                    </Text>
+                    <Ionicons
+                      name="send"
+                      size={16}
+                      color={commentDraft.trim() ? colors.onPrimary : colors.textMuted}
+                    />
                   </Pressable>
                 </View>
               </View>
@@ -716,16 +1192,19 @@ export default function ChannelScreen() {
 // ── Post card ───────────────────────────────────────────────────────────────────
 function Post({
   post,
+  channelId,
   onLongPress,
   onOpenComments,
 }: {
   post: ChannelPost;
+  channelId: string;
   onLongPress: (event: GestureResponderEvent) => void;
   onOpenComments: () => void;
 }) {
   const { colors } = useTheme();
   const reactions = post.reactions ?? [];
   const commentCount = post.comments?.length ?? 0;
+  const kind = post.type ?? (post.mediaUri ? 'image' : 'text');
 
   return (
     <Pressable
@@ -733,57 +1212,163 @@ function Post({
       delayLongPress={220}
       style={({ pressed }) => [
         styles.postCard,
-        { backgroundColor: colors.surface, borderColor: colors.border },
-        pressed && { opacity: 0.92 },
+        {
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+          shadowColor: '#0B1020',
+        },
+        pressed && { opacity: 0.94, transform: [{ scale: 0.995 }] },
       ]}
     >
-      {post.mediaUri ? (
-        <Image
-          source={{ uri: post.mediaUri }}
-          style={[styles.postMedia, { backgroundColor: colors.surfaceMuted }]}
-          contentFit="cover"
-        />
-      ) : null}
-
-      <Text style={[styles.postText, { color: colors.text }]}>{post.text}</Text>
-
-      {reactions.length > 0 ? (
-        <View style={styles.reactionRow}>
-          {reactions.map((reaction) => {
-            const active = post.myReaction === reaction.emoji;
-            return (
-              <View
-                key={reaction.emoji}
-                style={[
-                  styles.reactionPill,
-                  {
-                    backgroundColor: active ? colors.primary : colors.surfaceMuted,
-                    borderColor: active ? colors.primary : colors.border,
-                  },
-                ]}
-              >
-                <Text style={[styles.reactionText, { color: active ? colors.onPrimary : colors.text }]}>
-                  {reaction.emoji} {formatCount(reaction.count)}
-                </Text>
-              </View>
-            );
-          })}
+      {post.mediaUri && (kind === 'image' || kind === 'video') ? (
+        <View style={styles.postMediaWrap}>
+          <Image
+            source={{ uri: post.mediaUri }}
+            style={[styles.postMedia, { backgroundColor: colors.surfaceMuted }]}
+            contentFit="cover"
+          />
+          {kind === 'video' ? (
+            <View style={styles.mediaBadge}>
+              <Ionicons name="play" size={14} color="#FFF" />
+            </View>
+          ) : null}
         </View>
       ) : null}
 
-      <View style={styles.postFoot}>
-        <View style={styles.postFootItem}>
-          <Ionicons name="eye-outline" size={13} color={colors.textMuted} />
-          <Text style={[styles.postViews, { color: colors.textMuted }]}>{formatCount(post.views)}</Text>
-        </View>
-        <Pressable onPress={onOpenComments} style={styles.postFootItem}>
-          <Ionicons name="chatbubble-ellipses-outline" size={13} color={colors.textMuted} />
-          <Text style={[styles.postViews, { color: colors.textMuted }]}>
-            {formatCount(commentCount)}
-          </Text>
+      {kind === 'game' ? (
+        <Pressable
+          onPress={() =>
+            router.push(`/hangout/${channelId}?mode=voice&game=${post.gameKind ?? 'trivia'}`)
+          }
+          style={[styles.specialCard, { backgroundColor: `${colors.primary}12`, borderColor: colors.primary }]}
+        >
+          <View style={[styles.specialIcon, { backgroundColor: colors.primary }]}>
+            <Ionicons name="game-controller" size={20} color={colors.onPrimary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.specialTitle, { color: colors.text }]}>
+              {t('channel_post.kind_game')}
+              {post.gameKind
+                ? ` · ${t(
+                    post.gameKind === 'would_you_rather'
+                      ? 'hangout.game_wyr'
+                      : post.gameKind === 'quick_draw'
+                        ? 'hangout.game_draw'
+                        : post.gameKind === 'emoji_race'
+                          ? 'hangout.game_emoji'
+                          : post.gameKind === 'dice'
+                            ? 'hangout.game_dice'
+                            : 'hangout.game_trivia',
+                  )}`
+                : ''}
+            </Text>
+            <Text style={[styles.specialHint, { color: colors.textSecondary }]}>
+              {t('channel_post.tap_play')}
+            </Text>
+          </View>
+          <Ionicons name="play-circle" size={28} color={colors.primary} />
         </Pressable>
-        <View style={styles.postFootSpacer} />
-        <Text style={[styles.postTime, { color: colors.textMuted }]}>{post.timestamp}</Text>
+      ) : null}
+
+      {(kind === 'live' || kind === 'voice') ? (
+        <Pressable
+          onPress={() =>
+            router.push(`/hangout/${channelId}?mode=${kind === 'live' ? 'live' : 'voice'}`)
+          }
+          style={[
+            styles.specialCard,
+            {
+              backgroundColor: kind === 'live' ? 'rgba(239,68,68,0.1)' : `${colors.primary}12`,
+              borderColor: kind === 'live' ? '#EF4444' : colors.primary,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.specialIcon,
+              { backgroundColor: kind === 'live' ? '#EF4444' : colors.primary },
+            ]}
+          >
+            <Ionicons
+              name={kind === 'live' ? 'radio' : 'mic'}
+              size={20}
+              color="#FFF"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {kind === 'live' && post.isLive ? (
+                <View style={styles.liveMini}>
+                  <View style={styles.liveMiniDot} />
+                  <Text style={styles.liveMiniText}>{t('hangout.live')}</Text>
+                </View>
+              ) : null}
+              <Text style={[styles.specialTitle, { color: colors.text }]}>
+                {kind === 'live' ? t('channel_post.kind_live') : t('channel_post.kind_voice')}
+              </Text>
+            </View>
+            <Text style={[styles.specialHint, { color: colors.textSecondary }]}>
+              {post.isLive
+                ? t('hangout.people', { count: post.liveViewers ?? 1 })
+                : t('channel_post.tap_join')}
+            </Text>
+          </View>
+          <Ionicons
+            name="enter-outline"
+            size={22}
+            color={kind === 'live' ? '#EF4444' : colors.primary}
+          />
+        </Pressable>
+      ) : null}
+
+      <View style={styles.postBody}>
+        <Text style={[styles.postText, { color: colors.text }]}>{post.text}</Text>
+
+        {reactions.length > 0 ? (
+          <View style={styles.reactionRow}>
+            {reactions.map((reaction) => {
+              const active = post.myReaction === reaction.emoji;
+              return (
+                <View
+                  key={reaction.emoji}
+                  style={[
+                    styles.reactionPill,
+                    {
+                      backgroundColor: active ? `${colors.primary}18` : colors.surfaceMuted,
+                      borderColor: active ? colors.primary : colors.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.reactionText,
+                      { color: active ? colors.primary : colors.text },
+                    ]}
+                  >
+                    {reaction.emoji} {formatCount(reaction.count)}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+
+        <View style={[styles.postFoot, { borderTopColor: colors.divider }]}>
+          <View style={styles.postFootItem}>
+            <Ionicons name="eye-outline" size={14} color={colors.textMuted} />
+            <Text style={[styles.postViews, { color: colors.textMuted }]}>
+              {formatCount(post.views)}
+            </Text>
+          </View>
+          <Pressable onPress={onOpenComments} style={styles.postFootItem} hitSlop={6}>
+            <Ionicons name="chatbubble-ellipses-outline" size={14} color={colors.textMuted} />
+            <Text style={[styles.postViews, { color: colors.textMuted }]}>
+              {formatCount(commentCount)}
+            </Text>
+          </Pressable>
+          <View style={styles.postFootSpacer} />
+          <Text style={[styles.postTime, { color: colors.textMuted }]}>{post.timestamp}</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -830,40 +1415,98 @@ function CommentRow({
   };
 
   return (
-    <View style={[styles.commentRow, isReply && styles.commentRowReply, comment.pending && styles.commentPendingRow]}>
+    <View
+      style={[
+        styles.commentRow,
+        isReply && styles.commentRowReply,
+        comment.pending && styles.commentPendingRow,
+      ]}
+    >
       <View
         style={[
           styles.commentAvatar,
           isReply && styles.commentAvatarSmall,
-          { backgroundColor: isAnon ? colors.surfaceMuted : `${colors.primary}22` },
+          {
+            backgroundColor: isAnon ? colors.surfaceMuted : `${colors.primary}22`,
+            borderColor: isAnon ? colors.border : `${colors.primary}33`,
+          },
         ]}
       >
-        <Text
-          style={[
-            isReply ? styles.commentAvatarTextSmall : styles.commentAvatarText,
-            { color: isAnon ? colors.textMuted : colors.primary },
-          ]}
-        >
-          {initial}
-        </Text>
+        {isAnon ? (
+          <Ionicons name="eye-off" size={isReply ? 12 : 15} color={colors.textMuted} />
+        ) : (
+          <Text
+            style={[
+              isReply ? styles.commentAvatarTextSmall : styles.commentAvatarText,
+              { color: colors.primary },
+            ]}
+          >
+            {initial}
+          </Text>
+        )}
       </View>
 
       <View style={styles.commentBody}>
-        <Text style={[styles.commentAuthorText, { color: colors.text }]}>{author}</Text>
-        <Text style={[styles.commentContent, { color: colors.text }]} numberOfLines={8}>
-          {comment.text}
-        </Text>
+        <View
+          style={[
+            styles.commentBubble,
+            {
+              backgroundColor: isAnon
+                ? colors.surfaceMuted
+                : `${colors.primary}0C`,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <View style={styles.commentAuthorRow}>
+            <Text style={[styles.commentAuthorText, { color: colors.text }]}>{author}</Text>
+            {isAnon ? (
+              <View style={[styles.anonTag, { backgroundColor: colors.surfaceMuted }]}>
+                <Text style={[styles.anonTagText, { color: colors.textMuted }]}>
+                  {t('channel.anonymous')}
+                </Text>
+              </View>
+            ) : null}
+            {comment.pending ? (
+              <View style={[styles.pendingTag, { backgroundColor: `${colors.warning}22` }]}>
+                <Text style={[styles.pendingTagText, { color: colors.warning }]}>
+                  {t('channel.pending_approval')}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={[styles.commentContent, { color: colors.text }]} numberOfLines={8}>
+            {comment.text}
+          </Text>
+        </View>
+
         <View style={styles.commentMeta}>
-          <Text style={[styles.commentTime, { color: colors.textSecondary }]}>{comment.timestamp}</Text>
-          {comment.pending ? (
-            <Text style={[styles.commentPending, { color: colors.textSecondary }]}>
-              · {t('channel.pending_approval')}
-            </Text>
-          ) : null}
-          <Pressable onPress={handleReply} hitSlop={8}>
+          <Text style={[styles.commentTime, { color: colors.textSecondary }]}>
+            {comment.timestamp}
+          </Text>
+          <Pressable onPress={handleReply} hitSlop={8} style={styles.metaAction}>
             <Text style={[styles.commentReply, { color: colors.textSecondary }]}>
               {t('channel.reply')}
             </Text>
+          </Pressable>
+          <Pressable onPress={handleLike} hitSlop={8} style={styles.metaAction}>
+            <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', gap: 3 }, heartStyle]}>
+              <Ionicons
+                name={comment.liked ? 'heart' : 'heart-outline'}
+                size={13}
+                color={comment.liked ? '#FF3040' : colors.textMuted}
+              />
+              {likes > 0 ? (
+                <Text
+                  style={[
+                    styles.commentLikeCount,
+                    { color: comment.liked ? '#FF3040' : colors.textMuted },
+                  ]}
+                >
+                  {likes}
+                </Text>
+              ) : null}
+            </Animated.View>
           </Pressable>
         </View>
 
@@ -875,7 +1518,7 @@ function CommentRow({
               hitSlop={6}
             >
               <View style={[styles.replyLine, { backgroundColor: colors.border }]} />
-              <Text style={[styles.viewRepliesText, { color: colors.textSecondary }]}>
+              <Text style={[styles.viewRepliesText, { color: colors.primary }]}>
                 {expanded
                   ? t('channel.hide_replies')
                   : replies.length === 1
@@ -898,22 +1541,6 @@ function CommentRow({
           </>
         ) : null}
       </View>
-
-      {/* Like button + count */}
-      <Pressable onPress={handleLike} hitSlop={10} style={styles.commentLikeBtn}>
-        <Animated.View style={heartStyle}>
-          <Ionicons
-            name={comment.liked ? 'heart' : 'heart-outline'}
-            size={isReply ? 13 : 16}
-            color={comment.liked ? '#FF3040' : colors.textMuted}
-          />
-        </Animated.View>
-        {likes > 0 ? (
-          <Text style={[styles.commentLikeCount, { color: comment.liked ? '#FF3040' : colors.textMuted }]}>
-            {likes}
-          </Text>
-        ) : null}
-      </Pressable>
     </View>
   );
 }
@@ -981,71 +1608,156 @@ const styles = StyleSheet.create({
   },
 
   // ── List header ─────────────────────────────────────────────────────────────
-  listHeader: { paddingTop: Spacing.lg, gap: Spacing.lg },
-  channelCard: {
-    borderRadius: Radii.lg,
-    borderWidth: 1,
-    padding: Spacing.md,
-    gap: Spacing.sm,
+  listHeader: { paddingTop: Spacing.md, gap: Spacing.md },
+  hero: {
+    height: 200,
+    borderRadius: Radii.xl + 2,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
   },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  cardAvatar: { width: 60, height: 60, borderRadius: Radii.xl },
-  cardTitle: { flex: 1, gap: 2 },
+  heroScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(11,16,32,0.48)',
+  },
+  heroBottom: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: Spacing.md,
+    padding: Spacing.md,
+  },
+  heroAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: Radii.lg,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.55)',
+  },
+  heroMeta: { flex: 1, gap: 2 },
+  heroName: { ...Typography.h3, color: '#FFF', flexShrink: 1 },
+  heroSub: { ...Typography.micro, color: 'rgba(255,255,255,0.78)' },
+  heroDesc: { ...Typography.caption, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   name: { ...Typography.h2, fontSize: 20, flexShrink: 1 },
-  metaRow: {
+  handle: { ...Typography.caption },
+  statsStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    marginTop: Spacing.xs,
+    borderRadius: Radii.xl,
+    borderWidth: 1,
+    paddingVertical: Spacing.md,
   },
-  handle: { ...Typography.caption },
-  dot: { width: 3, height: 3, borderRadius: Radii.pill },
-  categoryChip: {
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 3,
-    borderRadius: Radii.pill,
-    marginLeft: Spacing.xs,
-  },
-  categoryText: {
-    ...Typography.micro,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
+  statCell: { flex: 1, alignItems: 'center', gap: 2 },
+  statValue: { ...Typography.bodyStrong, fontSize: 16 },
+  statLabel: { ...Typography.micro },
+  statSep: { width: 1, height: 28 },
   adminNote: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: Spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+    paddingVertical: Spacing.sm + 2,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radii.lg,
+    borderWidth: 1,
   },
   adminNoteText: { ...Typography.caption, flex: 1 },
   postsHeader: {
     ...Typography.micro,
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: Spacing.xs,
+    letterSpacing: 0.8,
+    marginTop: Spacing.xs,
+  },
+  headerAvatarRing: {
+    width: 40,
+    height: 40,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+    padding: 1.5,
+    overflow: 'hidden',
   },
 
   // ── Post card ────────────────────────────────────────────────────────────────
   postCard: {
-    borderRadius: Radii.lg,
+    borderRadius: Radii.xl,
     borderWidth: 1,
-    padding: Spacing.md,
-    gap: Spacing.sm,
+    overflow: 'hidden',
     marginBottom: Spacing.md,
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  postText: { ...Typography.body, lineHeight: 21 },
-  postMedia: { width: '100%', height: 180, borderRadius: Radii.md },
+  postMediaWrap: { width: '100%', height: 200 },
+  postMedia: { width: '100%', height: '100%' },
+  mediaBadge: {
+    position: 'absolute',
+    left: 12,
+    bottom: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  specialCard: {
+    margin: Spacing.md,
+    marginBottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radii.lg,
+    borderWidth: 1.5,
+  },
+  specialIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  specialTitle: { ...Typography.bodyStrong, fontSize: 14 },
+  specialHint: { ...Typography.caption, marginTop: 2 },
+  liveMini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Radii.pill,
+    backgroundColor: '#EF4444',
+  },
+  liveMiniDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#FFF' },
+  liveMiniText: { ...Typography.micro, color: '#FFF', fontWeight: '800', fontSize: 9 },
+  postBody: { padding: Spacing.md, gap: Spacing.sm },
+  postText: { ...Typography.body, lineHeight: 22 },
+  postKindRow: { gap: Spacing.sm, paddingBottom: 2 },
+  postKindChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+  },
+  postKindText: { ...Typography.micro, fontWeight: '700' },
+  hangoutLaunch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: Radii.lg,
+    borderWidth: 1.5,
+  },
+  hangoutLaunchText: { ...Typography.bodyStrong, fontSize: 14, flex: 1 },
   reactionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
   reactionPill: {
     borderRadius: Radii.pill,
     borderWidth: 1,
     paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
+    paddingVertical: 5,
   },
   reactionText: { ...Typography.micro, fontWeight: '700' },
   postFoot: {
@@ -1053,64 +1765,82 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.md,
     marginTop: 2,
+    paddingTop: Spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   postFootItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   postFootSpacer: { flex: 1 },
   postViews: { ...Typography.micro },
   postTime: { ...Typography.micro },
 
-  // ── Reaction action bar ──────────────────────────────────────────────────────
-  actionBar: {
+  postFab: {
     position: 'absolute',
-    height: ACTION_BAR_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: Radii.pill,
-    borderWidth: 1,
-    padding: 6,
-    gap: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  actionEmoji: {
-    width: 34,
-    height: 34,
+    right: Spacing.lg,
+    width: 54,
+    height: 54,
     borderRadius: Radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: 'transparent',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 6,
   },
-  actionEmojiText: { fontSize: 18 },
-  actionSep: { width: 1, height: 22, marginHorizontal: 2 },
-  actionCommentBtn: {
+  postComposerOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  postComposerKav: { width: '100%', justifyContent: 'flex-end' },
+  postComposerSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    padding: Spacing.lg,
+    gap: Spacing.md,
+  },
+  postComposerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    borderRadius: Radii.pill,
+    justifyContent: 'space-between',
   },
-  actionCommentText: { ...Typography.caption, fontWeight: '600' },
+  postComposerTitle: { ...Typography.h3, fontSize: 17 },
+  postComposerInput: {
+    ...Typography.body,
+    minHeight: 120,
+    borderRadius: Radii.lg,
+    padding: Spacing.md,
+    textAlignVertical: 'top',
+  },
+  postComposerSend: {
+    minHeight: 48,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-  // ── Comment sheet (TikTok style) ─────────────────────────────────────────────
+  // ── Comment sheet ────────────────────────────────────────────────────────────
   commentOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
+  commentKav: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'flex-end',
+  },
   commentSheet: {
-    borderTopLeftRadius: Radii.xl,
-    borderTopRightRadius: Radii.xl,
-    height: '72%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    overflow: 'hidden',
+    // No fixed height — sheet hugs the bottom; maxHeight is set inline.
   },
   dragHandle: {
     alignItems: 'center',
     paddingTop: Spacing.sm,
-    paddingBottom: Spacing.xs,
+    paddingBottom: 2,
   },
   dragHandleBar: {
     width: 36,
@@ -1126,105 +1856,215 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  commentSheetTitle: { ...Typography.bodyStrong },
-  commentSheetCount: { ...Typography.body, fontWeight: '400' },
-  commentScroll: { flex: 1 },
+  commentSheetHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.sm,
+  },
+  commentHeaderIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentSheetTitle: { ...Typography.bodyStrong, fontSize: 16 },
+  commentSheetCount: { ...Typography.caption },
+  commentCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postContext: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+  },
+  postContextText: { ...Typography.caption, flex: 1, lineHeight: 17 },
+  commentScroll: {
+    // Give the list a real flex region between header and dock
+    maxHeight: 360,
+    minHeight: 140,
+  },
   commentScrollContent: {
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.xs,
+    paddingTop: Spacing.sm,
     paddingBottom: Spacing.sm,
+  },
+  commentScrollEmpty: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.xl,
+    justifyContent: 'center',
+    minHeight: 160,
   },
   commentEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.xxl,
+    paddingVertical: Spacing.lg,
     gap: Spacing.sm,
   },
-  commentEmptyTitle: { ...Typography.bodyStrong },
+  commentEmptyOrb: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentEmptyTitle: { ...Typography.bodyStrong, fontSize: 15 },
   commentEmptyHint: {
     ...Typography.caption,
     textAlign: 'center',
     lineHeight: 18,
-    paddingHorizontal: Spacing.xl,
+    paddingHorizontal: Spacing.lg,
   },
 
-  // Comment rows (TikTok style)
+  // Comment rows
   commentRow: {
     flexDirection: 'row',
-    gap: Spacing.md,
-    paddingVertical: Spacing.sm + 2,
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
     alignItems: 'flex-start',
   },
   commentRowReply: {
     gap: Spacing.sm,
     paddingVertical: Spacing.xs + 2,
+    marginLeft: Spacing.sm,
   },
-  commentPendingRow: { opacity: 0.55 },
+  commentPendingRow: { opacity: 0.7 },
   commentAvatar: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: Radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    borderWidth: 1,
   },
-  commentAvatarSmall: { width: 32, height: 32 },
+  commentAvatarSmall: { width: 30, height: 30 },
   commentAvatarText: { ...Typography.body, fontWeight: '700' },
   commentAvatarTextSmall: { ...Typography.caption, fontWeight: '700' },
-  commentBody: { flex: 1, gap: 4 },
+  commentBody: { flex: 1, gap: 6 },
+  commentBubble: {
+    borderRadius: 16,
+    borderTopLeftRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 4,
+  },
+  commentAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   commentAuthorText: { ...Typography.caption, fontWeight: '700', lineHeight: 17 },
-  commentContent: { ...Typography.caption, lineHeight: 20 },
-  commentMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 1 },
+  anonTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+  },
+  anonTagText: { ...Typography.micro, fontWeight: '700', fontSize: 9 },
+  pendingTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radii.pill,
+  },
+  pendingTagText: { ...Typography.micro, fontWeight: '700', fontSize: 9 },
+  commentContent: { ...Typography.body, fontSize: 14, lineHeight: 20 },
+  commentMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingLeft: 4,
+  },
   commentTime: { ...Typography.micro },
   commentPending: { ...Typography.micro },
-  commentReply: { ...Typography.micro, fontWeight: '600' },
-  commentLikeBtn: { alignItems: 'center', gap: 3, paddingLeft: Spacing.xs, paddingTop: 2 },
-  commentLikeCount: { ...Typography.micro },
+  commentReply: { ...Typography.micro, fontWeight: '700' },
+  metaAction: { flexDirection: 'row', alignItems: 'center' },
+  commentLikeCount: { ...Typography.micro, fontWeight: '600' },
   viewReplies: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
-    marginTop: 4,
+    marginTop: 2,
     marginBottom: 2,
+    paddingLeft: 4,
   },
-  replyLine: { width: 22, height: 1, borderRadius: 1 },
+  replyLine: { width: 22, height: 1.5, borderRadius: 1 },
   viewRepliesText: { ...Typography.micro, fontWeight: '700' },
+
+  // Composer dock — pinned to sheet bottom (not floating mid-screen)
+  composerDock: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: Spacing.sm,
+    gap: Spacing.xs + 2,
+  },
+  emojiBarScroll: {
+    paddingHorizontal: Spacing.lg,
+    gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 2,
+  },
+  emojiBarBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  emojiBarText: { fontSize: 18 },
   replyingBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  replyingText: { ...Typography.micro, flex: 1 },
-
-  // Quick emoji bar
-  emojiBar: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingVertical: Spacing.xs + 1,
-  },
-  emojiBarScroll: {
+    gap: 8,
+    marginHorizontal: Spacing.lg,
     paddingHorizontal: Spacing.md,
-    gap: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: Radii.md,
+    borderWidth: 1,
   },
-  emojiBarBtn: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emojiBarText: { fontSize: 22 },
-
-  // Composer (TikTok: avatar + pill input + Post/GIF)
-  composer: {
+  replyingText: { ...Typography.caption, flex: 1, fontWeight: '600' },
+  identityRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.sm,
+  },
+  identityChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+  },
+  identityDot: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  identityDotText: { fontSize: 9, fontWeight: '800', color: '#FFF' },
+  identityLabel: { ...Typography.micro, fontWeight: '700', fontSize: 11 },
+  identityHint: { ...Typography.micro, flex: 1, fontSize: 10 },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
   },
   composerAvatar: {
     width: 36,
@@ -1233,19 +2073,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    marginBottom: 2,
   },
-  composerAvatarText: { fontSize: 14, fontWeight: '700' as const },
+  composerAvatarText: { fontSize: 13, fontWeight: '700' as const },
   composerInputWrap: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: Radii.pill,
+    borderRadius: 20,
+    borderWidth: 1,
     paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    minHeight: 42,
-    gap: Spacing.sm,
+    paddingVertical: Platform.OS === 'ios' ? 8 : 4,
+    minHeight: 40,
+    maxHeight: 96,
+    justifyContent: 'center',
   },
-  composerInput: { ...Typography.caption, flex: 1, minHeight: 28, maxHeight: 90 },
+  composerInput: { ...Typography.body, fontSize: 15, maxHeight: 80, padding: 0 },
+  composerSend: {
+    width: 40,
+    height: 40,
+    borderRadius: Radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 1,
+  },
   composerPost: { ...Typography.caption, fontWeight: '700' },
 
   // ── Notification prompt ──────────────────────────────────────────────────────

@@ -482,13 +482,29 @@ export const GROUPS: Record<string, GroupInfo> = {
   },
 };
 
+/** Who can see this story. */
+export type StoryVisibility = 'public' | 'contacts' | 'close';
+
+export type StoryKind = 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question';
+
+export type StoryComment = {
+  id: string;
+  author: string;
+  avatarUri: string;
+  text: string;
+  postedAt: string;
+  isAnonymous?: boolean;
+  /** Nested replies on the public comment thread. */
+  replies?: StoryComment[];
+};
+
 export type Story = {
   id: string;
   user: string;
   username: string;
   avatarUri: string;
   coverUri: string;
-  kind: 'image' | 'video' | 'text';
+  kind: StoryKind;
   caption: string;
   postedAt: string;
   expiresIn: string;
@@ -498,7 +514,43 @@ export type Story = {
   replies: number;
   isViewed: boolean;
   isOwn?: boolean;
+  /** Audience: everyone, contacts only, or close friends. */
+  visibility?: StoryVisibility;
+  /** Author posted without revealing identity. */
+  isAnonymous?: boolean;
+  allowComments?: boolean;
+  /** Viewers may reply as anonymous on the public thread. */
+  allowAnonymousReplies?: boolean;
+  comments?: StoryComment[];
+  /** Optional audio duration for voice stories (seconds). */
+  audioSec?: number;
+  /** Live broadcast story — no auto-advance, live chat. */
+  isLive?: boolean;
+  liveViewers?: number;
 };
+
+/** Cinematic cover placeholders — tall frames for story cards/viewer. */
+const cover = (seed: string) => `https://picsum.photos/seed/${encodeURIComponent(seed)}/900/1400`;
+
+const comment = (
+  id: string,
+  author: string,
+  seed: string,
+  bg: string,
+  text: string,
+  postedAt: string,
+  opts?: { isAnonymous?: boolean; replies?: StoryComment[] },
+): StoryComment => ({
+  id,
+  author: opts?.isAnonymous ? 'Anonymous' : author,
+  avatarUri: opts?.isAnonymous
+    ? dicebear('shapes', `anon-${id}`, '374151')
+    : dicebear('avataaars', seed, bg),
+  text,
+  postedAt,
+  isAnonymous: opts?.isAnonymous,
+  replies: opts?.replies,
+});
 
 export const STORIES: Story[] = [
   {
@@ -506,7 +558,7 @@ export const STORIES: Story[] = [
     user: 'You',
     username: '@you',
     avatarUri: dicebear('avataaars', 'you', 'EEF2FF'),
-    coverUri: dicebear('shapes', 'you-cover', 'EEF2FF'),
+    coverUri: cover('you-story-cover'),
     kind: 'text',
     caption: 'Building something that feels simple, private, and alive.',
     postedAt: 'Just now',
@@ -517,13 +569,47 @@ export const STORIES: Story[] = [
     replies: 3,
     isViewed: false,
     isOwn: true,
+    visibility: 'contacts',
+    allowComments: true,
+    allowAnonymousReplies: true,
+    comments: [
+      comment('c0', 'ninani.eth', 'ninani', 'FFD93D', 'This is the vibe.', '2m'),
+    ],
+  },
+  {
+    id: 's-live',
+    user: 'Samuel Garu',
+    username: '@samgaru',
+    avatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80'),
+    coverUri: cover('samuel-live-studio'),
+    kind: 'video',
+    caption: 'Live from the studio — drop your questions.',
+    postedAt: 'Now',
+    expiresIn: 'Live',
+    durationSec: 30,
+    accent: '#EF4444',
+    viewers: 842,
+    replies: 56,
+    isViewed: false,
+    visibility: 'public',
+    allowComments: true,
+    allowAnonymousReplies: true,
+    isLive: true,
+    liveViewers: 842,
+    comments: [
+      comment('cl1', 'ninani.eth', 'ninani', 'FFD93D', 'Sound check 🔥', 'now'),
+      comment('cl2', 'Anonymous', 'x', '374151', 'What mics are those?', 'now', {
+        isAnonymous: true,
+      }),
+      comment('cl3', 'Joe Felix', 'Joe Felix', '6F8BFF', 'Joining from the train', 'now'),
+    ],
   },
   {
     id: 's1',
     user: 'ninani.eth',
     username: '@ninani',
     avatarUri: dicebear('avataaars', 'ninani', 'FFD93D'),
-    coverUri: dicebear('shapes', 'ninani-cover', 'FFD93D'),
+    coverUri: cover('ninani-morning-desk'),
     kind: 'image',
     caption: 'Morning build notes and a very stubborn prototype.',
     postedAt: '9:42',
@@ -533,13 +619,25 @@ export const STORIES: Story[] = [
     viewers: 124,
     replies: 11,
     isViewed: false,
+    visibility: 'public',
+    allowComments: true,
+    allowAnonymousReplies: true,
+    comments: [
+      comment('c1', 'Samuel Garu', 'Samuel Garu', '4ADE80', 'Need that energy today.', '4m', {
+        replies: [
+          comment('c1r1', 'ninani.eth', 'ninani', 'FFD93D', 'Shipping it before lunch.', '2m'),
+        ],
+      }),
+      comment('c2', 'Anonymous', 'x', '374151', 'Which stack is this?', '12m', { isAnonymous: true }),
+      comment('c3', 'Anthony', 'Anthony', 'A78BFA', 'Prototype looking sharp.', '18m'),
+    ],
   },
   {
     id: 's2',
     user: 'Samuel Garu',
     username: '@samgaru',
     avatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80'),
-    coverUri: dicebear('shapes', 'samuel-cover', '4ADE80'),
+    coverUri: cover('samuel-studio-night'),
     kind: 'video',
     caption: 'Studio booked. Bring headphones.',
     postedAt: '9:31',
@@ -549,13 +647,66 @@ export const STORIES: Story[] = [
     viewers: 86,
     replies: 7,
     isViewed: false,
+    visibility: 'contacts',
+    allowComments: true,
+    allowAnonymousReplies: false,
+    comments: [
+      comment('c4', 'Joe Felix', 'Joe Felix', '6F8BFF', 'On my way after standup.', '8m'),
+    ],
+  },
+  {
+    id: 's7',
+    user: 'Mystery Maker',
+    username: '@hidden',
+    avatarUri: dicebear('shapes', 'anon-story', '1F2937'),
+    coverUri: cover('anon-voice-room'),
+    kind: 'audio',
+    caption: 'A 24s note for anyone who needs a soft landing tonight.',
+    postedAt: '8:50',
+    expiresIn: '19h left',
+    durationSec: 24,
+    audioSec: 24,
+    accent: '#6B7280',
+    viewers: 203,
+    replies: 28,
+    isViewed: false,
+    visibility: 'public',
+    isAnonymous: true,
+    allowComments: true,
+    allowAnonymousReplies: true,
+    comments: [
+      comment('c5', 'Anonymous', 'a', '374151', 'Felt that.', '1m', { isAnonymous: true }),
+      comment('c6', 'Margareth Joanne', 'Margareth Joanne', '22D3EE', 'Replay-worthy.', '6m'),
+    ],
+  },
+  {
+    id: 's6',
+    user: 'Margareth Joanne',
+    username: '@margcaramel',
+    avatarUri: dicebear('micah', 'Margareth Joanne', '22D3EE'),
+    coverUri: cover('margareth-canvas-light'),
+    kind: 'poll',
+    caption: 'Ship tonight or sleep first?',
+    postedAt: '8:05',
+    expiresIn: '18h left',
+    durationSec: 8,
+    accent: '#22D3EE',
+    viewers: 67,
+    replies: 9,
+    isViewed: false,
+    visibility: 'public',
+    allowComments: true,
+    allowAnonymousReplies: true,
+    comments: [
+      comment('c7', 'k&8.eth', 'k8eth', 'FF6FB5', 'Ship. Sleep is a suggestion.', '9m'),
+    ],
   },
   {
     id: 's3',
     user: 'Anthony',
     username: '@anthony',
     avatarUri: dicebear('adventurer', 'Anthony', 'A78BFA'),
-    coverUri: dicebear('shapes', 'anthony-cover', 'A78BFA'),
+    coverUri: cover('anthony-ui-pass'),
     kind: 'image',
     caption: 'New interface pass is finally breathing.',
     postedAt: 'Yesterday',
@@ -565,15 +716,18 @@ export const STORIES: Story[] = [
     viewers: 42,
     replies: 2,
     isViewed: true,
+    visibility: 'close',
+    allowComments: false,
+    comments: [],
   },
   {
     id: 's4',
     user: 'k&8.eth',
     username: '@k8eth',
     avatarUri: dicebear('lorelei', 'k8eth', 'FF6FB5'),
-    coverUri: dicebear('shapes', 'k8eth-cover', 'FF6FB5'),
-    kind: 'text',
-    caption: 'Mint day. Quiet room, loud colors.',
+    coverUri: cover('k8-mint-room'),
+    kind: 'question',
+    caption: 'What should I mint next?',
     postedAt: 'Yesterday',
     expiresIn: '6h left',
     durationSec: 5,
@@ -581,13 +735,21 @@ export const STORIES: Story[] = [
     viewers: 73,
     replies: 5,
     isViewed: true,
+    visibility: 'public',
+    allowComments: true,
+    allowAnonymousReplies: true,
+    comments: [
+      comment('c8', 'Anonymous', 'b', '374151', 'Something soft and limited.', '1h', {
+        isAnonymous: true,
+      }),
+    ],
   },
   {
     id: 's5',
     user: 'Joe Felix',
     username: '@joefelix',
     avatarUri: dicebear('pixel-art', 'Joe Felix', '6F8BFF'),
-    coverUri: dicebear('shapes', 'joefelix-cover', '6F8BFF'),
+    coverUri: cover('joe-late-debug'),
     kind: 'video',
     caption: 'Aloha from the late-night debug corner.',
     postedAt: 'Yesterday',
@@ -597,6 +759,11 @@ export const STORIES: Story[] = [
     viewers: 51,
     replies: 4,
     isViewed: true,
+    visibility: 'contacts',
+    allowComments: true,
+    comments: [
+      comment('c9', 'Samuel Garu', 'Samuel Garu', '4ADE80', 'Same corner, different bug.', '3h'),
+    ],
   },
 ];
 
@@ -658,6 +825,10 @@ export const CALLS: CallRecord[] = [
 export const CHANNEL_CATEGORIES = ['all', 'crypto', 'nft', 'tech', 'gaming', 'news'] as const;
 export type ChannelCategory = (typeof CHANNEL_CATEGORIES)[number];
 
+export type ChannelPostType = 'text' | 'image' | 'video' | 'game' | 'live' | 'voice';
+
+export type ChannelGameKind = 'trivia' | 'dice' | 'would_you_rather' | 'quick_draw' | 'emoji_race';
+
 export type ChannelPost = {
   id: string;
   text: string;
@@ -667,6 +838,12 @@ export type ChannelPost = {
   reactions?: ChannelReaction[];
   myReaction?: string | null;
   comments?: ChannelComment[];
+  /** Post kind — defaults to text/image based on mediaUri when omitted. */
+  type?: ChannelPostType;
+  gameKind?: ChannelGameKind;
+  /** Live / voice hangout is currently active. */
+  isLive?: boolean;
+  liveViewers?: number;
 };
 
 export type ChannelReaction = {
@@ -706,7 +883,7 @@ export const CHANNELS: Channel[] = [
     name: 'Socialize',
     handle: '@socialize',
     avatarUri: dicebear('shapes', 'Socialize HQ', '2D5BFF'),
-    coverUri: dicebear('shapes', 'socialize-cover', '2D5BFF'),
+    coverUri: cover('socialize-cover'),
     description: 'Official updates, releases, and announcements from the Socialize team.',
     category: 'news',
     members: 48200,
@@ -761,7 +938,7 @@ export const CHANNELS: Channel[] = [
       {
         id: 'p2',
         text: 'Dark mode got a full refresh: calmer charcoal surfaces, the royal blue finally pops.',
-        mediaUri: dicebear('shapes', 'ch1-dark', '0E0F13'),
+        mediaUri: cover('ch1-dark'),
         timestamp: 'Yesterday',
         views: 38800,
         reactions: [
@@ -777,7 +954,7 @@ export const CHANNELS: Channel[] = [
     name: 'Web3 Daily',
     handle: '@web3daily',
     avatarUri: dicebear('icons', 'Web3 Daily', '6F8BFF'),
-    coverUri: dicebear('shapes', 'web3daily-cover', '6F8BFF'),
+    coverUri: cover('web3daily-cover'),
     description: 'Markets, protocols, and the onchain economy — one concise briefing a day.',
     category: 'crypto',
     members: 31100,
@@ -793,13 +970,13 @@ export const CHANNELS: Channel[] = [
     name: 'NFT Radar',
     handle: '@nftradar',
     avatarUri: dicebear('icons', 'NFT Radar', 'FF6FB5'),
-    coverUri: dicebear('shapes', 'nftradar-cover', 'FF6FB5'),
+    coverUri: cover('nftradar-cover'),
     description: 'Mints, drops, and floor moves worth your attention. Curated, not hyped.',
     category: 'nft',
     members: 22400,
     verified: true,
     posts: [
-      { id: 'p1', text: 'Mango_Apes floor up 18% this week. Volume is real, not wash.', mediaUri: dicebear('shapes', 'ch3-apes', 'FFD93D'), timestamp: '1h', views: 18600 },
+      { id: 'p1', text: 'Mango_Apes floor up 18% this week. Volume is real, not wash.', mediaUri: cover('ch3-apes'), timestamp: '1h', views: 18600 },
       { id: 'p2', text: 'Mint calendar for the week is pinned. Three drops we are actually watching.', timestamp: 'Yesterday', views: 16100 },
       { id: 'p3', text: 'Generative art is having a moment again. More on that tomorrow.', timestamp: 'Mon', views: 14800 },
     ],
@@ -809,7 +986,7 @@ export const CHANNELS: Channel[] = [
     name: 'Dev Corner',
     handle: '@devcorner',
     avatarUri: dicebear('icons', 'Dev Corner', '22D3EE'),
-    coverUri: dicebear('shapes', 'devcorner-cover', '22D3EE'),
+    coverUri: cover('devcorner-cover'),
     description: 'Engineering notes, tooling, and shipping culture for builders.',
     category: 'tech',
     members: 15800,
@@ -825,13 +1002,13 @@ export const CHANNELS: Channel[] = [
     name: 'Pixel Arena',
     handle: '@pixelarena',
     avatarUri: dicebear('icons', 'Pixel Arena', '4ADE80'),
-    coverUri: dicebear('shapes', 'pixelarena-cover', '4ADE80'),
+    coverUri: cover('pixelarena-cover'),
     description: 'Indie games, onchain gaming, and the occasional late-night speedrun.',
     category: 'gaming',
     members: 19600,
     verified: false,
     posts: [
-      { id: 'p1', text: 'New indie roguelike dropped and it is dangerously good. Review thread soon.', mediaUri: dicebear('shapes', 'ch5-game', '4ADE80'), timestamp: '5h', views: 13300 },
+      { id: 'p1', text: 'New indie roguelike dropped and it is dangerously good. Review thread soon.', mediaUri: cover('ch5-game'), timestamp: '5h', views: 13300 },
       { id: 'p2', text: 'Community tournament this weekend. Bracket sign-ups are open.', timestamp: 'Yesterday', views: 10900 },
       { id: 'p3', text: 'Hot take: input latency matters more than resolution. Fight me in the replies.', timestamp: 'Mon', views: 15400 },
     ],
@@ -841,7 +1018,7 @@ export const CHANNELS: Channel[] = [
     name: 'Builder Mindset',
     handle: '@buildermindset',
     avatarUri: dicebear('icons', 'Builder Mindset', 'A78BFA'),
-    coverUri: dicebear('shapes', 'buildermindset-cover', 'A78BFA'),
+    coverUri: cover('buildermindset-cover'),
     description: 'Short essays on focus, craft, and shipping in public.',
     category: 'tech',
     members: 27300,
@@ -857,7 +1034,7 @@ export const CHANNELS: Channel[] = [
     name: 'Onchain Alpha',
     handle: '@onchainalpha',
     avatarUri: dicebear('icons', 'Onchain Alpha', 'FFD93D'),
-    coverUri: dicebear('shapes', 'onchainalpha-cover', 'FFD93D'),
+    coverUri: cover('onchainalpha-cover'),
     description: 'Research threads and early signals. Not financial advice.',
     category: 'crypto',
     members: 12900,
@@ -873,14 +1050,14 @@ export const CHANNELS: Channel[] = [
     name: 'Frame & Form',
     handle: '@frameandform',
     avatarUri: dicebear('icons', 'Frame and Form', 'EEF2FF'),
-    coverUri: dicebear('shapes', 'frameandform-cover', 'C7D2FE'),
+    coverUri: cover('frameandform-cover'),
     description: 'Generative art, design systems, and the craft behind the pixels.',
     category: 'nft',
     members: 8700,
     verified: false,
     posts: [
       { id: 'p1', text: 'A design system is a memory. It remembers the right decision so you do not redo it.', timestamp: '4h', views: 6100 },
-      { id: 'p2', text: 'New generative series explores low-chroma palettes. Preview attached.', mediaUri: dicebear('shapes', 'ch8-series', 'C7D2FE'), timestamp: 'Yesterday', views: 7400 },
+      { id: 'p2', text: 'New generative series explores low-chroma palettes. Preview attached.', mediaUri: cover('ch8-series'), timestamp: 'Yesterday', views: 7400 },
       { id: 'p3', text: 'Constraint is not the enemy of creativity. It is the shape of it.', timestamp: 'Mon', views: 8050 },
     ],
   },

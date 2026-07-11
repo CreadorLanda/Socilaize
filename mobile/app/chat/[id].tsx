@@ -62,6 +62,7 @@ import {
   type Message,
   type MessageAttachment,
 } from '@/data/mock';
+import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
 import { t } from '@/i18n';
@@ -148,7 +149,7 @@ export default function ChatScreen() {
   const selectionMode = selectedIds.size > 0;
   const [dandaraTyping, setDandaraTyping] = useState(false);
   const currentUser = useCurrentUser();
-  const { colors, isDark } = useTheme();
+  const { colors, isDark, chat: chrome, layout, metrics } = useTheme();
 
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [recordPhase, setRecordPhase] = useState<'idle' | 'recording' | 'locked'>('idle');
@@ -944,6 +945,16 @@ export default function ChatScreen() {
             >
               <Ionicons name="search" size={20} color={colors.text} />
             </Pressable>
+            {!isAIChat ? (
+              <Pressable
+                hitSlop={8}
+                style={styles.iconBtn}
+                onPress={() => router.push(`/hangout/${id!}?mode=voice`)}
+                accessibilityLabel={t('hangout.open')}
+              >
+                <Ionicons name="home" size={20} color={colors.text} />
+              </Pressable>
+            ) : null}
             {isGroup ? (
               <Pressable
                 hitSlop={8}
@@ -981,7 +992,28 @@ export default function ChatScreen() {
       )}
 
       <KeyboardAvoidingView style={styles.flex} behavior="padding">
-        <View style={[styles.thread, { backgroundColor: colors.surfaceMuted }]}>
+        <View style={[styles.thread, { backgroundColor: chrome.wallpaper || colors.surfaceMuted }]}>
+          {chrome.wallpaperImage ? (
+            <Image
+              source={{ uri: chrome.wallpaperImage }}
+              style={StyleSheet.absoluteFillObject}
+              contentFit="cover"
+              blurRadius={layout.wallpaperBlur ? 12 : 0}
+            />
+          ) : null}
+          {chrome.wallpaperImage || layout.wallpaperDim > 0 ? (
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  backgroundColor: `rgba(0,0,0,${
+                    chrome.wallpaperImage ? layout.wallpaperDim / 100 : 0
+                  })`,
+                },
+              ]}
+            />
+          ) : null}
           <StateTransition transitionKey={searchMode} style={styles.flex}>
           <FlatList
             ref={listRef}
@@ -1019,9 +1051,18 @@ export default function ChatScreen() {
                       shown={visible.filter((m) => m.historical).length}
                       limit={group.historyLimit}
                     />
-                  ) : (
-                    <View style={[styles.dayPill, { backgroundColor: colors.surface }]}>
-                      <Text style={[styles.dayPillText, { color: colors.textSecondary }]}>
+                  ) : layout.datePillStyle === 'hidden' ? null : (
+                    <View
+                      style={[
+                        styles.dayPill,
+                        layout.datePillStyle === 'text' && { backgroundColor: 'transparent' },
+                        layout.datePillStyle === 'pill' && {
+                          backgroundColor: chrome.datePillBg || colors.surface,
+                        },
+                        !layout.centerDatePills && { alignSelf: 'flex-start' },
+                      ]}
+                    >
+                      <Text style={[styles.dayPillText, { color: chrome.datePillText || colors.textSecondary }]}>
                         {t('chat.today')}
                       </Text>
                     </View>
@@ -1058,7 +1099,19 @@ export default function ChatScreen() {
         </View>
 
         {searchMode ? null : (
-          <View style={[styles.composerWrap, { backgroundColor: colors.surfaceMuted }]}>
+          <View
+            style={[
+              styles.composerWrap,
+              {
+                backgroundColor: chrome.composerBg || colors.surfaceMuted,
+                ...(layout.composerStyle === 'floating'
+                  ? { marginHorizontal: 10, marginBottom: 8, borderRadius: 20, overflow: 'hidden' as const }
+                  : layout.composerStyle === 'flat'
+                    ? { borderTopWidth: 0 }
+                    : null),
+              },
+            ]}
+          >
             {/* Pending / blocked friend-request banner */}
             {isBlocked ? (
               <View style={[styles.pendingBanner, { backgroundColor: colors.surface, borderTopColor: colors.divider }]}>
@@ -1467,9 +1520,13 @@ function relativeRemaining(iso?: string): string | null {
 }
 
 function MetaRow({ msg, onMedia }: { msg: GroupedMessage; onMedia?: boolean }) {
-  const { colors } = useTheme();
+  const { colors, chat } = useTheme();
   const mine = msg.fromMe;
-  const dim = onMedia ? '#FFFFFF' : mine ? 'rgba(255,255,255,0.78)' : colors.textMuted;
+  const dim = onMedia
+    ? '#FFFFFF'
+    : mine
+      ? chat.metaMine || 'rgba(255,255,255,0.78)'
+      : chat.metaTheirs || colors.textMuted;
   const ttl = relativeRemaining(msg.expiresAt);
   return (
     <View style={[styles.metaRow, onMedia && styles.metaOverlay]}>
@@ -1485,7 +1542,7 @@ function MetaRow({ msg, onMedia }: { msg: GroupedMessage; onMedia?: boolean }) {
       <Text
         style={[
           styles.metaTime,
-          { color: colors.textMuted },
+          { color: dim },
           mine && !onMedia && styles.metaTimeMine,
           onMedia && styles.metaTimeOnMedia,
         ]}
@@ -1501,7 +1558,7 @@ function MetaRow({ msg, onMedia }: { msg: GroupedMessage; onMedia?: boolean }) {
               ? '#FFFFFF'
               : msg.status === 'read'
                 ? '#9DC1FF'
-                : 'rgba(255,255,255,0.75)'
+                : dim
           }
         />
       ) : null}
@@ -1753,21 +1810,34 @@ function TypingDot({ index }: { index: number }) {
 
 // "Dandara is typing" bubble shown while a reply is being prepared.
 function TypingBubble() {
-  const { colors } = useTheme();
+  const { colors, chat, layout } = useTheme();
+  const mineEnd = layout.myBubbleSide === 'right';
+  const radii = bubbleRadii(layout, false, true, layout.myBubbleSide);
   return (
-    <View style={[styles.bubbleRow, styles.bubbleRowTheirs]}>
-      <Image
-        source={{ uri: DANDARA.avatarUri }}
-        style={[styles.senderAvatar, { backgroundColor: colors.surfaceMuted }]}
-        contentFit="cover"
-      />
+    <View
+      style={[
+        styles.bubbleRow,
+        {
+          justifyContent: mineEnd ? 'flex-start' : 'flex-end',
+          marginBottom: 6,
+        },
+      ]}
+    >
+      {layout.avatarPosition !== 'hidden' ? (
+        <Image
+          source={{ uri: DANDARA.avatarUri }}
+          style={[styles.senderAvatar, { backgroundColor: colors.surfaceMuted }]}
+          contentFit="cover"
+        />
+      ) : null}
       <View
         style={[
           styles.bubble,
-          styles.bubbleTheirs,
-          styles.bubbleTheirsTail,
           styles.typingBubble,
-          { backgroundColor: colors.surface },
+          {
+            backgroundColor: chat.bubbleTheirs || colors.surface,
+            ...radii,
+          },
         ]}
       >
         <View style={styles.typingDots}>
@@ -1796,17 +1866,19 @@ function BubbleBody({
   onVote?: (optionId: string) => void;
   onViewOnce?: (msgId: string) => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, chat, metrics, layout } = useTheme();
   const isAudio = msg.media?.type === 'audio';
   const isVisualMedia = !!msg.media && !isAudio;
   const hasAttachment = !!msg.attachment;
   const hasText = msg.text.trim().length > 0;
   const mediaOnly = isVisualMedia && !hasText;
   const showSender = (isGroup || !!msg.isAI) && !mine && msg.isFirstInGroup && !!msg.senderName;
+  const bodyColor = mine ? chat.textMine || colors.onPrimary : chat.textTheirs || colors.text;
+  const mentionCol = mine ? chat.textMine || colors.onPrimary : colors.primary;
 
   // Deleted message → italic placeholder, no reactions, no swipe-reply target.
   if (msg.deletedAt) {
-    const dim = mine ? 'rgba(255,255,255,0.75)' : colors.textMuted;
+    const dim = mine ? chat.metaMine || 'rgba(255,255,255,0.75)' : chat.metaTheirs || colors.textMuted;
     return (
       <View style={styles.deletedRow}>
         <Ionicons name="ban-outline" size={14} color={dim} />
@@ -1917,8 +1989,17 @@ function BubbleBody({
             query={query}
             mentions={msg.mentions}
             highlight={colors.warning}
-            mentionColor={mine ? colors.onPrimary : colors.primary}
-            style={[styles.bubbleText, { color: mine ? colors.onPrimary : colors.text }]}
+            mentionColor={mentionCol}
+            style={[
+              styles.bubbleText,
+              {
+                color: bodyColor,
+                fontSize: metrics.fontSize,
+                lineHeight: metrics.lineHeight,
+                letterSpacing: metrics.letterSpacing,
+                fontWeight: mine && layout.boldOutgoing ? '700' : '400',
+              },
+            ]}
           />
           <MetaRow msg={msg} />
         </View>
@@ -1958,17 +2039,27 @@ function Bubble({
   onVote: (msgId: string, optionId: string) => void;
   onViewOnce: (msgId: string) => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, chat: chrome, layout, metrics } = useTheme();
   const mine = msg.fromMe;
   const isVisualMedia = !!msg.media && msg.media.type !== 'audio';
-  const showAvatar = (isGroup || !!msg.isAI) && !mine;
+  const showAvatar =
+    layout.avatarPosition !== 'hidden' && (isGroup || !!msg.isAI) && !mine;
   const bubbleRef = useRef<View>(null);
   const translateX = useSharedValue(0);
+
+  const mineEnd = layout.myBubbleSide === 'right';
+  // Mine aligns to myBubbleSide; theirs to the opposite.
+  const alignEnd = mine ? mineEnd : !mineEnd;
+  const radii = bubbleRadii(layout, mine, !!msg.isLastInGroup, layout.myBubbleSide);
+  const bubbleBg = mine
+    ? chrome.bubbleMine || colors.primary
+    : chrome.bubbleTheirs || colors.surface;
+  const checkOnLeft = layout.selectionCheckSide === 'left';
 
   // Swipe right to reply — drag the bubble, release past the threshold.
   // Disabled in selection mode (taps toggle selection instead).
   const pan = Gesture.Pan()
-    .enabled(!selectionMode)
+    .enabled(!selectionMode && layout.swipeReply)
     .activeOffsetX(14)
     .failOffsetY([-12, 12])
     .onUpdate((e) => {
@@ -1998,46 +2089,66 @@ function Bubble({
     });
   };
 
+  const selectCheck = selectionMode ? (
+    <View style={styles.selectCheck}>
+      <Ionicons
+        name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+        size={22}
+        color={selected ? colors.primary : colors.textMuted}
+      />
+    </View>
+  ) : null;
+
+  const avatarNode = showAvatar ? (
+    msg.isLastInGroup ? (
+      <Image
+        source={{ uri: msg.senderAvatarUri }}
+        style={[styles.senderAvatar, { backgroundColor: colors.surfaceMuted }]}
+        contentFit="cover"
+      />
+    ) : (
+      <View style={styles.senderAvatarSpacer} />
+    )
+  ) : null;
+
   return (
     <GestureDetector gesture={pan}>
       <Pressable
         onPress={selectionMode ? () => onToggleSelect(msg.id) : undefined}
         style={[
           styles.bubbleRow,
-          mine ? styles.bubbleRowMine : styles.bubbleRowTheirs,
-          !msg.isLastInGroup && styles.bubbleRowGrouped,
+          {
+            justifyContent: alignEnd ? 'flex-end' : 'flex-start',
+            marginBottom: msg.isLastInGroup ? metrics.rowGap : metrics.groupedGap,
+          },
           selectionMode && styles.bubbleRowSelectable,
-          selected && { backgroundColor: `${colors.primary}14` },
+          selected &&
+            layout.selectionHighlight && {
+              backgroundColor: chrome.selectionBg || `${colors.primary}14`,
+            },
         ]}
       >
-        {selectionMode ? (
-          <View style={styles.selectCheck}>
-            <Ionicons
-              name={selected ? 'checkmark-circle' : 'ellipse-outline'}
-              size={22}
-              color={selected ? colors.primary : colors.textMuted}
-            />
-          </View>
-        ) : null}
-        {showAvatar ? (
-          msg.isLastInGroup ? (
-            <Image
-              source={{ uri: msg.senderAvatarUri }}
-              style={[styles.senderAvatar, { backgroundColor: colors.surfaceMuted }]}
-              contentFit="cover"
-            />
-          ) : (
-            <View style={styles.senderAvatarSpacer} />
-          )
-        ) : null}
+        {checkOnLeft ? selectCheck : null}
+        {layout.avatarPosition !== 'right' ? avatarNode : null}
 
-        <Animated.View style={[styles.bubbleGroup, mine && styles.bubbleGroupMine, swipeStyle]}>
+        <Animated.View
+          style={[
+            styles.bubbleGroup,
+            {
+              alignItems: alignEnd ? 'flex-end' : 'flex-start',
+              maxWidth: `${metrics.maxWidthPct}%`,
+            },
+            swipeStyle,
+          ]}
+        >
           {/* Swipe-to-reply icon — revealed as the bubble slides right */}
-          <Animated.View style={[styles.swipeReplyIcon, replyIconStyle]} pointerEvents="none">
-            <View style={[styles.swipeReplyCircle, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Ionicons name="arrow-undo" size={15} color={colors.primary} />
-            </View>
-          </Animated.View>
+          {layout.swipeReply ? (
+            <Animated.View style={[styles.swipeReplyIcon, replyIconStyle]} pointerEvents="none">
+              <View style={[styles.swipeReplyCircle, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="arrow-undo" size={15} color={colors.primary} />
+              </View>
+            </Animated.View>
+          ) : null}
 
           <Pressable
             ref={bubbleRef}
@@ -2046,12 +2157,24 @@ function Bubble({
             delayLongPress={260}
             style={[
               styles.bubble,
-              mine
-                ? [styles.bubbleMine, { backgroundColor: colors.primary }]
-                : [styles.bubbleTheirs, { backgroundColor: colors.surface }],
+              {
+                backgroundColor: bubbleBg,
+                ...radii,
+                paddingHorizontal: metrics.bubblePaddingH,
+                paddingTop: metrics.bubblePaddingV,
+                paddingBottom: metrics.bubblePaddingV - 1,
+                opacity: !mine && layout.dimIncoming ? 0.88 : 1,
+                ...(layout.bubbleShadow
+                  ? {
+                      shadowColor: '#000',
+                      shadowOpacity: metrics.shadowOpacity,
+                      shadowRadius: 5,
+                      shadowOffset: { width: 0, height: 1 },
+                      elevation: layout.bubbleShadowStrength > 0.3 ? 2 : 0,
+                    }
+                  : { shadowOpacity: 0, elevation: 0 }),
+              },
               isVisualMedia && styles.bubbleWithMedia,
-              mine && msg.isLastInGroup && styles.bubbleMineTail,
-              !mine && msg.isLastInGroup && styles.bubbleTheirsTail,
             ]}
           >
             <BubbleBody
@@ -2066,7 +2189,7 @@ function Bubble({
 
           {/* Reaction pills */}
           {reactions.length > 0 ? (
-            <View style={[styles.reactionPills, mine && styles.reactionPillsMine]}>
+            <View style={[styles.reactionPills, alignEnd && styles.reactionPillsMine]}>
               {reactions.map((r) => (
                 <Pressable
                   key={r.emoji}
@@ -2088,6 +2211,9 @@ function Bubble({
             </View>
           ) : null}
         </Animated.View>
+
+        {layout.avatarPosition === 'right' ? avatarNode : null}
+        {!checkOnLeft ? selectCheck : null}
       </Pressable>
     </GestureDetector>
   );
