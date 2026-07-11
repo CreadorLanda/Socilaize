@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
   Dimensions,
   FlatList,
@@ -22,7 +22,8 @@ import Animated, {
 
 import { TabScene } from '@/components/ui/tab-scene';
 import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
-import { STORIES, type Story } from '@/data/mock';
+import type { Story } from '@/data/mock';
+import { bootstrapStories, useStories } from '@/data/story-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -34,8 +35,14 @@ const RAIL_CARD_H = 168;
 
 export default function StoriesScreen() {
   const { colors, isDark } = useTheme();
-  const me = STORIES.find((s) => s.isOwn);
-  const others = useMemo(() => STORIES.filter((s) => !s.isOwn), []);
+  const stories = useStories();
+
+  useEffect(() => {
+    bootstrapStories().catch(() => {});
+  }, []);
+
+  const me = stories.find((s) => s.isOwn);
+  const others = useMemo(() => stories.filter((s) => !s.isOwn), [stories]);
   const fresh = useMemo(() => others.filter((s) => !s.isViewed), [others]);
   const seen = useMemo(() => others.filter((s) => s.isViewed), [others]);
 

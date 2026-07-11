@@ -27,6 +27,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/media"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/notifications"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/stories"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 	"github.com/CreadorLanda/Socilaize/server/internal/platform/realtime"
@@ -120,6 +121,11 @@ func New(cfg config.Config) (*Server, error) {
 	groupsRepo := groups.NewRepository(pg)
 	groupsCtl := groups.NewController(groups.NewService(groupsRepo))
 	groups.Register(authed, groupsCtl)
+
+	// Ephemeral stories (24h feed + views).
+	storiesRepo := stories.NewRepository(pg)
+	storiesCtl := stories.NewController(stories.NewService(storiesRepo))
+	stories.Register(authed, storiesCtl)
 
 	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
 	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)

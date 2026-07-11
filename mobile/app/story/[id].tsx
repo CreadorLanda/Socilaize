@@ -36,7 +36,9 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { SlideSwap } from '@/components/ui/slide-swap';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { STORIES, type Story, type StoryComment } from '@/data/mock';
+import { reactStory, viewStory } from '@/data/api/stories';
+import type { Story, StoryComment } from '@/data/mock';
+import { markStoryViewedLocal, useStories } from '@/data/story-store';
 import { t } from '@/i18n';
 
 const REACTIONS = ['❤️', '🔥', '😂', '😮', '🙌'] as const;
@@ -45,7 +47,11 @@ type ReplyMode = 'comment' | 'private';
 export default function StoryViewerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const visibleStories = useMemo(() => STORIES.filter((item) => !item.isOwn), []);
+  const allStories = useStories();
+  const visibleStories = useMemo(
+    () => allStories.filter((item) => !item.isOwn),
+    [allStories],
+  );
 
   const [index, setIndex] = useState(() => {
     const found = visibleStories.findIndex((item) => item.id === id);
@@ -62,6 +68,15 @@ export default function StoryViewerScreen() {
 
   const story = visibleStories[index];
   const progress = useSharedValue(0);
+
+  // Mark viewed on server + local when story changes.
+  useEffect(() => {
+    if (!story?.id) return;
+    if (/^[0-9a-f-]{36}$/i.test(story.id)) {
+      viewStory(story.id).catch(() => {});
+    }
+    markStoryViewedLocal(story.id);
+  }, [story?.id]);
 
   const comments = useMemo(() => {
     if (!story) return [] as StoryComment[];
@@ -133,6 +148,9 @@ export default function StoryViewerScreen() {
     setToast(t('stories.react_sent'));
     setTimeout(() => setReactBurst(null), 700);
     setTimeout(() => setToast(null), 1400);
+    if (story?.id && /^[0-9a-f-]{36}$/i.test(story.id)) {
+      reactStory(story.id, emoji).catch(() => {});
+    }
   };
 
   const sendReply = () => {
