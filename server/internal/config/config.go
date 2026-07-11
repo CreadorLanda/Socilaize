@@ -19,32 +19,24 @@ type Config struct {
 	Crypto   CryptoConfig
 }
 
-// WAConfig wires the WhatsApp bridge sidecar (Baileys). The Go API only
-// talks to it via HTTP; this is the only place that needs to know the URL.
+// WAConfig wires the WhatsApp bridge sidecar (Baileys) and its mTLS
+// internal server for webhook events.
 type WAConfig struct {
 	BridgeURL     string
 	InternalToken string
-	// InternalAddr is the mTLS-protected address for internal bridge
-	// webhooks (e.g. ":9090"). If empty the internal server is not started.
-	InternalAddr string
+	InternalAddr  string
+	TLSCACert     string
+	TLSCert       string
+	TLSKey        string
 }
 
 // CryptoConfig holds keys for at-rest encryption of message content.
 type CryptoConfig struct {
-	// MessageKey is a hex-encoded 32-byte AES-256 key. If empty, messages
-	// are stored in plaintext (dev fallback). Generate with:
-	//   openssl rand -hex 32
 	MessageKey string
 }
 
 type HTTPConfig struct {
 	Addr string
-	// TLS cert paths — when set the public server also supports HTTPS.
-	// For mTLS with the bridge, see WA.InternalAddr and TLSCA.
-	TLSCert     string
-	TLSKey      string
-	TLSCACert   string
-	TLSClientCA string
 }
 
 type PostgresConfig struct {
@@ -65,11 +57,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Env: getenv("APP_ENV", "dev"),
 		HTTP: HTTPConfig{
-			Addr:        getenv("HTTP_ADDR", ":8080"),
-			TLSCert:     os.Getenv("TLS_SERVER_CERT"),
-			TLSKey:      os.Getenv("TLS_SERVER_KEY"),
-			TLSCACert:   os.Getenv("TLS_CA_CERT"),
-			TLSClientCA: os.Getenv("TLS_CLIENT_CA_CERT"),
+			Addr: getenv("HTTP_ADDR", ":8080"),
 		},
 		Postgres: PostgresConfig{
 			URL: os.Getenv("POSTGRES_URL"),
@@ -86,6 +74,9 @@ func Load() (Config, error) {
 			BridgeURL:     os.Getenv("WA_BRIDGE_URL"),
 			InternalToken: os.Getenv("SOCIALIZE_INTERNAL_TOKEN"),
 			InternalAddr:  os.Getenv("WA_INTERNAL_ADDR"),
+			TLSCACert:     os.Getenv("TLS_CA_CERT"),
+			TLSCert:       os.Getenv("TLS_SERVER_CERT"),
+			TLSKey:        os.Getenv("TLS_SERVER_KEY"),
 		},
 		Crypto: CryptoConfig{
 			MessageKey: os.Getenv("WA_MESSAGE_KEY"),

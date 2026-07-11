@@ -1,6 +1,11 @@
 package users
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 // usernameRe is the single source of truth for what a username may contain.
 // If this changes, the mobile client's local regex must move in lockstep —
@@ -31,5 +36,18 @@ func TestUsernameRegex(t *testing.T) {
 				t.Errorf("MatchString(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// Search short-circuits before touching the repo, so this is safe to run
+// with a nil repo — it's the mobile search box's debounce boundary (search
+// screen waits for 2 chars) enforced again server-side.
+func TestSearchRequiresMinimumQueryLength(t *testing.T) {
+	svc := NewService(nil)
+	for _, q := range []string{"", "a"} {
+		got, err := svc.Search(context.Background(), uuid.New(), q)
+		if err != nil || got != nil {
+			t.Errorf("Search(%q) = %v, %v; want nil, nil", q, got, err)
+		}
 	}
 }

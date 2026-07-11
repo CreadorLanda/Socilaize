@@ -59,8 +59,6 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3001"
-    volumes:
-      - wa-bridge-auth:/app/auth_info
     environment:
       PORT: 3001
       # Both of these must match what the Go API uses.

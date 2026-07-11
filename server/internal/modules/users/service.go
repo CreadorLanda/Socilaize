@@ -65,6 +65,15 @@ func (s *Service) CheckAvailability(ctx context.Context, callerID uuid.UUID, use
 	return AvailabilityResponse{Username: username, Available: !taken}, nil
 }
 
+// Search finds users by username or display_name. Only returns users who
+// have username_public = true. The caller is excluded from results.
+func (s *Service) Search(ctx context.Context, callerID uuid.UUID, query string) ([]User, error) {
+	if len(query) < 2 {
+		return nil, nil
+	}
+	return s.repo.Search(ctx, query, callerID)
+}
+
 // Patch applies a profile patch. Validates the username (when supplied)
 // and surfaces a precise error so the controller can map it to 409.
 func (s *Service) Patch(ctx context.Context, userID uuid.UUID, p PatchRequest) (*User, error) {

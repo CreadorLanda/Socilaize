@@ -15,4 +15,8 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	// Messages within a chat
 	rg.POST("/chats/:id/messages", c.PostMessage)
 	rg.GET("/chats/:id/messages", c.GetMessages)
+
+	// Chat actions
+	rg.POST("/chats/:id/accept", c.PostAcceptChat)
+	rg.POST("/chats/:id/block", c.PostBlockChat)
 }

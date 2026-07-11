@@ -94,5 +94,39 @@ func (r *Repository) Patch(ctx context.Context, id uuid.UUID, p PatchRequest) (*
 	return scanUser(r.db.QueryRow(ctx, q, args...))
 }
 
+// Search finds users whose username or display_name matches the query.
+// Only returns users with username_public = true. Limited to 20 results.
+func (r *Repository) Search(ctx context.Context, query string, callerID uuid.UUID) ([]User, error) {
+	const q = `
+		SELECT ` + userColumns + `
+		FROM users
+		WHERE (username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
+		  AND id <> $2
+		  AND username_public = TRUE
+		ORDER BY
+			CASE WHEN username ILIKE $1 || '%' THEN 0
+			     WHEN display_name ILIKE $1 || '%' THEN 1
+			     ELSE 2
+			END,
+			display_name ASC
+		LIMIT 20
+	`
+	rows, err := r.db.Query(ctx, q, query, callerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
 // IsNoRows mirrors the helper in auth — keeps the pgx import out of callers.
 func IsNoRows(err error) bool { return err != nil && errors.Is(err, pgx.ErrNoRows) }

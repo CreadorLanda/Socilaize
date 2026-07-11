@@ -113,9 +113,9 @@ func New(cfg config.Config) (*Server, error) {
 	// Only starts when WA_INTERNAL_ADDR and all TLS cert paths are set.
 	var internalSrv *http.Server
 	if cfg.WA.InternalAddr != "" &&
-		cfg.HTTP.TLSCACert != "" &&
-		cfg.HTTP.TLSCert != "" &&
-		cfg.HTTP.TLSKey != "" {
+		cfg.WA.TLSCACert != "" &&
+		cfg.WA.TLSCert != "" &&
+		cfg.WA.TLSKey != "" {
 		internalSrv, err = newInternalServer(cfg, r)
 		if err != nil {
 			pg.Close()
@@ -137,12 +137,7 @@ func (s *Server) ListenAndServe() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		var err error
-		if s.cfg.HTTP.TLSCert != "" && s.cfg.HTTP.TLSKey != "" {
-			err = s.pubSrv.ListenAndServeTLS(s.cfg.HTTP.TLSCert, s.cfg.HTTP.TLSKey)
-		} else {
-			err = s.pubSrv.ListenAndServe()
-		}
+		err := s.pubSrv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.errCh <- err
 		}
@@ -181,10 +176,9 @@ func (s *Server) Close() {
 }
 
 // newInternalServer creates an HTTPS server with mandatory client cert
-// verification. Both the server cert and the CA cert are loaded from the
-// paths in cfg.HTTP.
+// verification for the bridge webhook.
 func newInternalServer(cfg config.Config, handler http.Handler) (*http.Server, error) {
-	caPEM, err := os.ReadFile(cfg.HTTP.TLSCACert)
+	caPEM, err := os.ReadFile(cfg.WA.TLSCACert)
 	if err != nil {
 		return nil, fmt.Errorf("read CA cert: %w", err)
 	}
@@ -193,7 +187,7 @@ func newInternalServer(cfg config.Config, handler http.Handler) (*http.Server, e
 		return nil, errors.New("no CA certs appended (empty or invalid PEM)")
 	}
 
-	cert, err := tls.LoadX509KeyPair(cfg.HTTP.TLSCert, cfg.HTTP.TLSKey)
+	cert, err := tls.LoadX509KeyPair(cfg.WA.TLSCert, cfg.WA.TLSKey)
 	if err != nil {
 		return nil, fmt.Errorf("load server cert: %w", err)
 	}
@@ -201,11 +195,8 @@ func newInternalServer(cfg config.Config, handler http.Handler) (*http.Server, e
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    caPool,
-		// RequireAndVerifyClientCert demands a valid client cert signed
-		// by the CA. Without it the TLS handshake fails immediately.
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		// Minimum TLS 1.3 — no obsolete ciphers, no downgrade.
-		MinVersion: tls.VersionTLS13,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	return &http.Server{

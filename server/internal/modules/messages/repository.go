@@ -80,8 +80,8 @@ func (r *Repository) UpsertSession(ctx context.Context, userID, peerID uuid.UUID
 	`
 	var id uuid.UUID
 	err := r.db.QueryRow(ctx, q,
-		userID, uuid.Nil,    // device_id: single-device for now
-		peerID, uuid.Nil,    // peer_device_id: single-device for now
+		userID, uuid.Nil, // device_id: single-device for now
+		peerID, uuid.Nil, // peer_device_id: single-device for now
 		key,
 	).Scan(&id)
 	return id, err
@@ -89,7 +89,7 @@ func (r *Repository) UpsertSession(ctx context.Context, userID, peerID uuid.UUID
 
 // ── Chats ───────────────────────────────────────────────────────────────────
 
-func (r *Repository) CreateChat(ctx context.Context, chatType ChatType, createdBy uuid.UUID, peerIDs []uuid.UUID) (uuid.UUID, error) {
+func (r *Repository) CreateChat(ctx context.Context, chatType ChatType, createdBy uuid.UUID, peerIDs []uuid.UUID, status ChatStatus) (uuid.UUID, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -98,8 +98,8 @@ func (r *Repository) CreateChat(ctx context.Context, chatType ChatType, createdB
 
 	var chatID uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO chats (type, created_by) VALUES ($1, $2) RETURNING id
-	`, string(chatType), createdBy).Scan(&chatID); err != nil {
+		INSERT INTO chats (type, created_by, status) VALUES ($1, $2, $3) RETURNING id
+	`, string(chatType), createdBy, string(status)).Scan(&chatID); err != nil {
 		return uuid.Nil, err
 	}
 
@@ -114,25 +114,26 @@ func (r *Repository) CreateChat(ctx context.Context, chatType ChatType, createdB
 	return chatID, tx.Commit(ctx)
 }
 
-func (r *Repository) FindDirectChat(ctx context.Context, userID, peerID uuid.UUID) (*uuid.UUID, error) {
+func (r *Repository) FindDirectChat(ctx context.Context, userID, peerID uuid.UUID) (*Chat, error) {
 	const q = `
-		SELECT c.id FROM chats c
+		SELECT c.id, c.type, c.title, c.avatar_url, c.created_by, c.status, c.created_at
+		FROM chats c
 		WHERE c.type = 'direct'
 		  AND EXISTS (SELECT 1 FROM chat_participants WHERE chat_id = c.id AND user_id = $1)
 		  AND EXISTS (SELECT 1 FROM chat_participants WHERE chat_id = c.id AND user_id = $2)
 		LIMIT 1
 	`
-	var id uuid.UUID
-	err := r.db.QueryRow(ctx, q, userID, peerID).Scan(&id)
+	var c Chat
+	err := r.db.QueryRow(ctx, q, userID, peerID).Scan(&c.ID, &c.Type, &c.Title, &c.AvatarURL, &c.CreatedBy, &c.Status, &c.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
-	return &id, nil
+	return &c, nil
 }
 
 func (r *Repository) ListChats(ctx context.Context, userID uuid.UUID) ([]Chat, error) {
 	const q = `
-		SELECT c.id, c.type, c.title, c.avatar_url, c.created_by, c.created_at
+		SELECT c.id, c.type, c.title, c.avatar_url, c.created_by, c.status, c.created_at
 		FROM chats c
 		JOIN chat_participants cp ON cp.chat_id = c.id
 		WHERE cp.user_id = $1
@@ -147,12 +148,77 @@ func (r *Repository) ListChats(ctx context.Context, userID uuid.UUID) ([]Chat, e
 	var out []Chat
 	for rows.Next() {
 		var c Chat
-		if err := rows.Scan(&c.ID, &c.Type, &c.Title, &c.AvatarURL, &c.CreatedBy, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Type, &c.Title, &c.AvatarURL, &c.CreatedBy, &c.Status, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// PeerUser holds minimal info about a chat's peer for direct chats.
+type PeerUser struct {
+	ID          uuid.UUID
+	DisplayName string
+	AvatarURI   string
+}
+
+func (r *Repository) PeerUser(ctx context.Context, chatID, userID uuid.UUID) (*PeerUser, error) {
+	const q = `
+		SELECT u.id, u.display_name, COALESCE(u.avatar_uri, '')
+		FROM chat_participants cp
+		JOIN users u ON u.id = cp.user_id
+		WHERE cp.chat_id = $1 AND cp.user_id <> $2
+		LIMIT 1
+	`
+	var p PeerUser
+	if err := r.db.QueryRow(ctx, q, chatID, userID).Scan(&p.ID, &p.DisplayName, &p.AvatarURI); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (r *Repository) GetChat(ctx context.Context, chatID uuid.UUID) (*Chat, error) {
+	const q = `
+		SELECT id, type, title, avatar_url, created_by, status, created_at
+		FROM chats WHERE id = $1
+	`
+	var c Chat
+	err := r.db.QueryRow(ctx, q, chatID).Scan(
+		&c.ID, &c.Type, &c.Title, &c.AvatarURL, &c.CreatedBy, &c.Status, &c.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (r *Repository) IsParticipant(ctx context.Context, chatID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM chat_participants WHERE chat_id = $1 AND user_id = $2
+		)
+	`, chatID, userID).Scan(&exists)
+	return exists, err
+}
+
+func (r *Repository) UpdateChatStatus(ctx context.Context, chatID uuid.UUID, status ChatStatus) error {
+	_, err := r.db.Exec(ctx, `UPDATE chats SET status = $1 WHERE id = $2`, string(status), chatID)
+	return err
+}
+
+func (r *Repository) ChatStatus(ctx context.Context, chatID uuid.UUID) (ChatStatus, error) {
+	var status ChatStatus
+	err := r.db.QueryRow(ctx, `SELECT status FROM chats WHERE id = $1`, chatID).Scan(&status)
+	return status, err
+}
+
+func (r *Repository) MessageCount(ctx context.Context, chatID, userID uuid.UUID) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM messages WHERE chat_id = $1 AND sender_id = $2`, chatID, userID).Scan(&n)
+	return n, err
 }
 
 // ── Messages ────────────────────────────────────────────────────────────────
@@ -171,7 +237,8 @@ func (r *Repository) InsertMessage(ctx context.Context, chatID, senderID uuid.UU
 }
 
 // ListMessages returns messages for a chat, newest first, with cursor-based
-// pagination. Content is decrypted on read.
+// pagination. Content is decrypted on read. Sender display name/avatar are
+// joined in the same query to avoid N+1 lookups.
 func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit int, before int64) ([]Message, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -182,21 +249,25 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 
 	if before > 0 {
 		const q = `
-			SELECT id, chat_id, sender_id, content, message_type, reply_to_id,
-			       created_at, edited_at, deleted_at
-			FROM messages
-			WHERE chat_id = $1 AND id < $2 AND deleted_at IS NULL
-			ORDER BY id DESC
+			SELECT m.id, m.chat_id, m.sender_id, m.content, m.message_type, m.reply_to_id,
+			       m.created_at, m.edited_at, m.deleted_at,
+			       COALESCE(u.display_name, ''), COALESCE(u.avatar_uri, '')
+			FROM messages m
+			LEFT JOIN users u ON u.id = m.sender_id
+			WHERE m.chat_id = $1 AND m.id < $2 AND m.deleted_at IS NULL
+			ORDER BY m.id DESC
 			LIMIT $3
 		`
 		rows, err = r.db.Query(ctx, q, chatID, before, limit)
 	} else {
 		const q = `
-			SELECT id, chat_id, sender_id, content, message_type, reply_to_id,
-			       created_at, edited_at, deleted_at
-			FROM messages
-			WHERE chat_id = $1 AND deleted_at IS NULL
-			ORDER BY id DESC
+			SELECT m.id, m.chat_id, m.sender_id, m.content, m.message_type, m.reply_to_id,
+			       m.created_at, m.edited_at, m.deleted_at,
+			       COALESCE(u.display_name, ''), COALESCE(u.avatar_uri, '')
+			FROM messages m
+			LEFT JOIN users u ON u.id = m.sender_id
+			WHERE m.chat_id = $1 AND m.deleted_at IS NULL
+			ORDER BY m.id DESC
 			LIMIT $2
 		`
 		rows, err = r.db.Query(ctx, q, chatID, limit)
@@ -209,20 +280,24 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 	var out []Message
 	for rows.Next() {
 		var m messageRow
+		var senderName, senderAvatar string
 		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderID, &m.Content,
-			&m.MessageType, &m.ReplyToID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt); err != nil {
+			&m.MessageType, &m.ReplyToID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
+			&senderName, &senderAvatar); err != nil {
 			return nil, err
 		}
 		out = append(out, Message{
-			ID:          m.ID,
-			ChatID:      m.ChatID,
-			SenderID:    m.SenderID,
-			Content:     r.decrypt(m.Content),
-			MessageType: MessageType(m.MessageType),
-			ReplyToID:   m.ReplyToID,
-			CreatedAt:   m.CreatedAt,
-			EditedAt:    m.EditedAt,
-			DeletedAt:   m.DeletedAt,
+			ID:           m.ID,
+			ChatID:       m.ChatID,
+			SenderID:     m.SenderID,
+			Content:      r.decrypt(m.Content),
+			MessageType:  MessageType(m.MessageType),
+			ReplyToID:    m.ReplyToID,
+			CreatedAt:    m.CreatedAt,
+			EditedAt:     m.EditedAt,
+			DeletedAt:    m.DeletedAt,
+			SenderName:   senderName,
+			SenderAvatar: senderAvatar,
 		})
 	}
 	return out, rows.Err()

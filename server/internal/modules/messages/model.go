@@ -20,14 +20,22 @@ const (
 	ChatGroup  ChatType = "group"
 )
 
+type ChatStatus string
+
+const (
+	ChatStatusActive  ChatStatus = "active"
+	ChatStatusPending ChatStatus = "pending"
+	ChatStatusBlocked ChatStatus = "blocked"
+)
+
 type Chat struct {
-	ID        uuid.UUID `json:"id"`
-	Type      ChatType  `json:"type"`
-	Title     *string   `json:"title,omitempty"`
-	AvatarURL *string   `json:"avatar_url,omitempty"`
-	CreatedBy uuid.UUID `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
-	// Populated on list — last message preview (plaintext, for list display)
+	ID          uuid.UUID       `json:"id"`
+	Type        ChatType        `json:"type"`
+	Title       *string         `json:"title,omitempty"`
+	AvatarURL   *string         `json:"avatar_url,omitempty"`
+	CreatedBy   uuid.UUID       `json:"created_by"`
+	Status      ChatStatus      `json:"status"`
+	CreatedAt   time.Time       `json:"created_at"`
 	LastMessage *MessagePreview `json:"last_message,omitempty"`
 	UnreadCount int             `json:"unread_count"`
 }
@@ -58,15 +66,17 @@ const (
 )
 
 type Message struct {
-	ID          int64       `json:"id"`
-	ChatID      uuid.UUID   `json:"chat_id"`
-	SenderID    uuid.UUID   `json:"sender_id"`
-	Content     string      `json:"content"`      // plaintext (client input / decrypted output)
-	MessageType MessageType `json:"message_type"`
-	ReplyToID   *int64      `json:"reply_to_id,omitempty"`
-	CreatedAt   time.Time   `json:"created_at"`
-	EditedAt    *time.Time  `json:"edited_at,omitempty"`
-	DeletedAt   *time.Time  `json:"deleted_at,omitempty"`
+	ID           int64       `json:"id"`
+	ChatID       uuid.UUID   `json:"chat_id"`
+	SenderID     uuid.UUID   `json:"sender_id"`
+	Content      string      `json:"content"` // plaintext (client input / decrypted output)
+	MessageType  MessageType `json:"message_type"`
+	ReplyToID    *int64      `json:"reply_to_id,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+	EditedAt     *time.Time  `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time  `json:"deleted_at,omitempty"`
+	SenderName   string      `json:"sender_name,omitempty"`
+	SenderAvatar string      `json:"sender_avatar,omitempty"`
 }
 
 // ── Session ─────────────────────────────────────────────────────────────────

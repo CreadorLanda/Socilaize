@@ -9,5 +9,6 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	g.GET("/me", c.GetMe)
 	g.PATCH("/me", c.PatchMe)
 	g.GET("/availability", c.GetAvailability)
+	g.GET("/search", c.GetSearch)
 	g.GET("/by-username/:username", c.GetByUsername)
 }
