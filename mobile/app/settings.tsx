@@ -3,12 +3,17 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { clearSession } from '@/data/auth-store';
+import {
+  getNotifPrefs,
+  patchNotifPrefs,
+  registerPushDevice,
+} from '@/data/api/notifications';
 import { useProfile } from '@/data/profile-store';
 import {
   getActivePack,
@@ -37,6 +42,50 @@ export default function SettingsScreen() {
   const [notifMessages, setNotifMessages] = useState(true);
   const [notifGroups, setNotifGroups] = useState(true);
   const [notifCalls, setNotifCalls] = useState(false);
+  const [notifStories, setNotifStories] = useState(true);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+
+  // Load notification prefs + register a stable dev push token (until Expo
+  // Notifications is wired for real FCM/APNs tokens).
+  useEffect(() => {
+    let cancelled = false;
+    getNotifPrefs()
+      .then((p) => {
+        if (cancelled) return;
+        setNotifMessages(p.messages);
+        setNotifGroups(p.groups);
+        setNotifCalls(p.calls);
+        setNotifStories(p.stories);
+        setPrefsLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setPrefsLoaded(true);
+      });
+    // Placeholder token so enqueue path has a device row in dev.
+    registerPushDevice(`dev-token-${Date.now().toString(36)}`).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveNotif = useCallback(
+    (patch: {
+      messages?: boolean;
+      groups?: boolean;
+      calls?: boolean;
+      stories?: boolean;
+    }) => {
+      if (patch.messages != null) setNotifMessages(patch.messages);
+      if (patch.groups != null) setNotifGroups(patch.groups);
+      if (patch.calls != null) setNotifCalls(patch.calls);
+      if (patch.stories != null) setNotifStories(patch.stories);
+      if (!prefsLoaded) return;
+      patchNotifPrefs(patch).catch(() => {
+        /* keep optimistic */
+      });
+    },
+    [prefsLoaded],
+  );
 
   const visibilityLabel = (v: Visibility) =>
     v === 'everyone'
@@ -174,7 +223,7 @@ export default function SettingsScreen() {
             control={
               <Switch
                 value={notifMessages}
-                onValueChange={setNotifMessages}
+                onValueChange={(v) => saveNotif({ messages: v })}
                 trackColor={{ false: colors.border, true: colors.primary }}
                 thumbColor="#FFFFFF"
               />
@@ -186,7 +235,7 @@ export default function SettingsScreen() {
             control={
               <Switch
                 value={notifGroups}
-                onValueChange={setNotifGroups}
+                onValueChange={(v) => saveNotif({ groups: v })}
                 trackColor={{ false: colors.border, true: colors.primary }}
                 thumbColor="#FFFFFF"
               />
@@ -198,7 +247,19 @@ export default function SettingsScreen() {
             control={
               <Switch
                 value={notifCalls}
-                onValueChange={setNotifCalls}
+                onValueChange={(v) => saveNotif({ calls: v })}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#FFFFFF"
+              />
+            }
+          />
+          <Row
+            icon="images-outline"
+            label={t('settings.notif_stories')}
+            control={
+              <Switch
+                value={notifStories}
+                onValueChange={(v) => saveNotif({ stories: v })}
                 trackColor={{ false: colors.border, true: colors.primary }}
                 thumbColor="#FFFFFF"
               />

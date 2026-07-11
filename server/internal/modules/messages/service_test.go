@@ -55,7 +55,7 @@ func createTestUser(t *testing.T, pool *pgxpool.Pool, username string) uuid.UUID
 func newTestService(pool *pgxpool.Pool) *Service {
 	usersRepo := users.NewRepository(pool)
 	keysSvc := keys.NewService(keys.NewRepository(pool), usersRepo)
-	return NewService(NewRepository(pool, ""), keysSvc, usersRepo, nil)
+	return NewService(NewRepository(pool, ""), keysSvc, usersRepo, nil, nil)
 }
 
 // TestDirectChatFriendRequestFlow exercises the whole pending → accept
