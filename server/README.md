@@ -124,6 +124,12 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `GET    /api/notifications/prefs`        | required | ✅ notification toggles             |
 | `PATCH  /api/notifications/prefs`        | required | ✅ update toggles                   |
 | `POST   /api/notifications/test`         | required | ✅ enqueue smoke push               |
+| `POST   /api/stories`                    | required | ✅ create story (TTL 24h)           |
+| `GET    /api/stories`                    | required | ✅ feed                             |
+| `GET    /api/stories/:id`                | required | ✅ one story                        |
+| `POST   /api/stories/:id/view`           | required | ✅ mark viewed                      |
+| `POST   /api/stories/:id/react`          | required | ✅ react                            |
+| `DELETE /api/stories/:id`                | required | ✅ delete own                       |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.

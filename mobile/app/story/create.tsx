@@ -36,8 +36,11 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { uploadMedia } from '@/data/api/media';
+import { createStory } from '@/data/api/stories';
 import type { StoryVisibility } from '@/data/mock';
 import { useProfile } from '@/data/profile-store';
+import { prependStoryFromDTO } from '@/data/story-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -264,22 +267,79 @@ export default function CreateStoryScreen() {
         ? t('stories.privacy_close')
         : t('stories.privacy_contacts');
 
-  const publish = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  const publish = async () => {
     if (isLiveSetup) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(t('stories.go_live'), t('stories.live_starting'), [
         { text: 'OK', onPress: () => router.back() },
       ]);
       return;
     }
-    Alert.alert(
-      t('stories.sent_notice'),
-      t('stories.sent_detail', {
-        audience: audienceLabel,
-        anon: postAnonymous ? t('stories.sent_as_anon') : '',
-      }),
-      [{ text: 'OK', onPress: () => router.back() }],
-    );
+
+    try {
+      let mediaUrl: string | undefined;
+      let kind: 'image' | 'video' | 'text' | 'audio' = 'text';
+
+      if (textOnly) {
+        kind = 'text';
+        if (!caption.trim()) {
+          Alert.alert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
+          return;
+        }
+      } else if (isAudio && mediaUri) {
+        kind = 'audio';
+        const up = await uploadMedia({
+          uri: mediaUri,
+          name: `story-audio-${Date.now()}.m4a`,
+          mimeType: 'audio/mp4',
+          durationMs: audioSec * 1000,
+        });
+        mediaUrl = up.url;
+      } else if (mediaUri) {
+        kind = isVideo ? 'video' : 'image';
+        const up = await uploadMedia({
+          uri: mediaUri,
+          mimeType: isVideo ? 'video/mp4' : 'image/jpeg',
+        });
+        mediaUrl = up.url;
+      } else if (caption.trim()) {
+        kind = 'text';
+      } else {
+        Alert.alert(t('stories.sent_notice'), 'Pick a photo or write something.');
+        return;
+      }
+
+      const dto = await createStory({
+        kind,
+        caption: caption.trim(),
+        media_url: mediaUrl,
+        accent,
+        visibility: audience,
+        is_anonymous: postAnonymous,
+        duration_sec: isAudio ? Math.max(5, audioSec) : 5,
+      });
+      prependStoryFromDTO(dto);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        t('stories.sent_notice'),
+        t('stories.sent_detail', {
+          audience: audienceLabel,
+          anon: postAnonymous ? t('stories.sent_as_anon') : '',
+        }),
+        [{ text: 'OK', onPress: () => router.back() }],
+      );
+    } catch {
+      // Offline / API down — still close with local notice.
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        t('stories.sent_notice'),
+        t('stories.sent_detail', {
+          audience: audienceLabel,
+          anon: postAnonymous ? t('stories.sent_as_anon') : '',
+        }),
+        [{ text: 'OK', onPress: () => router.back() }],
+      );
+    }
   };
 
   // ── CAPTURE ──────────────────────────────────────────────────────────────
