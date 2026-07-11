@@ -111,6 +111,14 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `GET    /api/media/:id`                  | required | ✅ media metadata                   |
 | `GET    /api/media/:id/file`             | public*  | ✅ stream bytes (*UUID-gated)      |
 | `DELETE /api/media/:id`                  | required | ✅ owner delete                     |
+| `POST   /api/groups`                     | required | ✅ create group chat                |
+| `GET    /api/groups`                     | required | ✅ list my groups                   |
+| `GET    /api/groups/:id`                 | required | ✅ group + members                  |
+| `PATCH  /api/groups/:id`                 | required | ✅ admin settings                   |
+| `POST   /api/groups/:id/members`         | required | ✅ add members                      |
+| `DELETE /api/groups/:id/members/:userId` | required | ✅ remove / kick                    |
+| `PATCH  /api/groups/:id/members/:userId` | required | ✅ set role                         |
+| `POST   /api/groups/:id/leave`           | required | ✅ leave group                      |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.

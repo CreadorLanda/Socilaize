@@ -2,12 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { useGroup } from '@/data/group-store';
+import { listChats, type ChatDTO } from '@/data/api/messages';
+import { refreshGroup, useGroup } from '@/data/group-store';
 import { CHATS, MESSAGES, type ChatPreview, type Message } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
@@ -16,9 +17,58 @@ const MAX_MEDIA_PREVIEW = 6;
 
 export default function ChatInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const chat = useMemo(() => CHATS.find((c) => c.id === id), [id]);
+  const mockChat = useMemo(() => CHATS.find((c) => c.id === id), [id]);
+  const [apiChat, setApiChat] = useState<ChatDTO | null>(null);
   const { colors, isDark } = useTheme();
-  const group = useGroup(chat?.isGroup ? id : undefined);
+
+  useEffect(() => {
+    if (!id) return;
+    listChats()
+      .then((list) => {
+        const found = list.find((c) => c.id === id);
+        if (found) setApiChat(found);
+      })
+      .catch(() => {});
+  }, [id]);
+
+  const isGroup = !!mockChat?.isGroup || apiChat?.type === 'group';
+  const group = useGroup(isGroup ? id : undefined);
+
+  useEffect(() => {
+    if (isGroup && id) refreshGroup(id).catch(() => {});
+  }, [isGroup, id]);
+
+  const chat: ChatPreview | undefined = mockChat
+    ? mockChat
+    : apiChat
+      ? {
+          id: apiChat.id,
+          name: apiChat.title ?? group?.name ?? 'Chat',
+          username: '',
+          avatarUri: apiChat.avatar_url ?? group?.avatarUri ?? '',
+          lastMessage: '',
+          timestamp: '',
+          unreadCount: apiChat.unread_count,
+          online: false,
+          isGroup: apiChat.type === 'group',
+          memberCount: group?.members.length,
+          source: 'native',
+        }
+      : group
+        ? {
+            id: group.id,
+            name: group.name,
+            username: '',
+            avatarUri: group.avatarUri,
+            lastMessage: '',
+            timestamp: '',
+            unreadCount: 0,
+            online: false,
+            isGroup: true,
+            memberCount: group.members.length,
+            source: 'native',
+          }
+        : undefined;
 
   // Local-only toggles. Real wiring lives on the server side.
   const [muted, setMuted] = useState(false);
@@ -34,7 +84,6 @@ export default function ChatInfoScreen() {
     );
   }
 
-  const isGroup = !!chat.isGroup;
   const isWA = chat.source === 'whatsapp';
   const memberCount = group?.members.length ?? chat.memberCount ?? 0;
   const mediaItems = (MESSAGES[chat.id] ?? [])

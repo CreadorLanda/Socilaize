@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { TabScene } from '@/components/ui/tab-scene';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { listChats, type ChatDTO } from '@/data/api/messages';
+import { bootstrapGroups } from '@/data/group-store';
 import {
   addCustomFilter,
   removeCustomFilter,
@@ -32,12 +33,15 @@ export default function ChatsScreen() {
   const [apiChats, setApiChats] = useState<ChatDTO[]>([]);
   const [apiLoaded, setApiLoaded] = useState(false);
 
-  // Fetch real chats from the API.
+  // Fetch real chats + groups from the API.
   useEffect(() => {
     listChats()
       .then(setApiChats)
-      .catch(() => { /* API not available — empty list */ })
+      .catch(() => {
+        /* API not available — empty list */
+      })
       .finally(() => setApiLoaded(true));
+    bootstrapGroups().catch(() => {});
   }, []);
 
   // Drop back to "All" if the active custom filter gets removed.
@@ -61,6 +65,8 @@ export default function ChatsScreen() {
       online: false,
       source: 'native' as const,
       isPending: c.status === 'pending',
+      isGroup: c.type === 'group',
+      memberCount: c.type === 'group' ? undefined : undefined,
     }));
 
     if (activeFilter === 'pending') return combined.filter((c) => c.isPending);
