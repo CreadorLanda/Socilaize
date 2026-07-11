@@ -1,4 +1,6 @@
-import { api } from './client';
+import * as SecureStore from 'expo-secure-store';
+
+import { ACCESS_KEY, api, BASE_URL } from './client';
 
 export type ChatStatus = 'active' | 'pending' | 'blocked';
 
@@ -30,11 +32,29 @@ export interface MessageDTO {
   deleted_at?: string;
   sender_name?: string;
   sender_avatar?: string;
+  delivered_to?: number;
+  read_by?: number;
 }
 
 export interface SessionInitResponse {
   session_id: string;
   created: boolean;
+}
+
+export type ReceiptStatus = 'delivered' | 'read';
+
+export interface ReactionDTO {
+  message_id: number;
+  user_id: string;
+  emoji: string;
+  created_at: string;
+}
+
+/** Realtime event envelope from GET /api/ws */
+export interface RealtimeEvent {
+  type: string;
+  chat_id?: string;
+  payload?: unknown;
 }
 
 /** Initialize an E2EE session with a peer */
@@ -71,6 +91,52 @@ export function sendMessage(
   });
 }
 
+/** Edit own message */
+export function editMessage(chatId: string, messageId: number, content: string) {
+  return api.patch<MessageDTO>(`/api/chats/${chatId}/messages/${messageId}`, { content });
+}
+
+/** Soft-delete own message */
+export function deleteMessage(chatId: string, messageId: number) {
+  return api.del<MessageDTO>(`/api/chats/${chatId}/messages/${messageId}`);
+}
+
+/** Batch delivered/read receipts */
+export function postReceipts(
+  chatId: string,
+  messageIds: number[],
+  status: ReceiptStatus,
+) {
+  return api.post<void>(`/api/chats/${chatId}/receipts`, {
+    message_ids: messageIds,
+    status,
+  });
+}
+
+/** Mark chat read up to message id */
+export function markRead(chatId: string, messageId: number) {
+  return api.post<void>(`/api/chats/${chatId}/read`, { message_id: messageId });
+}
+
+/** Broadcast typing indicator */
+export function setTyping(chatId: string, typing: boolean) {
+  return api.post<void>(`/api/chats/${chatId}/typing`, { typing });
+}
+
+/** Add reaction */
+export function addReaction(chatId: string, messageId: number, emoji: string) {
+  return api.post<ReactionDTO[]>(`/api/chats/${chatId}/messages/${messageId}/reactions`, {
+    emoji,
+  });
+}
+
+/** Remove reaction */
+export function removeReaction(chatId: string, messageId: number, emoji: string) {
+  return api.del<ReactionDTO[]>(
+    `/api/chats/${chatId}/messages/${messageId}/reactions?emoji=${encodeURIComponent(emoji)}`,
+  );
+}
+
 /** Accept a pending friend request chat */
 export function acceptChat(chatId: string) {
   return api.post<ChatDTO>(`/api/chats/${chatId}/accept`);
@@ -86,4 +152,35 @@ export function listMessages(chatId: string, limit = 50, before?: number) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (before) params.set('before', String(before));
   return api.get<MessageDTO[]>(`/api/chats/${chatId}/messages?${params}`);
+}
+
+/**
+ * Open the realtime WebSocket using the stored access token.
+ * Returns null if there is no session.
+ */
+export async function connectRealtime(
+  onEvent: (ev: RealtimeEvent) => void,
+  onClose?: () => void,
+): Promise<WebSocket | null> {
+  const token = await SecureStore.getItemAsync(ACCESS_KEY);
+  if (!token) return null;
+  return openRealtimeWithToken(token, onEvent, onClose);
+}
+
+export function openRealtimeWithToken(
+  token: string,
+  onEvent: (ev: RealtimeEvent) => void,
+  onClose?: () => void,
+): WebSocket {
+  const base = BASE_URL.replace(/^http/, 'ws');
+  const ws = new WebSocket(`${base}/api/ws?token=${encodeURIComponent(token)}`);
+  ws.onmessage = (e) => {
+    try {
+      onEvent(JSON.parse(String(e.data)) as RealtimeEvent);
+    } catch {
+      /* ignore malformed */
+    }
+  };
+  ws.onclose = () => onClose?.();
+  return ws;
 }

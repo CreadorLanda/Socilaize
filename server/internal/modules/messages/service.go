@@ -25,16 +25,26 @@ var (
 	ErrPendingChatLimit = errors.New("pending_chat_limit")
 	ErrCannotAcceptOwn  = errors.New("cannot_accept_own_request")
 	ErrChatNotPending   = errors.New("chat_not_pending")
+	ErrMessageNotFound  = errors.New("message_not_found")
+	ErrNotSender        = errors.New("not_message_sender")
+	ErrInvalidReceipt   = errors.New("invalid_receipt_status")
 )
+
+// Broadcaster is satisfied by *realtime.Hub. Kept as an interface so the
+// messages module does not import the WS stack into unit tests.
+type Broadcaster interface {
+	PublishJSON(userIDs []uuid.UUID, typ, chatID string, payload any)
+}
 
 type Service struct {
 	repo    *Repository
 	keysSvc *keys.Service
 	users   *users.Repository
+	hub     Broadcaster
 }
 
-func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository) *Service {
-	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo}
+func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository, hub Broadcaster) *Service {
+	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo, hub: hub}
 }
 
 // ── Session Init ────────────────────────────────────────────────────────────
@@ -154,6 +164,9 @@ func (s *Service) ListChats(ctx context.Context, userID uuid.UUID) ([]Chat, erro
 		if err == nil && preview != nil {
 			chats[i].LastMessage = preview
 		}
+		if n, err := s.repo.UnreadCount(ctx, c.ID, userID); err == nil {
+			chats[i].UnreadCount = n
+		}
 		s.enrichDirectPeer(ctx, &chats[i], userID)
 	}
 	return chats, nil
@@ -193,7 +206,12 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 	if err != nil {
 		return Message{}, err
 	}
-	return s.getMessage(ctx, chatID, id)
+	msg, err := s.getMessage(ctx, chatID, id)
+	if err != nil {
+		return Message{}, err
+	}
+	s.broadcast(ctx, chatID, "message.new", msg)
+	return msg, nil
 }
 
 func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, limit int, before int64) ([]Message, error) {
@@ -201,6 +219,150 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 		return nil, err
 	}
 	return s.repo.ListMessages(ctx, chatID, limit, before)
+}
+
+// EditMessage updates content (sender only) and fans out over WS.
+func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msgID int64, content string) (Message, error) {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return Message{}, err
+	}
+	existing, err := s.repo.GetMessage(ctx, chatID, msgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, ErrMessageNotFound
+		}
+		return Message{}, err
+	}
+	if existing.DeletedAt != nil {
+		return Message{}, ErrMessageNotFound
+	}
+	if existing.SenderID != userID {
+		return Message{}, ErrNotSender
+	}
+	if err := s.repo.EditMessage(ctx, chatID, userID, msgID, content); err != nil {
+		return Message{}, err
+	}
+	msg, err := s.getMessage(ctx, chatID, msgID)
+	if err != nil {
+		return Message{}, err
+	}
+	s.broadcast(ctx, chatID, "message.edited", msg)
+	return msg, nil
+}
+
+// DeleteMessage soft-deletes (sender only).
+func (s *Service) DeleteMessage(ctx context.Context, chatID, userID uuid.UUID, msgID int64) (Message, error) {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return Message{}, err
+	}
+	existing, err := s.repo.GetMessage(ctx, chatID, msgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, ErrMessageNotFound
+		}
+		return Message{}, err
+	}
+	if existing.SenderID != userID {
+		return Message{}, ErrNotSender
+	}
+	if err := s.repo.SoftDeleteMessage(ctx, chatID, userID, msgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, ErrMessageNotFound
+		}
+		return Message{}, err
+	}
+	msg, err := s.repo.GetMessage(ctx, chatID, msgID)
+	if err != nil {
+		return Message{}, err
+	}
+	s.broadcast(ctx, chatID, "message.deleted", msg)
+	return *msg, nil
+}
+
+// SetReceipts marks messages delivered/read for the caller and notifies peers.
+func (s *Service) SetReceipts(ctx context.Context, chatID, userID uuid.UUID, req ReceiptRequest) error {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return err
+	}
+	if req.Status != ReceiptDelivered && req.Status != ReceiptRead {
+		return ErrInvalidReceipt
+	}
+	ids, err := s.repo.MessageIDsInChat(ctx, chatID, req.MessageIDs)
+	if err != nil {
+		return err
+	}
+	var maxID int64
+	for _, id := range ids {
+		if err := s.repo.UpsertReceipt(ctx, id, userID, req.Status); err != nil {
+			return err
+		}
+		if id > maxID {
+			maxID = id
+		}
+		s.broadcast(ctx, chatID, "receipt", Receipt{
+			MessageID: id,
+			UserID:    userID,
+			Status:    req.Status,
+		})
+	}
+	if req.Status == ReceiptRead && maxID > 0 {
+		_ = s.repo.SetLastRead(ctx, chatID, userID, maxID)
+	}
+	return nil
+}
+
+// MarkRead is a convenience: mark everything up to messageID as read.
+func (s *Service) MarkRead(ctx context.Context, chatID, userID uuid.UUID, messageID int64) error {
+	return s.SetReceipts(ctx, chatID, userID, ReceiptRequest{
+		MessageIDs: []int64{messageID},
+		Status:     ReceiptRead,
+	})
+}
+
+// Typing broadcasts a typing indicator (ephemeral — not persisted).
+func (s *Service) Typing(ctx context.Context, chatID, userID uuid.UUID, typing bool) error {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return err
+	}
+	s.broadcast(ctx, chatID, "typing", map[string]any{
+		"user_id": userID,
+		"typing":  typing,
+	})
+	return nil
+}
+
+// React toggles an emoji reaction on a message.
+func (s *Service) React(ctx context.Context, chatID, userID uuid.UUID, msgID int64, emoji string, remove bool) ([]Reaction, error) {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.GetMessage(ctx, chatID, msgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrMessageNotFound
+		}
+		return nil, err
+	}
+	if remove {
+		if err := s.repo.RemoveReaction(ctx, msgID, userID, emoji); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.repo.AddReaction(ctx, msgID, userID, emoji); err != nil {
+			return nil, err
+		}
+	}
+	list, err := s.repo.ListReactions(ctx, msgID)
+	if err != nil {
+		return nil, err
+	}
+	s.broadcast(ctx, chatID, "message.reaction", map[string]any{
+		"message_id": msgID,
+		"user_id":    userID,
+		"emoji":      emoji,
+		"removed":    remove,
+		"reactions":  list,
+	})
+	return list, nil
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────
@@ -247,16 +409,25 @@ func (s *Service) loadChat(ctx context.Context, chatID uuid.UUID, forUser uuid.U
 }
 
 func (s *Service) getMessage(ctx context.Context, chatID uuid.UUID, msgID int64) (Message, error) {
-	msgs, err := s.repo.ListMessages(ctx, chatID, 1, msgID+1)
+	m, err := s.repo.GetMessage(ctx, chatID, msgID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Message{}, ErrMessageNotFound
+		}
 		return Message{}, err
 	}
-	for _, m := range msgs {
-		if m.ID == msgID {
-			return m, nil
-		}
+	return *m, nil
+}
+
+func (s *Service) broadcast(ctx context.Context, chatID uuid.UUID, typ string, payload any) {
+	if s.hub == nil {
+		return
 	}
-	return Message{}, ErrChatNotFound
+	ids, err := s.repo.ParticipantIDs(ctx, chatID)
+	if err != nil || len(ids) == 0 {
+		return
+	}
+	s.hub.PublishJSON(ids, typ, chatID.String(), payload)
 }
 
 // ── HKDF ────────────────────────────────────────────────────────────────────
