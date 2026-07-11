@@ -9,6 +9,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { clearSession } from '@/data/auth-store';
+import * as SecureStore from 'expo-secure-store';
+
 import {
   getNotifPrefs,
   patchNotifPrefs,
@@ -61,8 +63,16 @@ export default function SettingsScreen() {
       .catch(() => {
         if (!cancelled) setPrefsLoaded(true);
       });
-    // Placeholder token so enqueue path has a device row in dev.
-    registerPushDevice(`dev-token-${Date.now().toString(36)}`).catch(() => {});
+    // Stable per-install dev token until expo-notifications is wired for FCM/APNs.
+    (async () => {
+      const KEY = 'push.dev_token';
+      let token = await SecureStore.getItemAsync(KEY);
+      if (!token) {
+        token = `dev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        await SecureStore.setItemAsync(KEY, token);
+      }
+      await registerPushDevice(token).catch(() => {});
+    })();
     return () => {
       cancelled = true;
     };

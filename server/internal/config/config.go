@@ -18,6 +18,14 @@ type Config struct {
 	WA       WAConfig
 	Crypto   CryptoConfig
 	Media    MediaConfig
+	Push     PushConfig
+}
+
+// PushConfig configures the offline push worker.
+type PushConfig struct {
+	// WebhookURL optional HTTP endpoint that receives push jobs + device tokens.
+	// Useful for a small FCM relay or n8n/Make webhook while native FCM is pending.
+	WebhookURL string
 }
 
 // MediaConfig controls on-disk upload storage (S3/R2 later).
@@ -93,6 +101,9 @@ func Load() (Config, error) {
 		Media: MediaConfig{
 			Dir:            getenv("MEDIA_DIR", "./data/media"),
 			MaxUploadBytes: getenvInt64("MEDIA_MAX_BYTES", 25<<20),
+		},
+		Push: PushConfig{
+			WebhookURL: os.Getenv("PUSH_WEBHOOK_URL"),
 		},
 	}
 
