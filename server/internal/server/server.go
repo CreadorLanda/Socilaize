@@ -23,6 +23,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/bridges/whatsapp"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/media"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
@@ -99,6 +100,13 @@ func New(cfg config.Config) (*Server, error) {
 	messages.Register(authed, msgCtl)
 	// WS lives on the public /api group — token is validated inside the handler.
 	messages.RegisterWS(api, msgCtl)
+
+	// Media uploads (auth) + public file streaming by UUID.
+	mediaRepo := media.NewRepository(pg)
+	mediaSvc := media.NewService(mediaRepo, cfg.Media.Dir, cfg.Media.MaxUploadBytes)
+	mediaCtl := media.NewController(mediaSvc)
+	media.Register(authed, mediaCtl)
+	media.RegisterPublic(api, mediaCtl)
 
 	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
 	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)

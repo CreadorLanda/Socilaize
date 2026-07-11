@@ -17,6 +17,15 @@ type Config struct {
 	JWT      JWTConfig
 	WA       WAConfig
 	Crypto   CryptoConfig
+	Media    MediaConfig
+}
+
+// MediaConfig controls on-disk upload storage (S3/R2 later).
+type MediaConfig struct {
+	// Dir is the absolute/relative root for stored files.
+	Dir string
+	// MaxUploadBytes caps a single upload (0 = default 25 MiB).
+	MaxUploadBytes int64
 }
 
 // WAConfig wires the WhatsApp bridge sidecar (Baileys) and its mTLS
@@ -81,6 +90,10 @@ func Load() (Config, error) {
 		Crypto: CryptoConfig{
 			MessageKey: os.Getenv("WA_MESSAGE_KEY"),
 		},
+		Media: MediaConfig{
+			Dir:            getenv("MEDIA_DIR", "./data/media"),
+			MaxUploadBytes: getenvInt64("MEDIA_MAX_BYTES", 25<<20),
+		},
 	}
 
 	var missing []string
@@ -116,6 +129,15 @@ func getenvDuration(key string, fallback time.Duration) time.Duration {
 		}
 		if secs, err := strconv.Atoi(v); err == nil {
 			return time.Duration(secs) * time.Second
+		}
+	}
+	return fallback
+}
+
+func getenvInt64(key string, fallback int64) int64 {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
 		}
 	}
 	return fallback

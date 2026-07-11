@@ -1,10 +1,11 @@
+import { decodeMediaContent, mediaFileURL } from '@/data/api/media';
 import type { MessageDTO, ReactionDTO } from '@/data/api/messages';
-import type { Message } from '@/data/mock';
+import type { MediaAttachment, Message } from '@/data/mock';
 
 /** Map API message → UI Message used by the chat screen. */
 export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
   const deleted = !!m.deleted_at;
-  return {
+  const base: Message = {
     id: String(m.id),
     text: deleted ? '' : m.content,
     fromMe: !!meId && m.sender_id === meId,
@@ -16,6 +17,28 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     status: m.read_by && m.read_by > 0 ? 'read' : m.delivered_to && m.delivered_to > 0 ? 'delivered' : 'sent',
     source: 'native',
   };
+  if (deleted) return base;
+
+  const mt = (m.message_type || 'text').toLowerCase();
+  if (mt === 'image' || mt === 'video' || mt === 'audio') {
+    const decoded = decodeMediaContent(m.content);
+    if (decoded) {
+      const media: MediaAttachment = {
+        type: mt as 'image' | 'video' | 'audio',
+        uri: mediaFileURL(decoded.url),
+        durationSec:
+          mt === 'audio' || mt === 'video'
+            ? undefined
+            : undefined,
+      };
+      return {
+        ...base,
+        text: decoded.caption,
+        media,
+      };
+    }
+  }
+  return base;
 }
 
 export function formatMsgTime(iso: string): string {

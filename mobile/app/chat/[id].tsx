@@ -54,6 +54,11 @@ import { Radii, Spacing, Typography } from '@/constants/theme';
 import { dandaraReply, dandaraSuggestions } from '@/data/dandara';
 import { useGroup } from '@/data/group-store';
 import {
+  encodeMediaContent,
+  mediaFileURL,
+  uploadMedia,
+} from '@/data/api/media';
+import {
   acceptChat,
   addReaction,
   blockChat,
@@ -547,13 +552,36 @@ export default function ChatScreen() {
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       const uri = audioRecorder.uri;
       if (uri && duration >= 1) {
+        const tempId = `tmp_${Date.now()}`;
         appendMessage({
+          id: tempId,
           text: '',
           media: { type: 'audio', uri, durationSec: duration },
           replyTo: replyTarget
             ? { id: replyTarget.id, text: replySnippet(replyTarget), fromMe: replyTarget.fromMe, senderName: replyTarget.senderName, icon: replyIcon(replyTarget) }
             : undefined,
         });
+        if (id && !isAIChat) {
+          try {
+            const uploaded = await uploadMedia({
+              uri,
+              name: `voice-${Date.now()}.m4a`,
+              mimeType: 'audio/mp4',
+              durationMs: duration * 1000,
+            });
+            const body = encodeMediaContent(uploaded.url, '');
+            const dto = await apiSendMessage(id, body, 'audio');
+            const mapped = mapApiMessage(dto, meId);
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === mapped.id)) {
+                return prev.filter((m) => m.id !== tempId);
+              }
+              return prev.map((m) => (m.id === tempId ? mapped : m));
+            });
+          } catch {
+            /* keep local */
+          }
+        }
       }
     } catch {
       /* discard on failure */
@@ -897,15 +925,19 @@ export default function ChatScreen() {
     if (id && !isAIChat) apiSetTyping(id, false).catch(() => {});
   };
 
-  const addAsset = (asset: ImagePicker.ImagePickerAsset) => {
+  const addAsset = async (asset: ImagePicker.ImagePickerAsset) => {
     if (!canCompose) return;
     const caption = draft.trim();
+    const kind = asset.type === 'video' ? 'video' : 'image';
+    const localUri = asset.uri;
     const media: MediaAttachment = {
-      type: asset.type === 'video' ? 'video' : 'image',
-      uri: asset.uri,
+      type: kind,
+      uri: localUri,
       durationSec: asset.duration ? Math.round(asset.duration / 1000) : undefined,
     };
+    const tempId = `tmp_${Date.now()}`;
     appendMessage({
+      id: tempId,
       text: caption,
       media,
       replyTo: replyTarget
@@ -914,12 +946,36 @@ export default function ChatScreen() {
     });
     setDraft('');
     setReplyTarget(null);
-    if (id && !isAIChat) {
-      apiSendMessage(
-        id,
-        caption || '📎',
-        asset.type === 'video' ? 'video' : 'image',
-      ).catch(() => {});
+    if (!id || isAIChat) return;
+
+    try {
+      const uploaded = await uploadMedia({
+        uri: localUri,
+        mimeType: asset.mimeType ?? (kind === 'video' ? 'video/mp4' : 'image/jpeg'),
+        width: asset.width,
+        height: asset.height,
+        durationMs: asset.duration ? Math.round(asset.duration) : undefined,
+      });
+      const remoteUri = mediaFileURL(uploaded.url);
+      // Swap local preview for remote URL.
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId && m.media
+            ? { ...m, media: { ...m.media, uri: remoteUri } }
+            : m,
+        ),
+      );
+      const body = encodeMediaContent(uploaded.url, caption);
+      const dto = await apiSendMessage(id, body, kind);
+      const mapped = mapApiMessage(dto, meId);
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === mapped.id)) {
+          return prev.filter((m) => m.id !== tempId);
+        }
+        return prev.map((m) => (m.id === tempId ? mapped : m));
+      });
+    } catch {
+      // Keep local optimistic bubble if upload/send fails.
     }
   };
 
@@ -1028,6 +1084,20 @@ export default function ChatScreen() {
           ? `${Math.max(1, Math.round(bytes / 1024))} KB`
           : '—';
     sendAttachment({ kind: 'document', name: asset.name, ext, sizeLabel });
+    // Also upload + send as document message when online.
+    if (id && !isAIChat && asset.uri) {
+      try {
+        const uploaded = await uploadMedia({
+          uri: asset.uri,
+          name: asset.name,
+          mimeType: asset.mimeType ?? 'application/octet-stream',
+        });
+        const body = encodeMediaContent(uploaded.url, asset.name);
+        await apiSendMessage(id, body, 'document');
+      } catch {
+        /* attachment still shows locally */
+      }
+    }
   };
 
   const handleAttachPick = (key: string) => {
