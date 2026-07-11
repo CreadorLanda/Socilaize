@@ -15,15 +15,32 @@ const { Navigator } = createMaterialTopTabNavigator();
 const MaterialTopTabs = withLayoutContext(Navigator);
 
 export default function TabLayout() {
-  const { colors, isDark } = useTheme();
+  const { colors, isDark, layout } = useTheme();
   const profile = useProfile();
 
-  // Light mode keeps the confident royal-blue header. Dark mode drops it for a
-  // calm charcoal bar — a bright blue band at night is the loud part.
-  const headerBg = isDark ? colors.surface : colors.primary;
-  const headerFg = isDark ? colors.text : colors.onPrimary;
-  const headerMuted = isDark ? colors.textMuted : 'rgba(255,255,255,0.65)';
-  const indicatorColor = isDark ? colors.primary : colors.onPrimary;
+  // headerStyle from theme packs (GB-style): brand | minimal | colored
+  const headerBg =
+    layout.headerStyle === 'minimal'
+      ? colors.background
+      : layout.headerStyle === 'colored'
+        ? colors.primary
+        : isDark
+          ? colors.surface
+          : colors.primary;
+  const headerFg =
+    layout.headerStyle === 'minimal'
+      ? colors.text
+      : layout.headerStyle === 'colored' || !isDark
+        ? colors.onPrimary
+        : colors.text;
+  const headerMuted =
+    layout.headerStyle === 'minimal'
+      ? colors.textMuted
+      : layout.headerStyle === 'colored' || !isDark
+        ? 'rgba(255,255,255,0.65)'
+        : colors.textMuted;
+  const indicatorColor =
+    layout.headerStyle === 'minimal' || isDark ? colors.primary : colors.onPrimary;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: headerBg }]} edges={['top']}>

@@ -99,19 +99,62 @@ export default function ChatInfoScreen() {
             label={t('chat_info.message')}
             onPress={() => router.replace(`/chat/${chat.id}`)}
           />
+          <ActionButton
+            icon="home"
+            label={t('hangout.open_short')}
+            onPress={() => router.push(`/hangout/${chat.id}?mode=voice`)}
+          />
           {!isGroup ? (
             <>
-              <ActionButton icon="call-outline" label={t('call.voice_call')} />
-              <ActionButton icon="videocam-outline" label={t('call.video_call')} />
+              <ActionButton
+                icon="call-outline"
+                label={t('call.voice_call')}
+                onPress={() => router.push(`/call/${chat.id}?mode=voice`)}
+              />
+              <ActionButton
+                icon="videocam-outline"
+                label={t('call.video_call')}
+                onPress={() => router.push(`/call/${chat.id}?mode=video`)}
+              />
             </>
           ) : (
             <>
-              <ActionButton icon="videocam-outline" label={t('call.video_call')} />
+              <ActionButton
+                icon="videocam-outline"
+                label={t('call.video_call')}
+                onPress={() => router.push(`/hangout/${chat.id}?mode=video`)}
+              />
               <ActionButton icon="person-add-outline" label={t('chat_info.add')} />
             </>
           )}
-          <ActionButton icon="search" label={t('chat_info.search')} />
         </View>
+
+        {/* Houseparty-style hangout entry */}
+        <Section colors={colors}>
+          <Row
+            icon="home-outline"
+            label={t('hangout.open')}
+            subtitle={t('hangout.open_hint')}
+            colors={colors}
+            onPress={() => router.push(`/hangout/${chat.id}?mode=voice`)}
+          />
+          <Divider colors={colors} />
+          <Row
+            icon="game-controller-outline"
+            label={t('hangout.games')}
+            subtitle={t('hangout.games_hint')}
+            colors={colors}
+            onPress={() => router.push(`/hangout/${chat.id}?mode=voice&game=trivia`)}
+          />
+          <Divider colors={colors} />
+          <Row
+            icon="radio-outline"
+            label={t('hangout.mode_live')}
+            subtitle={t('hangout.live_hint')}
+            colors={colors}
+            onPress={() => router.push(`/hangout/${chat.id}?mode=live`)}
+          />
+        </Section>
 
         {/* 1:1 add to lists / notes */}
         {!isGroup ? (
@@ -395,6 +438,7 @@ function Row({
   value,
   destructive,
   colors,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   iconColor?: string;
@@ -403,10 +447,11 @@ function Row({
   value?: string;
   destructive?: boolean;
   colors: Colors;
+  onPress?: () => void;
 }) {
   const textColor = destructive ? colors.danger : colors.text;
-  return (
-    <View style={styles.row}>
+  const content = (
+    <>
       <Ionicons name={icon} size={20} color={iconColor ?? textColor} />
       <View style={styles.rowText}>
         <Text style={[styles.rowLabel, { color: textColor }]}>{label}</Text>
@@ -418,9 +463,19 @@ function Row({
       </View>
       {value ? (
         <Text style={[styles.rowValue, { color: colors.textSecondary }]}>{value}</Text>
+      ) : onPress ? (
+        <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
       ) : null}
-    </View>
+    </>
   );
+  if (onPress) {
+    return (
+      <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}>
+        {content}
+      </Pressable>
+    );
+  }
+  return <View style={styles.row}>{content}</View>;
 }
 
 function RowToggle({

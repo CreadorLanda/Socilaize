@@ -8,8 +8,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { formatCount } from '@/components/ui/follow-button';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { toggleFollow, useIsFollowing } from '@/data/channel-store';
-import { CHANNELS } from '@/data/mock';
+import {
+  canManage,
+  toggleFollow,
+  useChannel,
+  useIsFollowing,
+} from '@/data/channel-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -17,9 +21,10 @@ const DESCRIPTION_PREVIEW_LIMIT = 110;
 
 export default function ChannelInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const channel = useMemo(() => CHANNELS.find((c) => c.id === id), [id]);
+  const channel = useChannel(id);
   const { colors, isDark } = useTheme();
   const isFollowing = useIsFollowing(channel?.id ?? id ?? '');
+  const manage = canManage(channel);
   const [muted, setMuted] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -64,47 +69,132 @@ export default function ChannelInfoScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <View style={{ flex: 1 }} />
-        <Pressable hitSlop={12} style={styles.iconBtn}>
-          <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
-        </Pressable>
+        {manage ? (
+          <Pressable
+            hitSlop={12}
+            style={styles.iconBtn}
+            onPress={() => router.push(`/channel/settings/${channel.id}`)}
+            accessibilityLabel={t('channel_settings.title')}
+          >
+            <Ionicons name="settings-outline" size={22} color={colors.text} />
+          </Pressable>
+        ) : (
+          <Pressable hitSlop={12} style={styles.iconBtn}>
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.text} />
+          </Pressable>
+        )}
       </View>
 
       <ScrollView
         contentContainerStyle={styles.body}
         showsVerticalScrollIndicator={false}
       >
-        {/* Identity */}
-        <View style={styles.identity}>
+        {/* Cover + identity */}
+        <View style={styles.heroWrap}>
           <Image
-            source={{ uri: channel.avatarUri }}
-            style={[styles.avatar, { backgroundColor: colors.surfaceMuted }]}
+            source={{ uri: channel.coverUri }}
+            style={styles.cover}
             contentFit="cover"
           />
-          <View style={styles.identityNameRow}>
-            <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
-              {channel.name}
+          <View style={styles.coverScrim} />
+          <View style={styles.identity}>
+            <Image
+              source={{ uri: channel.avatarUri }}
+              style={[styles.avatar, { borderColor: colors.background }]}
+              contentFit="cover"
+            />
+            <View style={styles.identityNameRow}>
+              <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
+                {channel.name}
+              </Text>
+              {channel.verified ? (
+                <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+              ) : null}
+            </View>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+              {t('channel_info.subtitle', { count: formatCount(channel.members) })}
             </Text>
-            {channel.verified ? (
-              <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-            ) : null}
+            <Text style={[styles.handleLine, { color: colors.textMuted }]}>
+              {channel.handle} · {t(`discover.cat_${channel.category}`)}
+            </Text>
           </View>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {t('channel_info.subtitle', { count: formatCount(channel.members) })}
-          </Text>
         </View>
 
         {/* Action buttons */}
         <View style={styles.actions}>
-          <ActionButton
-            icon={isFollowing ? 'checkmark' : 'add'}
-            label={isFollowing ? t('channel_info.following') : t('channel_info.follow')}
-            active={isFollowing}
-            onPress={handleFollow}
-          />
+          {manage ? (
+            <ActionButton
+              icon="settings-outline"
+              label={t('channel_settings.manage')}
+              active
+              onPress={() => router.push(`/channel/settings/${channel.id}`)}
+            />
+          ) : (
+            <ActionButton
+              icon={isFollowing ? 'checkmark' : 'add'}
+              label={isFollowing ? t('channel_info.following') : t('channel_info.follow')}
+              active={isFollowing}
+              onPress={handleFollow}
+            />
+          )}
           <ActionButton icon="arrow-redo-outline" label={t('channel_info.forward')} />
           <ActionButton icon="share-social-outline" label={t('channel_info.share')} />
           <ActionButton icon="search" label={t('channel_info.search')} />
         </View>
+
+        {/* Permissions summary for owners / public badge for others */}
+        {channel.settings ? (
+          <View
+            style={[
+              styles.permCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <Text style={[styles.permTitle, { color: colors.textSecondary }]}>
+              {t('channel_settings.section_permissions')}
+            </Text>
+            <PermRow
+              icon={channel.settings.visibility === 'public' ? 'globe-outline' : 'lock-closed-outline'}
+              label={
+                channel.settings.visibility === 'public'
+                  ? t('channel_create.vis_public')
+                  : t('channel_create.vis_private')
+              }
+              colors={colors}
+            />
+            <PermRow
+              icon="create-outline"
+              label={
+                channel.settings.whoCanPost === 'admins'
+                  ? t('channel_create.post_admins')
+                  : channel.settings.whoCanPost === 'publishers'
+                    ? t('channel_create.post_publishers')
+                    : t('channel_create.post_everyone')
+              }
+              colors={colors}
+            />
+            <PermRow
+              icon="chatbubbles-outline"
+              label={
+                channel.settings.commentsEnabled
+                  ? t('channel_create.comments')
+                  : t('channel_settings.comments_off')
+              }
+              colors={colors}
+            />
+            {manage ? (
+              <Pressable
+                onPress={() => router.push(`/channel/settings/${channel.id}`)}
+                style={[styles.editPerms, { borderColor: colors.primary }]}
+              >
+                <Ionicons name="shield-checkmark-outline" size={16} color={colors.primary} />
+                <Text style={[styles.editPermsText, { color: colors.primary }]}>
+                  {t('channel_settings.edit_permissions')}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Description */}
         {description ? (
@@ -309,6 +399,23 @@ function RowToggle({
   );
 }
 
+function PermRow({
+  icon,
+  label,
+  colors,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  colors: Colors;
+}) {
+  return (
+    <View style={styles.permRow}>
+      <Ionicons name={icon} size={16} color={colors.textSecondary} />
+      <Text style={[styles.permLabel, { color: colors.text }]}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   fallback: { ...Typography.body, padding: Spacing.xl },
@@ -333,17 +440,35 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xl,
     gap: Spacing.md,
   },
-
-  identity: { alignItems: 'center', paddingVertical: Spacing.lg, gap: 6 },
-  avatar: { width: 132, height: 132, borderRadius: Radii.pill },
+  heroWrap: { marginHorizontal: -Spacing.lg, marginTop: -Spacing.sm, marginBottom: Spacing.sm },
+  cover: { width: '100%', height: 160, backgroundColor: '#1F2937' },
+  coverScrim: {
+    ...StyleSheet.absoluteFillObject,
+    height: 160,
+    backgroundColor: 'rgba(11,16,32,0.25)',
+  },
+  identity: {
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    marginTop: -56,
+    gap: 4,
+  },
+  avatar: {
+    width: 112,
+    height: 112,
+    borderRadius: Radii.pill,
+    borderWidth: 4,
+    backgroundColor: '#1F2937',
+  },
   identityNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
-    marginTop: Spacing.md,
+    marginTop: Spacing.sm,
   },
   name: { ...Typography.h2, fontSize: 22, textAlign: 'center', maxWidth: '85%' },
   subtitle: { ...Typography.body, textAlign: 'center' },
+  handleLine: { ...Typography.caption, textAlign: 'center', marginTop: 2 },
 
   actions: { flexDirection: 'row', gap: Spacing.sm },
   actionBtn: {
@@ -392,4 +517,29 @@ const styles = StyleSheet.create({
   rowLabel: { ...Typography.body, fontSize: 15 },
   rowSub: { ...Typography.caption, lineHeight: 18 },
   ruleDot: { width: 6, height: 6, borderRadius: Radii.pill, marginLeft: 4 },
+  permCard: {
+    borderRadius: Radii.lg,
+    borderWidth: 1,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  permTitle: {
+    ...Typography.micro,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  permRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  permLabel: { ...Typography.caption, flex: 1 },
+  editPerms: {
+    marginTop: Spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radii.pill,
+    borderWidth: 1.5,
+  },
+  editPermsText: { ...Typography.caption, fontWeight: '700' },
 });

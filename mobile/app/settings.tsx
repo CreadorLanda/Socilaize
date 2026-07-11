@@ -10,17 +10,25 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { clearSession } from '@/data/auth-store';
 import { useProfile } from '@/data/profile-store';
+import {
+  getActivePack,
+  setSchemePreference,
+  type SchemePreference,
+  useActiveThemeId,
+} from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
 type Visibility = 'everyone' | 'contacts' | 'nobody';
-type ThemeChoice = 'system' | 'light' | 'dark';
 
 const APP_VERSION = '1.0.0';
 
 export default function SettingsScreen() {
-  const { colors, isDark } = useTheme();
+  const { colors, isDark, schemePreference } = useTheme();
   const profile = useProfile();
+  // Subscribe so the marketplace row refreshes when a pack is applied.
+  useActiveThemeId();
+  const activePack = getActivePack();
 
   // UI state — local only; persistence is out of scope for this screen.
   const [lastSeen, setLastSeen] = useState<Visibility>('everyone');
@@ -29,7 +37,6 @@ export default function SettingsScreen() {
   const [notifMessages, setNotifMessages] = useState(true);
   const [notifGroups, setNotifGroups] = useState(true);
   const [notifCalls, setNotifCalls] = useState(false);
-  const [theme, setTheme] = useState<ThemeChoice>('system');
 
   const visibilityLabel = (v: Visibility) =>
     v === 'everyone'
@@ -204,15 +211,14 @@ export default function SettingsScreen() {
           <Row
             icon="contrast-outline"
             label={t('settings.theme')}
-            last
             below={
               <View style={[styles.segment, { backgroundColor: colors.surfaceMuted }]}>
-                {(['system', 'light', 'dark'] as const).map((choice) => {
-                  const active = theme === choice;
+                {(['system', 'light', 'dark'] as SchemePreference[]).map((choice) => {
+                  const active = schemePreference === choice;
                   return (
                     <Pressable
                       key={choice}
-                      onPress={() => setTheme(choice)}
+                      onPress={() => setSchemePreference(choice)}
                       style={[
                         styles.segmentItem,
                         active && {
@@ -236,6 +242,28 @@ export default function SettingsScreen() {
                 })}
               </View>
             }
+          />
+          <Row
+            icon="color-palette-outline"
+            label={t('settings.theme_marketplace')}
+            value={activePack?.name ?? t('settings.theme_default')}
+            onPress={() => router.push('/themes')}
+          />
+          <Row
+            icon="brush-outline"
+            label={t('settings.theme_customize')}
+            value={t('settings.theme_customize_hint')}
+            onPress={() => {
+              const id = activePack?.id;
+              if (id && activePack?.isOwned) {
+                router.push({ pathname: '/themes/create', params: { edit: id } });
+              } else if (id) {
+                router.push({ pathname: '/themes/create', params: { fork: id } });
+              } else {
+                router.push('/themes/create');
+              }
+            }}
+            last
           />
         </Group>
 

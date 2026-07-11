@@ -7,18 +7,15 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
-import { Colors } from '@/constants/theme';
 import { bootstrapAuth } from '@/data/auth-store';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTheme } from '@/hooks/use-theme';
 
 export const unstable_settings = {
   anchor: 'onboarding',
 };
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
-  const palette = Colors[isDark ? 'dark' : 'light'];
+  const { colors: palette, isDark } = useTheme();
   // Restore the persisted session before the first navigation. We always
   // render the Stack (so the navigator is mounted and router.replace works),
   // but cover it with a splash backstop until boot resolves — this hides the
@@ -40,6 +37,7 @@ export default function RootLayout() {
   // Bind the navigation theme to the app palette so every scene's container is
   // an opaque app colour. The default RN themes paint scenes white/black, which
   // is exactly the flash that shows between screens during a transition.
+  // Marketplace packs flow through useTheme so transitions stay on-pack.
   const base = isDark ? DarkTheme : DefaultTheme;
   const navTheme: Theme = {
     ...base,
@@ -75,6 +73,15 @@ export default function RootLayout() {
             <Stack.Screen name="chat-info/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel-info/[id]" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="channel/create"
+              options={{
+                headerShown: false,
+                presentation: 'modal',
+                animation: 'slide_from_bottom',
+              }}
+            />
+            <Stack.Screen name="channel/settings/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="search" options={{ headerShown: false, presentation: 'modal' }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
@@ -102,6 +109,24 @@ export default function RootLayout() {
                 headerShown: false,
                 presentation: 'fullScreenModal',
                 contentStyle: { backgroundColor: '#050609' },
+              }}
+            />
+            <Stack.Screen
+              name="hangout/[id]"
+              options={{
+                headerShown: false,
+                presentation: 'fullScreenModal',
+                animation: 'slide_from_bottom',
+                contentStyle: { backgroundColor: '#0B0C10' },
+              }}
+            />
+            <Stack.Screen name="themes/index" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="themes/create"
+              options={{
+                headerShown: false,
+                presentation: 'modal',
+                animation: 'slide_from_bottom',
               }}
             />
             <Stack.Screen name="modal" options={{ presentation: 'modal', headerShown: false }} />
