@@ -23,6 +23,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/bridges/whatsapp"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/groups"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/media"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
@@ -107,6 +108,11 @@ func New(cfg config.Config) (*Server, error) {
 	mediaCtl := media.NewController(mediaSvc)
 	media.Register(authed, mediaCtl)
 	media.RegisterPublic(api, mediaCtl)
+
+	// Group chats (roles + history settings on chats type=group).
+	groupsRepo := groups.NewRepository(pg)
+	groupsCtl := groups.NewController(groups.NewService(groupsRepo))
+	groups.Register(authed, groupsCtl)
 
 	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
 	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)

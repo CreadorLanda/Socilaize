@@ -52,7 +52,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { dandaraReply, dandaraSuggestions } from '@/data/dandara';
-import { useGroup } from '@/data/group-store';
+import { refreshGroup, useGroup } from '@/data/group-store';
 import {
   encodeMediaContent,
   mediaFileURL,
@@ -394,8 +394,12 @@ export default function ChatScreen() {
     return () => clearTimeout(tId);
   }, [messages.length, dandaraTyping, peerTyping, searchMode]);
 
-  const isGroup = !!chat?.isGroup;
+  const isGroup = !!chat?.isGroup || apiChatInfo?.type === 'group';
   const isAIChat = !!chat?.isAI;
+
+  useEffect(() => {
+    if (isGroup && id) refreshGroup(id).catch(() => {});
+  }, [isGroup, id]);
   const isWAChat = chat?.source === 'whatsapp';
   const isPending = apiChatInfo?.status === 'pending';
   const isBlocked = apiChatInfo?.status === 'blocked';
