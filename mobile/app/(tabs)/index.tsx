@@ -9,27 +9,36 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TabScene } from '@/components/ui/tab-scene';
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { listChats, type ChatDTO } from '@/data/api/messages';
 import {
   addCustomFilter,
   removeCustomFilter,
   useCustomFilters,
   type CustomFilter,
 } from '@/data/filter-store';
-import { CHATS, STORIES, type ChatPreview, type Story } from '@/data/mock';
+import type { ChatPreview } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
-const BUILTIN_IDS = ['all', 'unread', 'read', 'groups'];
+const BUILTIN_IDS = ['all', 'unread', 'read', 'groups', 'pending'];
 
 export default function ChatsScreen() {
   const { colors } = useTheme();
-  const me = STORIES.find((s) => s.isOwn);
-  const others = STORIES.filter((s) => !s.isOwn);
   const customFilters = useCustomFilters();
 
   const [activeFilter, setActiveFilter] = useState('all');
   const [showCreate, setShowCreate] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CustomFilter | null>(null);
+  const [apiChats, setApiChats] = useState<ChatDTO[]>([]);
+  const [apiLoaded, setApiLoaded] = useState(false);
+
+  // Fetch real chats from the API.
+  useEffect(() => {
+    listChats()
+      .then(setApiChats)
+      .catch(() => { /* API not available — empty list */ })
+      .finally(() => setApiLoaded(true));
+  }, []);
 
   // Drop back to "All" if the active custom filter gets removed.
   useEffect(() => {
@@ -38,14 +47,30 @@ export default function ChatsScreen() {
     }
   }, [customFilters, activeFilter]);
 
+  // Map API chats to the local ChatPreview type.
   const chats = useMemo(() => {
-    if (activeFilter === 'unread') return CHATS.filter((c) => c.unreadCount > 0);
-    if (activeFilter === 'read') return CHATS.filter((c) => c.unreadCount === 0);
-    if (activeFilter === 'groups') return CHATS.filter((c) => c.isGroup);
+    if (!apiLoaded) return [] as ChatPreview[];
+    const combined: ChatPreview[] = apiChats.map((c) => ({
+      id: c.id,
+      name: c.title ?? 'Unknown',
+      username: '',
+      avatarUri: c.avatar_url ?? '',
+      lastMessage: c.last_message?.content ?? '',
+      timestamp: c.last_message ? new Date(c.last_message.created_at).toLocaleTimeString() : '',
+      unreadCount: c.unread_count,
+      online: false,
+      source: 'native' as const,
+      isPending: c.status === 'pending',
+    }));
+
+    if (activeFilter === 'pending') return combined.filter((c) => c.isPending);
+    if (activeFilter === 'unread') return combined.filter((c) => c.unreadCount > 0);
+    if (activeFilter === 'read') return combined.filter((c) => c.unreadCount === 0);
+    if (activeFilter === 'groups') return combined.filter((c) => c.isGroup);
     const custom = customFilters.find((f) => f.id === activeFilter);
-    if (custom) return CHATS.filter((c) => custom.chatIds.includes(c.id));
-    return CHATS;
-  }, [activeFilter, customFilters]);
+    if (custom) return combined.filter((c) => custom.chatIds.includes(c.id));
+    return combined;
+  }, [activeFilter, customFilters, apiChats, apiLoaded]);
 
   const handleSaveFilter = (name: string, chatIds: string[]) => {
     const id = addCustomFilter(name, chatIds);
@@ -66,7 +91,6 @@ export default function ChatsScreen() {
           keyExtractor={(item) => item.id}
           ListHeaderComponent={
             <>
-              <StoryStrip me={me} others={others} />
               <FilterBar
                 active={activeFilter}
                 custom={customFilters}
@@ -91,7 +115,7 @@ export default function ChatsScreen() {
         />
 
         <Pressable
-          onPress={() => {}}
+          onPress={() => router.push('/search')}
           style={({ pressed }) => [
             styles.fab,
             { backgroundColor: colors.primary, shadowColor: colors.primary },
@@ -106,6 +130,7 @@ export default function ChatsScreen() {
 
       <CreateFilterSheet
         visible={showCreate}
+        chats={apiChats}
         onClose={() => setShowCreate(false)}
         onSave={handleSaveFilter}
       />
@@ -115,53 +140,6 @@ export default function ChatsScreen() {
         onConfirm={handleConfirmDelete}
       />
     </TabScene>
-  );
-}
-
-function StoryStrip({ me, others }: { me?: Story; others: Story[] }) {
-  const { colors } = useTheme();
-  return (
-    <View style={[styles.stripWrap, { backgroundColor: colors.background, borderBottomColor: colors.divider }]}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.strip}
-      >
-        {me ? (
-          <Pressable style={styles.storyItem} accessibilityRole="button">
-            <View style={[styles.storyRing, { backgroundColor: colors.surfaceMuted }]}>
-              <View style={[styles.storyInner, { backgroundColor: colors.background }]}>
-                <Image source={{ uri: me.avatarUri }} style={styles.storyAvatar} contentFit="cover" />
-              </View>
-              <View style={[styles.storyAddBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
-                <Ionicons name="add" size={14} color={colors.onPrimary} />
-              </View>
-            </View>
-            <Text style={[styles.storyLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-              {t('chats.your_story')}
-            </Text>
-          </Pressable>
-        ) : null}
-
-        {others.map((s) => (
-          <Pressable key={s.id} style={styles.storyItem} accessibilityRole="button">
-            <View
-              style={[
-                styles.storyRing,
-                { backgroundColor: s.isViewed ? colors.border : colors.primary },
-              ]}
-            >
-              <View style={[styles.storyInner, { backgroundColor: colors.background }]}>
-                <Image source={{ uri: s.avatarUri }} style={styles.storyAvatar} contentFit="cover" />
-              </View>
-            </View>
-            <Text style={[styles.storyLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-              {s.user}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-    </View>
   );
 }
 
@@ -185,6 +163,7 @@ function FilterBar({
     { id: 'unread', label: t('chats.filter_unread') },
     { id: 'read', label: t('chats.filter_read') },
     { id: 'groups', label: t('chats.filter_groups') },
+    { id: 'pending', label: t('chats.filter_pending') },
   ];
 
   return (
@@ -268,10 +247,12 @@ function FilterChip({
 // ── Create-filter sheet ───────────────────────────────────────────────────────
 function CreateFilterSheet({
   visible,
+  chats,
   onClose,
   onSave,
 }: {
   visible: boolean;
+  chats: ChatDTO[];
   onClose: () => void;
   onSave: (name: string, chatIds: string[]) => void;
 }) {
@@ -334,7 +315,7 @@ function CreateFilterSheet({
             </Text>
 
             <ScrollView style={styles.chatSelectScroll} showsVerticalScrollIndicator={false}>
-              {CHATS.map((chat) => {
+              {chats.map((chat) => {
                 const on = selected.has(chat.id);
                 return (
                   <Pressable
@@ -342,13 +323,11 @@ function CreateFilterSheet({
                     onPress={() => toggle(chat.id)}
                     style={({ pressed }) => [styles.selectRow, pressed && { backgroundColor: colors.surfaceMuted }]}
                   >
-                    <Image
-                      source={{ uri: chat.avatarUri }}
-                      style={[styles.selectAvatar, { backgroundColor: colors.surfaceMuted }]}
-                      contentFit="cover"
-                    />
+                    <View style={[styles.selectAvatar, { backgroundColor: colors.surfaceMuted }]}>
+                      <Ionicons name="person" size={20} color={colors.textMuted} />
+                    </View>
                     <Text style={[styles.selectName, { color: colors.text }]} numberOfLines={1}>
-                      {chat.name}
+                      {chat.title ?? 'Chat'}
                     </Text>
                     <View
                       style={[
@@ -473,6 +452,11 @@ function ChatRow({ chat }: { chat: ChatPreview }) {
               { backgroundColor: colors.success, borderColor: colors.background },
             ]}
           />
+        ) : null}
+        {chat.isPending ? (
+          <View style={[styles.groupBadge, { backgroundColor: colors.warning, borderColor: colors.background }]}>
+            <Ionicons name="person-add" size={10} color="#FFFFFF" />
+          </View>
         ) : null}
       </View>
 
@@ -602,56 +586,6 @@ const styles = StyleSheet.create({
   separator: {
     height: 1,
     marginLeft: Spacing.lg + AVATAR + Spacing.md,
-  },
-
-  stripWrap: {
-    borderBottomWidth: 1,
-  },
-  strip: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    gap: Spacing.md,
-  },
-  storyItem: {
-    alignItems: 'center',
-    width: STORY + 16,
-    gap: Spacing.xs,
-  },
-  storyRing: {
-    width: STORY + 6,
-    height: STORY + 6,
-    borderRadius: Radii.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 2.5,
-  },
-  storyInner: {
-    width: STORY,
-    height: STORY,
-    borderRadius: Radii.pill,
-    overflow: 'hidden',
-    padding: 2,
-  },
-  storyAvatar: {
-    width: '100%',
-    height: '100%',
-    borderRadius: Radii.pill,
-  },
-  storyAddBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    width: 22,
-    height: 22,
-    borderRadius: Radii.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2.5,
-  },
-  storyLabel: {
-    ...Typography.micro,
-    maxWidth: STORY + 12,
-    textAlign: 'center',
   },
 
   // ── Filter chips ─────────────────────────────────────────────────────────────

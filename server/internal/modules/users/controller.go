@@ -60,6 +60,23 @@ func (c *Controller) GetAvailability(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, res)
 }
 
+func (c *Controller) GetSearch(ctx *gin.Context) {
+	q := ctx.Query("q")
+	if q == "" || len(q) < 2 {
+		ctx.JSON(http.StatusOK, []User{})
+		return
+	}
+	users, err := c.svc.Search(ctx.Request.Context(), middleware.UserIDFrom(ctx), q)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	if users == nil {
+		users = []User{}
+	}
+	ctx.JSON(http.StatusOK, users)
+}
+
 func (c *Controller) GetByUsername(ctx *gin.Context) {
 	u, err := c.svc.ByUsername(
 		ctx.Request.Context(),

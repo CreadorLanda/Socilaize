@@ -23,3 +23,6 @@ export const checkAvailability = (username: string) =>
 
 export const userByUsername = (username: string) =>
   api.get<ApiUser>(`/api/users/by-username/${encodeURIComponent(username)}`);
+
+export const searchUsers = (q: string) =>
+  api.get<ApiUser[]>(`/api/users/search?q=${encodeURIComponent(q)}`);

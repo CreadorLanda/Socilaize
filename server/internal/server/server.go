@@ -5,7 +5,13 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,19 +23,23 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/bridges/whatsapp"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 	rdplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/redis"
 )
 
-// Server is the running API process — owns the router and the platform
+// Server is the running API process — owns the routers and the platform
 // connections, so shutdown can close everything in one place.
 type Server struct {
-	cfg    config.Config
-	router http.Handler
-	pg     *pgxpool.Pool
-	rdb    *redis.Client
-	wa     *whatsapp.Manager
+	cfg          config.Config
+	router       http.Handler
+	pg           *pgxpool.Pool
+	rdb          *redis.Client
+	wa           *whatsapp.Manager
+	pubSrv       *http.Server
+	internalSrv  *http.Server // mTLS-protected, nil when disabled
+	errCh        chan error
 }
 
 // New constructs the Server: opens the platform connections, builds each
@@ -73,33 +83,87 @@ func New(cfg config.Config) (*Server, error) {
 	usersCtl := users.NewController(users.NewService(usersRepo))
 	users.Register(authed, usersCtl)
 
-	// Pre-key bundles for X3DH. Reuses the users repository to resolve
-	// /by-username/:handle lookups.
-	keysCtl := keys.NewController(keys.NewService(keys.NewRepository(pg), usersRepo))
+	keysRepo := keys.NewRepository(pg)
+	keysSvc := keys.NewService(keysRepo, usersRepo)
+	keysCtl := keys.NewController(keysSvc)
 	keys.Register(authed, keysCtl)
 
-	// WhatsApp bridge — thin HTTP client to the Baileys sidecar. The
-	// sidecar (server/wa-bridge) owns the WhatsApp WebSocket and creds;
-	// we only orchestrate from Go. Webhook events flow back via the
-	// internal route below, guarded by the shared internal token.
-	waRepo := whatsapp.NewRepository(pg)
+	// Native E2E-encrypted messaging.
+	msgRepo := messages.NewRepository(pg, cfg.Crypto.MessageKey)
+	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo)
+	msgCtl := messages.NewController(msgSvc)
+	messages.Register(authed, msgCtl)
+
+	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
+	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)
 	waMgr := whatsapp.NewManager(cfg.WA.BridgeURL, cfg.WA.InternalToken)
 	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr))
 	whatsapp.Register(authed, waCtl)
 
-	// Inbound bridge webhook. Mounted OUTSIDE the authed group because it
-	// uses its own Bearer-token check against the shared internal token,
-	// not the user-facing JWT auth.
+	// Inbound bridge webhook. Uses its own Bearer-token check against the
+	// shared internal token, not the user-facing JWT auth.
 	waWebhook := whatsapp.NewWebhookController(waRepo, cfg.WA.InternalToken)
 	api.POST("/internal/wa/events", waWebhook.PostEvent)
 
-	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr}, nil
+	// ── Internal mTLS server ──────────────────────────────────────────────
+	// A second HTTPS listener that requires a valid client certificate
+	// signed by our CA. Used exclusively by the wa-bridge sidecar so the
+	// webhook is not accessible over plain TCP.
+	//
+	// Only starts when WA_INTERNAL_ADDR and all TLS cert paths are set.
+	var internalSrv *http.Server
+	if cfg.WA.InternalAddr != "" &&
+		cfg.WA.TLSCACert != "" &&
+		cfg.WA.TLSCert != "" &&
+		cfg.WA.TLSKey != "" {
+		internalSrv, err = newInternalServer(cfg, r)
+		if err != nil {
+			pg.Close()
+			return nil, fmt.Errorf("internal server: %w", err)
+		}
+	}
+
+	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr, internalSrv: internalSrv, errCh: make(chan error, 2)}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.router }
 
-// Close releases platform connections. Safe to call after Shutdown.
+// ListenAndServe starts all listeners in the background.
+// Returns immediately. Errors are sent to s.errCh.
+func (s *Server) ListenAndServe() {
+	s.pubSrv = &http.Server{
+		Addr:              s.cfg.HTTP.Addr,
+		Handler:           s.router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		err := s.pubSrv.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.errCh <- err
+		}
+	}()
+
+	if s.internalSrv != nil {
+		go func() {
+			if err := s.internalSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.errCh <- err
+			}
+		}()
+	}
+}
+
+// Err returns a channel that receives the first listener error.
+func (s *Server) Err() <-chan error { return s.errCh }
+
+// Close releases platform connections and stops all listeners.
+// Safe to call multiple times.
 func (s *Server) Close() {
+	if s.pubSrv != nil {
+		_ = s.pubSrv.Close()
+	}
+	if s.internalSrv != nil {
+		_ = s.internalSrv.Close()
+	}
 	if s.wa != nil {
 		s.wa.Close()
 	}
@@ -109,4 +173,36 @@ func (s *Server) Close() {
 	if s.pg != nil {
 		s.pg.Close()
 	}
+}
+
+// newInternalServer creates an HTTPS server with mandatory client cert
+// verification for the bridge webhook.
+func newInternalServer(cfg config.Config, handler http.Handler) (*http.Server, error) {
+	caPEM, err := os.ReadFile(cfg.WA.TLSCACert)
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert: %w", err)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("no CA certs appended (empty or invalid PEM)")
+	}
+
+	cert, err := tls.LoadX509KeyPair(cfg.WA.TLSCert, cfg.WA.TLSKey)
+	if err != nil {
+		return nil, fmt.Errorf("load server cert: %w", err)
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    caPool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+	}
+
+	return &http.Server{
+		Addr:              cfg.WA.InternalAddr,
+		Handler:           handler,
+		TLSConfig:         tlsCfg,
+		ReadHeaderTimeout: 10 * time.Second,
+	}, nil
 }

@@ -9,13 +9,13 @@ import (
 // User is the public-facing shape of a user account. Anything the API
 // returns lives here; persistence-only fields stay in the repository.
 type User struct {
-	ID              uuid.UUID `json:"id"`
-	Username        string    `json:"username"`
-	DisplayName     string    `json:"display_name"`
-	Bio             string    `json:"bio,omitempty"`
-	AvatarURI       string    `json:"avatar_uri,omitempty"`
-	UsernamePublic  bool      `json:"username_public"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID             uuid.UUID `json:"id"`
+	Username       string    `json:"username"`
+	DisplayName    string    `json:"display_name"`
+	Bio            string    `json:"bio,omitempty"`
+	AvatarURI      string    `json:"avatar_uri,omitempty"`
+	UsernamePublic bool      `json:"username_public"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // PatchRequest is the body of PATCH /users/me. Pointer fields mean "only

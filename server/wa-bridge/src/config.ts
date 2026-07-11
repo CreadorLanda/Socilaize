@@ -1,7 +1,4 @@
-/**
- * Single source of truth for env config. Fail fast if anything required is
- * missing — the sidecar must not start in a half-configured state.
- */
+import { existsSync, readFileSync } from 'node:fs';
 
 function require_(name: string): string {
   const v = process.env[name];
@@ -11,21 +8,33 @@ function require_(name: string): string {
   return v;
 }
 
+// Load a PEM file from disk. Returns undefined if the path is empty or the
+// file doesn't exist (dev fallback for mTLS).
+function readPEM(path: string | undefined): Buffer | undefined {
+  if (!path || !existsSync(path)) return undefined;
+  return readFileSync(path);
+}
+
 export const config = {
-  // Where the HTTP server listens. Inside docker-compose this is reached as
-  // http://wa-bridge:3001 from the Go service; in dev as localhost:3001.
   port: parseInt(process.env.PORT ?? '3001', 10),
 
-  // Where to POST events (pair success, logged out, etc.) back to the Go API.
+  // Where to POST events back to the Go API. In dev with mTLS this is
+  // the internal HTTPS port (e.g. https://host.docker.internal:9090/…).
   webhookUrl: require_('SOCIALIZE_WEBHOOK_URL'),
 
-  // Shared secret. Both sides check it. Mint with `openssl rand -hex 32`.
   internalToken: require_('SOCIALIZE_INTERNAL_TOKEN'),
 
-  // Where Baileys persists per-user auth state. One subdir per user_id.
   authRoot: process.env.WA_AUTH_ROOT ?? './auth_info',
 
-  // Browser identity tuple sent to WhatsApp. Baileys recommends a real-
-  // looking triple so the server treats us like Chrome instead of bot.
   browser: ['Socialize', 'Chrome', '120.0.0'] as [string, string, string],
+
+  // ── mTLS client cert for webhook calls ──────────────────────────────────
+  // When set, the bridge authenticates to the Go API with these credentials.
+  // The CA cert is required to verify the server; the client cert+key are
+  // required by the server's RequireAndVerifyClientCert setting.
+  tls: {
+    ca:     readPEM(process.env.TLS_CA_CERT),
+    cert:   readPEM(process.env.TLS_CLIENT_CERT),
+    key:    readPEM(process.env.TLS_CLIENT_KEY),
+  },
 };

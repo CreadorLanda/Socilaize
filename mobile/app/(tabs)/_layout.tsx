@@ -54,7 +54,7 @@ export default function TabLayout() {
           <Text style={[styles.brand, { color: headerFg }]}>Socialize</Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable hitSlop={8} style={styles.iconBtn} accessibilityLabel={t('common.search')}>
+          <Pressable hitSlop={8} style={styles.iconBtn} onPress={() => router.push('/search')} accessibilityLabel={t('common.search')}>
             <Ionicons name="search" size={22} color={headerFg} />
           </Pressable>
           <Pressable

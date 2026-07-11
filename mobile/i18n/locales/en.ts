@@ -11,6 +11,7 @@ export default {
     camera: 'Camera',
     search: 'Search',
     more: 'More',
+    cancel: 'Cancel',
   },
   auth: {
     step_counter: 'Step {{step}} of {{total}}',
@@ -115,6 +116,7 @@ export default {
     filter_unread: 'Unread',
     filter_read: 'Read',
     filter_groups: 'Groups',
+    filter_pending: 'Requests',
     filter_create_title: 'New filter',
     filter_name_placeholder: 'Filter name',
     filter_select_chats: 'Pick chats',
@@ -124,6 +126,19 @@ export default {
     filter_delete_title: 'Remove filter?',
     filter_delete: 'Remove',
     filter_cancel: 'Cancel',
+  },
+  search: {
+    type_to_search: 'Type at least 2 characters to search…',
+    no_results: 'No users found. Try a different name.',
+  },
+  friend_request: {
+    sent_waiting: 'Friend request sent. Waiting for acceptance.',
+    pending_for_you: 'Incoming friend request',
+    waiting_placeholder: 'Waiting for acceptance…',
+    introduce_placeholder: 'Say hi with one message…',
+    accept: 'Accept',
+    decline: 'Decline',
+    declined: 'Request declined',
   },
   discover: {
     title: 'Discover',
@@ -462,6 +477,7 @@ export default {
     section_help: 'Help',
     section_about: 'About',
     phone: 'Phone number',
+    phone_hidden: 'Hidden (verified)',
     email: 'Email address',
     email_empty: 'Add email',
     delete_account: 'Delete account',

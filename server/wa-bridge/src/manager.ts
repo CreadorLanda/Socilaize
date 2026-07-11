@@ -6,6 +6,7 @@ import baileysPkg, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
+  type WAMessageKey,
   type WASocket,
 } from '@whiskeysockets/baileys';
 
@@ -142,6 +143,55 @@ export async function startPairing(userID: string, phone: string): Promise<Pairi
     }
   });
 
+  // ── Incoming messages ────────────────────────────────────────────────────
+  // Relay incoming WhatsApp messages to the Go API. We only forward
+  // real-time notifications (type === 'notify'), skip our own outgoing
+  // messages, and classify the content safely.
+  //
+  // Security: content is never logged; message IDs and JIDs are logged at
+  // debug only. The Go side validates JID format and caps content length.
+  sock.ev.on('messages.upsert', (incoming) => {
+    // 'notify' is a new real-time message. 'append' is history sync —
+    // skip those to avoid flooding the DB on reconnect.
+    if (incoming.type !== 'notify') return;
+
+    for (const msg of incoming.messages) {
+      try {
+        // Skip our own sent messages (fromMe === true).
+        if (msg.key?.fromMe) continue;
+
+        const key: WAMessageKey | undefined = msg.key;
+        if (!key?.id || !key?.remoteJid) continue;
+
+        const remoteJid = key.remoteJid;
+        const senderJid = key.participant ?? remoteJid;
+        const waTimestamp = typeof msg.messageTimestamp === 'number'
+          ? msg.messageTimestamp
+          : Math.floor(Date.now() / 1000);
+
+        // Extract text content from the various WhatsApp message types.
+        const extracted = extractMessageContent(msg);
+        if (!extracted) continue; // unsupported type, skip silently
+
+        logger.debug({ wa_id: key.id, type: extracted.type, chat: remoteJid }, 'wa: incoming message');
+
+        postEvent({
+          type: 'message',
+          user_id: userID,
+          wa_message_id: key.id,
+          chat_jid: remoteJid,
+          sender_jid: senderJid,
+          content: extracted.content,
+          message_type: extracted.type,
+          media_url: extracted.mediaUrl,
+          wa_timestamp: waTimestamp,
+        });
+      } catch (err) {
+        logger.warn({ err, wa_id: msg.key?.id }, 'wa: failed to process incoming message');
+      }
+    }
+  });
+
   // If we already had creds on disk, no pairing is needed — the connection
   // will re-authenticate via the persisted keys and emit 'open' shortly.
   if (sock.authState.creds.registered) {
@@ -211,6 +261,68 @@ export async function unlink(userID: string): Promise<void> {
       /* best effort */
     }
   }
+}
+
+/**
+ * Safely extract content from a Baileys message object. Returns null for
+ * unsupported types. Content is truncated to 64 KB to match the DB limit.
+ *
+ * Supported types: conversation, extendedTextMessage, imageMessage,
+ * videoMessage, audioMessage, documentMessage, stickerMessage,
+ * locationMessage, contactMessage.
+ */
+function extractMessageContent(msg: any): { type: string; content: string; mediaUrl: string } | null {
+  const m = msg.message;
+  if (!m) return null;
+
+  const maxLen = 65536;
+
+  // Type classification priority: richer types first.
+  if (m.conversation) {
+    return { type: 'text', content: String(m.conversation).slice(0, maxLen), mediaUrl: '' };
+  }
+  if (m.extendedTextMessage?.text) {
+    return { type: 'text', content: String(m.extendedTextMessage.text).slice(0, maxLen), mediaUrl: '' };
+  }
+  if (m.imageMessage) {
+    return {
+      type: 'image',
+      content: (m.imageMessage.caption ?? '').slice(0, maxLen),
+      mediaUrl: m.imageMessage.url ?? '',
+    };
+  }
+  if (m.videoMessage) {
+    return {
+      type: 'video',
+      content: (m.videoMessage.caption ?? '').slice(0, maxLen),
+      mediaUrl: m.videoMessage.url ?? '',
+    };
+  }
+  if (m.audioMessage) {
+    return { type: 'audio', content: '', mediaUrl: m.audioMessage.url ?? '' };
+  }
+  if (m.documentMessage) {
+    return {
+      type: 'document',
+      content: (m.documentMessage.caption ?? m.documentMessage.title ?? '').slice(0, maxLen),
+      mediaUrl: m.documentMessage.url ?? '',
+    };
+  }
+  if (m.stickerMessage) {
+    return { type: 'sticker', content: '', mediaUrl: m.stickerMessage.url ?? '' };
+  }
+  if (m.locationMessage) {
+    const lat = m.locationMessage.degreesLatitude ?? 0;
+    const lng = m.locationMessage.degreesLongitude ?? 0;
+    return { type: 'location', content: `${lat},${lng}`, mediaUrl: '' };
+  }
+  if (m.contactMessage) {
+    return { type: 'contact', content: m.contactMessage.displayName ?? '', mediaUrl: '' };
+  }
+
+  // Protocol reaction messages, edit messages, payment messages, etc. —
+  // not user-visible content, skip.
+  return null;
 }
 
 function formatPairingCode(raw: string): string {
