@@ -26,6 +26,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
+	"github.com/CreadorLanda/Socilaize/server/internal/platform/realtime"
 	rdplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/redis"
 )
 
@@ -88,11 +89,16 @@ func New(cfg config.Config) (*Server, error) {
 	keysCtl := keys.NewController(keysSvc)
 	keys.Register(authed, keysCtl)
 
+	// Realtime hub (WebSocket fan-out for messaging events).
+	hub := realtime.NewHub()
+
 	// Native E2E-encrypted messaging.
 	msgRepo := messages.NewRepository(pg, cfg.Crypto.MessageKey)
-	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo)
-	msgCtl := messages.NewController(msgSvc)
+	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo, hub)
+	msgCtl := messages.NewController(msgSvc, hub, []byte(cfg.JWT.Secret))
 	messages.Register(authed, msgCtl)
+	// WS lives on the public /api group — token is validated inside the handler.
+	messages.RegisterWS(api, msgCtl)
 
 	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
 	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)

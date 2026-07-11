@@ -77,6 +77,31 @@ type Message struct {
 	DeletedAt    *time.Time  `json:"deleted_at,omitempty"`
 	SenderName   string      `json:"sender_name,omitempty"`
 	SenderAvatar string      `json:"sender_avatar,omitempty"`
+	// Receipt summary for the requesting user / chat (optional enrichment).
+	DeliveredTo int `json:"delivered_to,omitempty"`
+	ReadBy      int `json:"read_by,omitempty"`
+}
+
+// ReceiptStatus is the delivery lifecycle of a message for one recipient.
+type ReceiptStatus string
+
+const (
+	ReceiptDelivered ReceiptStatus = "delivered"
+	ReceiptRead      ReceiptStatus = "read"
+)
+
+type Receipt struct {
+	MessageID int64         `json:"message_id"`
+	UserID    uuid.UUID     `json:"user_id"`
+	Status    ReceiptStatus `json:"status"`
+	UpdatedAt time.Time     `json:"updated_at"`
+}
+
+type Reaction struct {
+	MessageID int64     `json:"message_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ── Session ─────────────────────────────────────────────────────────────────
@@ -112,6 +137,29 @@ type SendMessageRequest struct {
 	Content     string      `json:"content" binding:"required"`
 	MessageType MessageType `json:"message_type"`
 	ReplyToID   *int64      `json:"reply_to_id,omitempty"`
+}
+
+type EditMessageRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
+type ReceiptRequest struct {
+	// MessageIDs to mark delivered/read in one shot.
+	MessageIDs []int64       `json:"message_ids" binding:"required"`
+	Status     ReceiptStatus `json:"status" binding:"required"`
+}
+
+type MarkReadRequest struct {
+	// Up to and including this message id.
+	MessageID int64 `json:"message_id" binding:"required"`
+}
+
+type TypingRequest struct {
+	Typing bool `json:"typing"`
+}
+
+type ReactRequest struct {
+	Emoji string `json:"emoji" binding:"required"`
 }
 
 type ListMessagesQuery struct {

@@ -303,7 +303,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 	return out, rows.Err()
 }
 
-// LastMessagePlain returns the most-recent non-deleted message with
+// LastMessage returns the most-recent non-deleted message with
 // decrypted content for chat list previews.
 func (r *Repository) LastMessage(ctx context.Context, chatID uuid.UUID) (*MessagePreview, error) {
 	const q = `
@@ -324,3 +324,200 @@ func (r *Repository) LastMessage(ctx context.Context, chatID uuid.UUID) (*Messag
 	preview.Content = r.decrypt(ciphertext)
 	return &preview, nil
 }
+
+// ParticipantIDs lists every user in a chat (for WS fan-out).
+func (r *Repository) ParticipantIDs(ctx context.Context, chatID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT user_id FROM chat_participants WHERE chat_id = $1
+	`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// GetMessage fetches a single message (including soft-deleted for tombstones).
+func (r *Repository) GetMessage(ctx context.Context, chatID uuid.UUID, msgID int64) (*Message, error) {
+	const q = `
+		SELECT m.id, m.chat_id, m.sender_id, m.content, m.message_type, m.reply_to_id,
+		       m.created_at, m.edited_at, m.deleted_at,
+		       COALESCE(u.display_name, ''), COALESCE(u.avatar_uri, '')
+		FROM messages m
+		LEFT JOIN users u ON u.id = m.sender_id
+		WHERE m.chat_id = $1 AND m.id = $2
+	`
+	var m messageRow
+	var senderName, senderAvatar string
+	err := r.db.QueryRow(ctx, q, chatID, msgID).Scan(
+		&m.ID, &m.ChatID, &m.SenderID, &m.Content, &m.MessageType, &m.ReplyToID,
+		&m.CreatedAt, &m.EditedAt, &m.DeletedAt, &senderName, &senderAvatar,
+	)
+	if err != nil {
+		return nil, err
+	}
+	content := ""
+	if m.DeletedAt == nil {
+		content = r.decrypt(m.Content)
+	}
+	return &Message{
+		ID:           m.ID,
+		ChatID:       m.ChatID,
+		SenderID:     m.SenderID,
+		Content:      content,
+		MessageType:  MessageType(m.MessageType),
+		ReplyToID:    m.ReplyToID,
+		CreatedAt:    m.CreatedAt,
+		EditedAt:     m.EditedAt,
+		DeletedAt:    m.DeletedAt,
+		SenderName:   senderName,
+		SenderAvatar: senderAvatar,
+	}, nil
+}
+
+func (r *Repository) EditMessage(ctx context.Context, chatID, senderID uuid.UUID, msgID int64, content string) error {
+	encrypted := r.encrypt(content)
+	tag, err := r.db.Exec(ctx, `
+		UPDATE messages
+		SET content = $1, edited_at = NOW()
+		WHERE id = $2 AND chat_id = $3 AND sender_id = $4 AND deleted_at IS NULL
+	`, encrypted, msgID, chatID, senderID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *Repository) SoftDeleteMessage(ctx context.Context, chatID, senderID uuid.UUID, msgID int64) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE messages
+		SET deleted_at = NOW(), content = ''
+		WHERE id = $1 AND chat_id = $2 AND sender_id = $3 AND deleted_at IS NULL
+	`, msgID, chatID, senderID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// UpsertReceipt sets delivered/read for (message, user). Read upgrades delivered.
+func (r *Repository) UpsertReceipt(ctx context.Context, messageID int64, userID uuid.UUID, status ReceiptStatus) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO message_receipts (message_id, user_id, status, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (message_id, user_id) DO UPDATE
+		SET status = CASE
+			WHEN message_receipts.status = 'read' THEN 'read'
+			WHEN EXCLUDED.status = 'read' THEN 'read'
+			ELSE EXCLUDED.status
+		END,
+		updated_at = NOW()
+	`, messageID, userID, string(status))
+	return err
+}
+
+func (r *Repository) SetLastRead(ctx context.Context, chatID, userID uuid.UUID, messageID int64) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE chat_participants
+		SET last_read_message_id = CASE
+			WHEN last_read_message_id IS NULL OR last_read_message_id < $3 THEN $3
+			ELSE last_read_message_id
+		END,
+		last_read_at = NOW()
+		WHERE chat_id = $1 AND user_id = $2
+	`, chatID, userID, messageID)
+	return err
+}
+
+// MessageIDsInChat validates that every id belongs to the chat and returns
+// those that do (filters invalid ids silently).
+func (r *Repository) MessageIDsInChat(ctx context.Context, chatID uuid.UUID, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id FROM messages WHERE chat_id = $1 AND id = ANY($2)
+	`, chatID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) AddReaction(ctx context.Context, messageID int64, userID uuid.UUID, emoji string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO message_reactions (message_id, user_id, emoji)
+		VALUES ($1, $2, $3)
+		ON CONFLICT DO NOTHING
+	`, messageID, userID, emoji)
+	return err
+}
+
+func (r *Repository) RemoveReaction(ctx context.Context, messageID int64, userID uuid.UUID, emoji string) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM message_reactions
+		WHERE message_id = $1 AND user_id = $2 AND emoji = $3
+	`, messageID, userID, emoji)
+	return err
+}
+
+func (r *Repository) ListReactions(ctx context.Context, messageID int64) ([]Reaction, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT message_id, user_id, emoji, created_at
+		FROM message_reactions WHERE message_id = $1
+		ORDER BY created_at ASC
+	`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Reaction
+	for rows.Next() {
+		var rct Reaction
+		if err := rows.Scan(&rct.MessageID, &rct.UserID, &rct.Emoji, &rct.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, rct)
+	}
+	return out, rows.Err()
+}
+
+// UnreadCount counts messages after the user's last_read cursor that they did not send.
+func (r *Repository) UnreadCount(ctx context.Context, chatID, userID uuid.UUID) (int, error) {
+	const q = `
+		SELECT COUNT(*)
+		FROM messages m
+		JOIN chat_participants cp ON cp.chat_id = m.chat_id AND cp.user_id = $2
+		WHERE m.chat_id = $1
+		  AND m.deleted_at IS NULL
+		  AND m.sender_id <> $2
+		  AND (cp.last_read_message_id IS NULL OR m.id > cp.last_read_message_id)
+	`
+	var n int
+	err := r.db.QueryRow(ctx, q, chatID, userID).Scan(&n)
+	return n, err
+}
+

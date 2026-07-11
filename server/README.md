@@ -95,6 +95,18 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `POST   /api/bridges/whatsapp/link`      | required | ✅ phone-pairing via whatsmeow      |
 | `GET    /api/bridges/whatsapp/status`    | required | ✅ polled view + pairing code TTL   |
 | `DELETE /api/bridges/whatsapp/link`      | required | ✅ remote logout + drop session     |
+| `POST   /api/chats`                      | required | ✅ create direct (pending) chat     |
+| `GET    /api/chats`                      | required | ✅ list chats + unread              |
+| `POST   /api/chats/:id/messages`         | required | ✅ send (+ WS `message.new`)        |
+| `GET    /api/chats/:id/messages`         | required | ✅ cursor pagination                |
+| `PATCH  /api/chats/:id/messages/:mid`    | required | ✅ edit (sender)                    |
+| `DELETE /api/chats/:id/messages/:mid`    | required | ✅ soft-delete (sender)             |
+| `POST   /api/chats/:id/receipts`         | required | ✅ delivered/read batch             |
+| `POST   /api/chats/:id/read`             | required | ✅ mark read cursor                 |
+| `POST   /api/chats/:id/typing`           | required | ✅ typing indicator (WS)            |
+| `POST   /api/chats/:id/messages/:mid/reactions` | required | ✅ add reaction               |
+| `DELETE /api/chats/:id/messages/:mid/reactions?emoji=` | required | ✅ remove reaction |
+| `GET    /api/ws?token=`                  | token    | ✅ WebSocket realtime hub           |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.
