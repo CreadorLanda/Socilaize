@@ -1,0 +1,139 @@
+package media
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"path/filepath"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"github.com/CreadorLanda/Socilaize/server/internal/middleware"
+)
+
+type Controller struct {
+	svc *Service
+}
+
+func NewController(svc *Service) *Controller {
+	return &Controller{svc: svc}
+}
+
+// PostUpload — POST /media/upload  (multipart field "file")
+func (c *Controller) PostUpload(ctx *gin.Context) {
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "missing_file"})
+		return
+	}
+
+	var width, height, duration *int
+	if v := ctx.PostForm("width"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			width = &n
+		}
+	}
+	if v := ctx.PostForm("height"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			height = &n
+		}
+	}
+	if v := ctx.PostForm("duration_ms"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			duration = &n
+		}
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_file"})
+		return
+	}
+	defer src.Close()
+
+	ct := file.Header.Get("Content-Type")
+	obj, err := c.svc.Upload(
+		ctx.Request.Context(),
+		middleware.UserIDFrom(ctx),
+		filepath.Base(file.Filename),
+		ct,
+		src,
+		file.Size,
+		width, height, duration,
+	)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusCreated, obj)
+}
+
+// GetMeta — GET /media/:id
+func (c *Controller) GetMeta(ctx *gin.Context) {
+	id, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	obj, err := c.svc.Get(ctx.Request.Context(), id)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, obj)
+}
+
+// GetFile — GET /media/:id/file  (auth required; streams bytes)
+func (c *Controller) GetFile(ctx *gin.Context) {
+	id, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	obj, f, err := c.svc.Open(ctx.Request.Context(), id)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	defer f.Close()
+
+	ctx.Header("Content-Type", obj.MimeType)
+	ctx.Header("Content-Length", strconv.FormatInt(obj.SizeBytes, 10))
+	ctx.Header("Cache-Control", "private, max-age=86400")
+	if obj.OriginalName != "" {
+		ctx.Header("Content-Disposition", `inline; filename="`+obj.OriginalName+`"`)
+	}
+	ctx.Status(http.StatusOK)
+	_, _ = io.Copy(ctx.Writer, f)
+}
+
+// Delete — DELETE /media/:id
+func (c *Controller) Delete(ctx *gin.Context) {
+	id, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	if err := c.svc.Delete(ctx.Request.Context(), id, middleware.UserIDFrom(ctx)); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+func writeErr(ctx *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrTooLarge):
+		ctx.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrUnsupported), errors.Is(err, ErrInvalidFile):
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrNotOwner):
+		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	default:
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+	}
+}

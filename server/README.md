@@ -107,6 +107,10 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `POST   /api/chats/:id/messages/:mid/reactions` | required | ✅ add reaction               |
 | `DELETE /api/chats/:id/messages/:mid/reactions?emoji=` | required | ✅ remove reaction |
 | `GET    /api/ws?token=`                  | token    | ✅ WebSocket realtime hub           |
+| `POST   /api/media/upload`               | required | ✅ multipart file upload            |
+| `GET    /api/media/:id`                  | required | ✅ media metadata                   |
+| `GET    /api/media/:id/file`             | public*  | ✅ stream bytes (*UUID-gated)      |
+| `DELETE /api/media/:id`                  | required | ✅ owner delete                     |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.
