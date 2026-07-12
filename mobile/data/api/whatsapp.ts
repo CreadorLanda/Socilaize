@@ -1,3 +1,5 @@
+import type { MediaAttachment, MessageAttachment } from '@/data/mock';
+
 import { api } from './client';
 
 /**
@@ -62,8 +64,78 @@ export const waListMessages = (jid: string) =>
     `/api/bridges/whatsapp/messages?jid=${encodeURIComponent(jid)}`,
   );
 
-export const waSendMessage = (jid: string, text: string) =>
-  api.post<WaMessage>('/api/bridges/whatsapp/messages', { jid, text });
+export const waSendMessage = (
+  jid: string,
+  text: string,
+  opts?: { type?: string; media_url?: string },
+) =>
+  api.post<WaMessage>('/api/bridges/whatsapp/messages', {
+    jid,
+    text,
+    type: opts?.type ?? 'text',
+    media_url: opts?.media_url,
+  });
+
+/** Map a stored WA message into UI-friendly media / attachment fields. */
+export function mapWaMedia(
+  m: WaMessage,
+  resolveUrl: (path: string) => string,
+): {
+  media?: MediaAttachment;
+  attachment?: MessageAttachment;
+  text: string;
+} {
+  const text = m.content || '';
+  const url = m.media_url ? resolveUrl(m.media_url) : '';
+  switch (m.message_type) {
+    case 'image':
+      return { text, media: url ? { type: 'image', uri: url } : undefined };
+    case 'video':
+      return { text, media: url ? { type: 'video', uri: url } : undefined };
+    case 'audio':
+      return { text, media: url ? { type: 'audio', uri: url } : undefined };
+    case 'sticker':
+      return {
+        text: '',
+        attachment: url ? { kind: 'sticker', uri: url } : undefined,
+      };
+    case 'document':
+      return {
+        text,
+        attachment: {
+          kind: 'document',
+          name: text || 'Document',
+          ext: guessExt(m.media_url || text),
+          sizeLabel: '—',
+        },
+      };
+    case 'location': {
+      const [lat, lng] = (text || '0,0').split(',');
+      return {
+        text: '',
+        attachment: {
+          kind: 'location',
+          place: 'Location',
+          address: `${lat}, ${lng}`,
+        },
+      };
+    }
+    case 'contact':
+      return {
+        text: '',
+        attachment: { kind: 'contact', name: text || 'Contact', detail: '' },
+      };
+    default:
+      return { text };
+  }
+}
+
+function guessExt(s: string): string {
+  const base = s.split('?')[0].split('/').pop() || '';
+  const dot = base.lastIndexOf('.');
+  if (dot >= 0) return base.slice(dot + 1).slice(0, 8) || 'file';
+  return 'file';
+}
 
 /** Encode WA chat id for expo-router paths. */
 export function waChatRouteId(jid: string): string {

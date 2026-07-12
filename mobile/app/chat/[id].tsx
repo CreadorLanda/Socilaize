@@ -76,7 +76,12 @@ import {
   type MessageDTO,
   type RealtimeEvent,
 } from '@/data/api/messages';
-import { parseWaChatId, waListMessages, waSendMessage } from '@/data/api/whatsapp';
+import {
+  mapWaMedia,
+  parseWaChatId,
+  waListMessages,
+  waSendMessage,
+} from '@/data/api/whatsapp';
 import {
   CHATS,
   DANDARA,
@@ -238,21 +243,14 @@ export default function ChatScreen() {
           if (cancelled || !list?.length) return;
           const ordered = [...list].reverse();
           const mapped: Message[] = ordered.map((m) => {
-            const fromMe =
-              m.sender_jid.includes('me@') ||
-              (!!m.sender_jid && m.sender_jid === m.chat_jid && false) ||
-              // Outbound copies use our jid; treat non-chat peer as them.
-              m.wa_message_id.startsWith('out_') ||
-              m.sender_jid.startsWith('me');
-            // Better heuristic: if sender is the chat peer it's not from me
-            // for 1:1 chats (chat_jid === peer). For groups participant differs.
             const isFromMe =
               m.wa_message_id.startsWith('out_') ||
               m.sender_jid === 'me@s.whatsapp.net' ||
-              (m.sender_jid === m.chat_jid && m.wa_message_id.startsWith('out'));
+              m.sender_jid.startsWith('me');
+            const rich = mapWaMedia(m, mediaFileURL);
             return {
               id: String(m.id || m.wa_message_id),
-              text: m.content || '',
+              text: rich.text,
               fromMe: isFromMe,
               timestamp: m.created_at
                 ? new Date(m.created_at).toLocaleTimeString([], {
@@ -263,18 +261,21 @@ export default function ChatScreen() {
               senderName: isFromMe ? undefined : m.sender_jid.split('@')[0],
               source: 'whatsapp' as const,
               status: 'delivered' as const,
+              media: rich.media,
+              attachment: rich.attachment,
             };
           });
-          // Fix fromMe: inbound store never has fromMe; outbound we stored with our jid
+          // Fix fromMe for 1:1: inbound sender_jid === chat_jid (peer).
           setMessages(
             mapped.map((msg, i) => {
               const raw = ordered[i];
-              // Messages from webhook skip fromMe; if sender_jid === chat_jid for 1:1 it's peer
               const peerIsChat = !raw.chat_jid.endsWith('@g.us');
               if (peerIsChat) {
                 return {
                   ...msg,
-                  fromMe: raw.sender_jid !== raw.chat_jid || raw.wa_message_id.startsWith('out_'),
+                  fromMe:
+                    raw.sender_jid !== raw.chat_jid ||
+                    raw.wa_message_id.startsWith('out_'),
                 };
               }
               return msg;
@@ -1048,6 +1049,28 @@ export default function ChatScreen() {
             : m,
         ),
       );
+      if (waJid) {
+        const m = await waSendMessage(waJid, caption, {
+          type: kind,
+          media_url: uploaded.url,
+        });
+        const rich = mapWaMedia(m, mediaFileURL);
+        const mapped: Message = {
+          id: String(m.id || m.wa_message_id),
+          text: rich.text,
+          fromMe: true,
+          timestamp: nowTime(),
+          status: 'sent',
+          source: 'whatsapp',
+          media: rich.media ?? { type: kind, uri: remoteUri },
+        };
+        setMessages((prev) => {
+          const without = prev.filter((x) => x.id !== tempId);
+          if (without.some((x) => x.id === mapped.id)) return without;
+          return [...without, mapped];
+        });
+        return;
+      }
       const body = encodeMediaContent(uploaded.url, caption);
       const dto = await apiSendMessage(id, body, kind);
       const mapped = mapApiMessage(dto, meId);
@@ -1175,6 +1198,13 @@ export default function ChatScreen() {
           name: asset.name,
           mimeType: asset.mimeType ?? 'application/octet-stream',
         });
+        if (waJid) {
+          await waSendMessage(waJid, asset.name, {
+            type: 'document',
+            media_url: uploaded.url,
+          });
+          return;
+        }
         const body = encodeMediaContent(uploaded.url, asset.name);
         await apiSendMessage(id, body, 'document');
       } catch {

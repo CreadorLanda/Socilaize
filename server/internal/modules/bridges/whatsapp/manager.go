@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 
@@ -194,6 +195,69 @@ func (m *Manager) SendText(ctx context.Context, userID uuid.UUID, chatJID, text 
 	raw, _ := io.ReadAll(res.Body)
 	if res.StatusCode >= 300 {
 		return "", fmt.Errorf("bridge send %d: %s", res.StatusCode, string(raw))
+	}
+	var out struct {
+		WaMessageID string `json:"wa_message_id"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	return out.WaMessageID, nil
+}
+
+// SendMedia posts a binary attachment to the Baileys sidecar.
+// mediaType: image | video | audio | document | sticker
+func (m *Manager) SendMedia(
+	ctx context.Context,
+	userID uuid.UUID,
+	chatJID, mediaType, caption, filename, contentType string,
+	body io.Reader,
+	size int64,
+) (string, error) {
+	if m.bridgeURL == "" {
+		return "", ErrBridgeDisabled
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("user_id", userID.String())
+	_ = w.WriteField("chat_jid", chatJID)
+	_ = w.WriteField("type", mediaType)
+	if caption != "" {
+		_ = w.WriteField("caption", caption)
+	}
+	if filename == "" {
+		filename = "file.bin"
+	}
+	part, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(part, body); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+
+	// Media uploads can be larger; use a longer timeout.
+	client := &http.Client{Timeout: 60 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		m.bridgeURL+"/messages/send-media", &buf)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	if contentType != "" {
+		req.Header.Set("X-Media-Content-Type", contentType)
+	}
+	_ = size // reserved for future content-length hints
+	res, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("call bridge: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 300 {
+		return "", fmt.Errorf("bridge send-media %d: %s", res.StatusCode, string(raw))
 	}
 	var out struct {
 		WaMessageID string `json:"wa_message_id"`

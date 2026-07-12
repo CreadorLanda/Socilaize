@@ -15,6 +15,15 @@ function readPEM(path: string | undefined): Buffer | undefined {
   return readFileSync(path);
 }
 
+function mediaUploadFromWebhook(webhookUrl: string): string {
+  // http://host:8080/api/internal/wa/events → …/media
+  if (webhookUrl.includes('/api/internal/wa/events')) {
+    return webhookUrl.replace(/\/api\/internal\/wa\/events\/?$/, '/api/internal/wa/media');
+  }
+  // Fallback: sibling path
+  return webhookUrl.replace(/\/?$/, '') + '/../media';
+}
+
 export const config = {
   port: parseInt(process.env.PORT ?? '3001', 10),
 
@@ -22,9 +31,17 @@ export const config = {
   // the internal HTTPS port (e.g. https://host.docker.internal:9090/…).
   webhookUrl: require_('SOCIALIZE_WEBHOOK_URL'),
 
+  // Multipart media upload for decrypted WA attachments (defaults from webhook).
+  mediaUploadUrl:
+    process.env.SOCIALIZE_MEDIA_UPLOAD_URL ??
+    mediaUploadFromWebhook(require_('SOCIALIZE_WEBHOOK_URL')),
+
   internalToken: require_('SOCIALIZE_INTERNAL_TOKEN'),
 
   authRoot: process.env.WA_AUTH_ROOT ?? './auth_info',
+
+  // How many history (type=append) messages to ingest after link/reconnect.
+  historyBudget: parseInt(process.env.WA_HISTORY_BUDGET ?? '80', 10),
 
   browser: ['Socialize', 'Chrome', '120.0.0'] as [string, string, string],
 

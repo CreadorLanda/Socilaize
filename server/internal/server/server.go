@@ -143,15 +143,19 @@ func New(cfg config.Config) (*Server, error) {
 	channels.Register(authed, channelsCtl)
 
 	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
+	// Media bridge reuses the native media store so WA images land as
+	// /api/media/{id}/file URLs the mobile client already understands.
+	waMedia := whatsapp.NewMediaBridge(mediaSvc)
 	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)
 	waMgr := whatsapp.NewManager(cfg.WA.BridgeURL, cfg.WA.InternalToken)
-	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr))
+	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr, waMedia))
 	whatsapp.Register(authed, waCtl)
 
 	// Inbound bridge webhook. Uses its own Bearer-token check against the
 	// shared internal token, not the user-facing JWT auth.
-	waWebhook := whatsapp.NewWebhookController(waRepo, cfg.WA.InternalToken)
+	waWebhook := whatsapp.NewWebhookController(waRepo, cfg.WA.InternalToken, waMedia)
 	api.POST("/internal/wa/events", waWebhook.PostEvent)
+	api.POST("/internal/wa/media", waWebhook.PostMedia)
 
 	// ── Internal mTLS server ──────────────────────────────────────────────
 	// A second HTTPS listener that requires a valid client certificate
