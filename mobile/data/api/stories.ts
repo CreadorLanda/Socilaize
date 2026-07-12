@@ -59,12 +59,11 @@ export function deleteStory(id: string) {
 
 /** Map API story → UI Story shape used by tabs/stories. */
 export function mapStoryDTO(s: StoryDTO): import('@/data/mock').Story {
+  // Media stories use real URLs; text/audio use accent as the visual (no stock photos).
   const cover =
-    s.media_url && (s.kind === 'image' || s.kind === 'video')
+    s.media_url && (s.kind === 'image' || s.kind === 'video' || s.kind === 'audio')
       ? mediaFileURL(s.media_url)
-      : s.media_url
-        ? mediaFileURL(s.media_url)
-        : `https://picsum.photos/seed/${s.id}/900/1400`;
+      : '';
   const leftMs = new Date(s.expires_at).getTime() - Date.now();
   const leftH = Math.max(0, Math.round(leftMs / 3600000));
   return {

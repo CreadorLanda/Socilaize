@@ -38,7 +38,12 @@ import { SlideSwap } from '@/components/ui/slide-swap';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { reactStory, viewStory } from '@/data/api/stories';
 import type { Story, StoryComment } from '@/data/mock';
-import { markStoryViewedLocal, useStories } from '@/data/story-store';
+import {
+  bootstrapStories,
+  ensureStory,
+  markStoryViewedLocal,
+  useStories,
+} from '@/data/story-store';
 import { t } from '@/i18n';
 
 const REACTIONS = ['❤️', '🔥', '😂', '😮', '🙌'] as const;
@@ -48,15 +53,10 @@ export default function StoryViewerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const allStories = useStories();
-  const visibleStories = useMemo(
-    () => allStories.filter((item) => !item.isOwn),
-    [allStories],
-  );
+  // Include own stories so "Your frame" opens the real API story.
+  const visibleStories = allStories;
 
-  const [index, setIndex] = useState(() => {
-    const found = visibleStories.findIndex((item) => item.id === id);
-    return found >= 0 ? found : 0;
-  });
+  const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [reply, setReply] = useState('');
   const [reactBurst, setReactBurst] = useState<string | null>(null);
@@ -65,6 +65,27 @@ export default function StoryViewerScreen() {
   const [replyMode, setReplyMode] = useState<ReplyMode>('comment');
   const [replyAnonymous, setReplyAnonymous] = useState(false);
   const [localComments, setLocalComments] = useState<Record<string, StoryComment[]>>({});
+  const [hydrating, setHydrating] = useState(true);
+
+  // Ensure feed + target story exist from the API (no mock fallback).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setHydrating(true);
+      await bootstrapStories().catch(() => {});
+      if (id) await ensureStory(id).catch(() => {});
+      if (!cancelled) setHydrating(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || visibleStories.length === 0) return;
+    const found = visibleStories.findIndex((item) => item.id === id);
+    if (found >= 0) setIndex(found);
+  }, [id, visibleStories]);
 
   const story = visibleStories[index];
   const progress = useSharedValue(0);
@@ -200,11 +221,18 @@ export default function StoryViewerScreen() {
         <Pressable onPress={() => router.back()} style={styles.closeFallback}>
           <Ionicons name="close" size={26} color="#FFFFFF" />
         </Pressable>
+        <Text style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginTop: 24 }}>
+          {hydrating ? '…' : t('stories.add_title')}
+        </Text>
       </SafeAreaView>
     );
   }
 
-  const isTextStory = story.kind === 'text' || story.kind === 'poll' || story.kind === 'question';
+  const isTextStory =
+    story.kind === 'text' ||
+    story.kind === 'poll' ||
+    story.kind === 'question' ||
+    !story.coverUri;
   const isAudio = story.kind === 'audio';
   const displayName = story.isAnonymous ? t('stories.anonymous_author') : story.user;
   const commentsEnabled = story.allowComments !== false;

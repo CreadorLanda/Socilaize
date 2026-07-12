@@ -23,7 +23,13 @@ import Animated, {
 import { TabScene } from '@/components/ui/tab-scene';
 import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
 import type { Story } from '@/data/mock';
-import { bootstrapStories, useStories } from '@/data/story-store';
+import { useProfile } from '@/data/profile-store';
+import {
+  bootstrapStories,
+  refreshStories,
+  useStories,
+  useStoriesLoading,
+} from '@/data/story-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -35,13 +41,15 @@ const RAIL_CARD_H = 168;
 
 export default function StoriesScreen() {
   const { colors, isDark } = useTheme();
+  const profile = useProfile();
   const stories = useStories();
+  const loading = useStoriesLoading();
 
   useEffect(() => {
     bootstrapStories().catch(() => {});
   }, []);
 
-  const me = stories.find((s) => s.isOwn);
+  const mine = useMemo(() => stories.filter((s) => s.isOwn), [stories]);
   const others = useMemo(() => stories.filter((s) => !s.isOwn), [stories]);
   const fresh = useMemo(() => others.filter((s) => !s.isViewed), [others]);
   const seen = useMemo(() => others.filter((s) => s.isViewed), [others]);
@@ -56,6 +64,10 @@ export default function StoriesScreen() {
           columnWrapperStyle={styles.gridRow}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.list}
+          refreshing={loading}
+          onRefresh={() => {
+            refreshStories().catch(() => {});
+          }}
           ListHeaderComponent={
             <View style={styles.headerBlock}>
               {/* Pulse header */}
@@ -73,18 +85,27 @@ export default function StoriesScreen() {
                 </View>
               </Animated.View>
 
-              {/* Horizontal cinema rail */}
+              {/* Horizontal cinema rail — always show create + live feed */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.rail}
                 decelerationRate="fast"
               >
-                {me ? (
-                  <Animated.View entering={FadeInRight.delay(40).duration(380)}>
-                    <CreateRailCard me={me} />
+                <Animated.View entering={FadeInRight.delay(40).duration(380)}>
+                  <CreateRailCard
+                    avatarUri={profile.avatarUri}
+                    ownStory={mine[0]}
+                  />
+                </Animated.View>
+                {mine.slice(1).map((story, i) => (
+                  <Animated.View
+                    key={story.id}
+                    entering={FadeInRight.delay(55 + i * 40).duration(380)}
+                  >
+                    <RailCard story={story} />
                   </Animated.View>
-                ) : null}
+                ))}
                 {others.map((story, i) => (
                   <Animated.View
                     key={story.id}
@@ -95,9 +116,11 @@ export default function StoriesScreen() {
                 ))}
               </ScrollView>
 
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                {t('stories.for_you')}
-              </Text>
+              {fresh.length > 0 || seen.length > 0 ? (
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                  {t('stories.for_you')}
+                </Text>
+              ) : null}
             </View>
           }
           renderItem={({ item, index }) => (
@@ -169,11 +192,26 @@ export default function StoriesScreen() {
 
 // ── Create card on the horizontal rail ──────────────────────────────────────
 
-function CreateRailCard({ me }: { me: Story }) {
+function CreateRailCard({
+  avatarUri,
+  ownStory,
+}: {
+  avatarUri: string;
+  ownStory?: Story;
+}) {
   const { colors, isDark } = useTheme();
   return (
     <Pressable
       onPress={() => {
+        Haptics.selectionAsync();
+        // Tap ring → open own story if any, long path via plus goes create.
+        if (ownStory) {
+          router.push(`/story/${ownStory.id}`);
+          return;
+        }
+        router.push('/story/create');
+      }}
+      onLongPress={() => {
         Haptics.selectionAsync();
         router.push('/story/create');
       }}
@@ -191,25 +229,38 @@ function CreateRailCard({ me }: { me: Story }) {
     >
       <View style={styles.createRailInner}>
         <View style={styles.createAvatarWrap}>
-          <Image
-            source={{ uri: me.avatarUri }}
-            style={[styles.createAvatar, { backgroundColor: colors.surfaceMuted }]}
-            contentFit="cover"
-          />
-          <View
+          {avatarUri ? (
+            <Image
+              source={{ uri: avatarUri }}
+              style={[styles.createAvatar, { backgroundColor: colors.surfaceMuted }]}
+              contentFit="cover"
+            />
+          ) : (
+            <View style={[styles.createAvatar, { backgroundColor: colors.surfaceMuted }]} />
+          )}
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation?.();
+              Haptics.selectionAsync();
+              router.push('/story/create');
+            }}
+            hitSlop={8}
             style={[
               styles.createPlus,
-              { backgroundColor: colors.primary, borderColor: isDark ? colors.surfaceElevated : colors.surface },
+              {
+                backgroundColor: colors.primary,
+                borderColor: isDark ? colors.surfaceElevated : colors.surface,
+              },
             ]}
           >
             <Ionicons name="add" size={14} color={colors.onPrimary} />
-          </View>
+          </Pressable>
         </View>
         <Text style={[styles.createLabel, { color: colors.text }]} numberOfLines={2}>
-          {t('stories.your_frame')}
+          {ownStory ? t('stories.your_frame') : t('stories.add_title')}
         </Text>
         <Text style={[styles.createSub, { color: colors.textMuted }]} numberOfLines={1}>
-          {t('stories.create_hint')}
+          {ownStory ? t('stories.create_hint') : t('stories.add_subtitle')}
         </Text>
       </View>
     </Pressable>
@@ -239,8 +290,17 @@ function RailCard({ story }: { story: Story }) {
       accessibilityLabel={t('stories.open_story', { name: story.user })}
     >
       <Animated.View style={[styles.railCard, anim]}>
-        {story.kind === 'text' || story.kind === 'poll' || story.kind === 'question' || story.kind === 'audio' ? (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: story.kind === 'audio' ? '#12141A' : story.accent }]}>
+        {story.kind === 'text' ||
+        story.kind === 'poll' ||
+        story.kind === 'question' ||
+        story.kind === 'audio' ||
+        !story.coverUri ? (
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: story.kind === 'audio' ? '#12141A' : story.accent },
+            ]}
+          >
             <View style={styles.railTextGlow} />
             {story.kind === 'audio' ? (
               <View style={styles.railAudioIcon}>
@@ -248,7 +308,7 @@ function RailCard({ story }: { story: Story }) {
               </View>
             ) : (
               <Text style={styles.railTextCaption} numberOfLines={4}>
-                {story.caption}
+                {story.caption || story.user}
               </Text>
             )}
           </View>
@@ -333,15 +393,29 @@ function PortraitCard({ story, tall }: { story: Story; tall?: boolean }) {
           anim,
         ]}
       >
-        {story.kind === 'text' || story.kind === 'poll' || story.kind === 'question' || story.kind === 'audio' ? (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: story.kind === 'audio' ? '#12141A' : story.accent }]}>
+        {story.kind === 'text' ||
+        story.kind === 'poll' ||
+        story.kind === 'question' ||
+        story.kind === 'audio' ||
+        !story.coverUri ? (
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: story.kind === 'audio' ? '#12141A' : story.accent },
+            ]}
+          >
             <View style={styles.portraitHalo} />
             <View style={styles.portraitTextWrap}>
               {story.kind === 'audio' ? (
-                <Ionicons name="mic" size={36} color="#FFF" style={{ alignSelf: 'center', marginBottom: 8 }} />
+                <Ionicons
+                  name="mic"
+                  size={36}
+                  color="#FFF"
+                  style={{ alignSelf: 'center', marginBottom: 8 }}
+                />
               ) : null}
               <Text style={styles.portraitText} numberOfLines={5}>
-                {story.caption}
+                {story.caption || story.user}
               </Text>
             </View>
           </View>

@@ -14,7 +14,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Dimensions,
-  FlatList,
   Modal,
   Pressable,
   ScrollView,
@@ -27,7 +26,6 @@ import {
 import Animated, {
   FadeIn,
   FadeInDown,
-  FadeInRight,
   useAnimatedStyle,
   useSharedValue,
   withSequence,
@@ -58,12 +56,6 @@ type StickerKind = 'poll' | 'question' | 'mention' | null;
 const { width: W, height: H } = Dimensions.get('window');
 const ACCENTS = ['#2D5BFF', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#A78BFA', '#EF4444', '#FFFFFF'];
 const CAPTURE_MODES: CaptureMode[] = ['type', 'normal', 'boomerang', 'handsfree', 'audio', 'live'];
-
-const RECENT_GALLERY = Array.from({ length: 18 }, (_, i) => ({
-  id: `g${i}`,
-  uri: `https://picsum.photos/seed/story-gallery-${i + 3}/400/700`,
-  isVideo: i % 5 === 2,
-}));
 
 export default function CreateStoryScreen() {
   const profile = useProfile();
@@ -128,7 +120,7 @@ export default function CreateStoryScreen() {
     }
   }, [captureMode, phase]);
 
-  const lastGalleryThumb = RECENT_GALLERY[0]?.uri;
+  const lastGalleryThumb = mediaUri && !isAudio ? mediaUri : null;
 
   const enterEdit = (opts: {
     uri?: string | null;
@@ -328,17 +320,13 @@ export default function CreateStoryScreen() {
         }),
         [{ text: 'OK', onPress: () => router.back() }],
       );
-    } catch {
-      // Offline / API down — still close with local notice.
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        t('stories.sent_notice'),
-        t('stories.sent_detail', {
-          audience: audienceLabel,
-          anon: postAnonymous ? t('stories.sent_as_anon') : '',
-        }),
-        [{ text: 'OK', onPress: () => router.back() }],
-      );
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      const detail =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message?: string }).message)
+          : 'publish_failed';
+      Alert.alert(t('stories.sent_notice'), detail);
     }
   };
 
@@ -409,39 +397,14 @@ export default function CreateStoryScreen() {
 
         <View style={[styles.captureBottom, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           {captureMode !== 'audio' ? (
-            <FlatList
-              horizontal
-              data={RECENT_GALLERY}
-              keyExtractor={(item) => item.id}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.galleryRail}
-              renderItem={({ item, index }) => (
-                <Animated.View entering={FadeInRight.delay(index * 18).duration(280)}>
-                  <Pressable
-                    onPress={() => {
-                      if (index === 0) {
-                        pickFromLibrary();
-                        return;
-                      }
-                      enterEdit({ uri: item.uri, video: item.isVideo });
-                    }}
-                    style={styles.galleryCell}
-                  >
-                    <Image source={{ uri: item.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
-                    {item.isVideo ? (
-                      <View style={styles.galleryVideoMark}>
-                        <Ionicons name="play" size={10} color="#FFF" />
-                      </View>
-                    ) : null}
-                    {index === 0 ? (
-                      <View style={styles.galleryAllOverlay}>
-                        <Ionicons name="images" size={16} color="#FFF" />
-                      </View>
-                    ) : null}
-                  </Pressable>
-                </Animated.View>
-              )}
-            />
+            <View style={styles.galleryRail}>
+              <Pressable onPress={pickFromLibrary} style={styles.galleryCell}>
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.12)' }]} />
+                <View style={styles.galleryAllOverlay}>
+                  <Ionicons name="images" size={18} color="#FFF" />
+                </View>
+              </Pressable>
+            </View>
           ) : (
             <View style={{ height: 8 }} />
           )}
