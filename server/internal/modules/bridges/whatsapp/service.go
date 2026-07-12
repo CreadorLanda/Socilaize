@@ -25,10 +25,11 @@ var (
 type Service struct {
 	repo    *Repository
 	manager *Manager
+	media   MediaStore
 }
 
-func NewService(repo *Repository, m *Manager) *Service {
-	return &Service{repo: repo, manager: m}
+func NewService(repo *Repository, m *Manager, media MediaStore) *Service {
+	return &Service{repo: repo, manager: m, media: media}
 }
 
 // pairCooldown is how long we refuse to talk to WhatsApp again after a
@@ -182,14 +183,33 @@ func (s *Service) ListMessages(ctx context.Context, userID uuid.UUID, chatJID st
 	return s.repo.ListMessages(ctx, userID, chatJID, 50)
 }
 
-// SendMessage relays text through Baileys and stores a local copy.
-func (s *Service) SendMessage(ctx context.Context, userID uuid.UUID, chatJID, text string) (StoredMessage, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return StoredMessage{}, errors.New("empty_message")
+// SendRequest is the body for POST /bridges/whatsapp/messages.
+type SendRequest struct {
+	JID      string `json:"jid" binding:"required"`
+	Text     string `json:"text"`
+	Type     string `json:"type"`      // text (default) | image | video | audio | document | sticker
+	MediaURL string `json:"media_url"` // Socialize /api/media/{id}/file for non-text
+}
+
+// SendMessage relays text or media through Baileys and stores a local copy.
+func (s *Service) SendMessage(ctx context.Context, userID uuid.UUID, req SendRequest) (StoredMessage, error) {
+	chatJID := strings.TrimSpace(req.JID)
+	text := strings.TrimSpace(req.Text)
+	msgType := strings.TrimSpace(req.Type)
+	if msgType == "" {
+		msgType = "text"
+	}
+	if !validMessageType(msgType) {
+		return StoredMessage{}, errors.New("invalid_message_type")
 	}
 	if !validJID(chatJID) {
 		return StoredMessage{}, errors.New("invalid_chat_jid")
+	}
+	if msgType == "text" && text == "" {
+		return StoredMessage{}, errors.New("empty_message")
+	}
+	if msgType != "text" && strings.TrimSpace(req.MediaURL) == "" {
+		return StoredMessage{}, errors.New("missing_media_url")
 	}
 	st, err := s.Status(ctx, userID)
 	if err != nil {
@@ -198,7 +218,31 @@ func (s *Service) SendMessage(ctx context.Context, userID uuid.UUID, chatJID, te
 	if st.Status != StatusLinked {
 		return StoredMessage{}, errors.New("bridge_not_linked")
 	}
-	waID, err := s.manager.SendText(ctx, userID, chatJID, text)
+
+	var waID string
+	mediaURL := strings.TrimSpace(req.MediaURL)
+	if msgType == "text" {
+		waID, err = s.manager.SendText(ctx, userID, chatJID, text)
+	} else {
+		if s.media == nil {
+			return StoredMessage{}, errors.New("media_disabled")
+		}
+		mid, ok := parseMediaID(mediaURL)
+		if !ok {
+			return StoredMessage{}, errors.New("invalid_media_url")
+		}
+		meta, rc, err := s.media.Open(ctx, mid)
+		if err != nil {
+			return StoredMessage{}, fmt.Errorf("open media: %w", err)
+		}
+		defer rc.Close()
+		filename := "wa." + extForMime(meta.MimeType, msgType)
+		waID, err = s.manager.SendMedia(
+			ctx, userID, chatJID, msgType, text, filename, meta.MimeType, rc, 0,
+		)
+		// Prefer stable Socialize URL in stored copy.
+		mediaURL = meta.URL
+	}
 	if err != nil {
 		return StoredMessage{}, err
 	}
@@ -215,13 +259,12 @@ func (s *Service) SendMessage(ctx context.Context, userID uuid.UUID, chatJID, te
 		ChatJID:     chatJID,
 		SenderJID:   sender,
 		Content:     text,
-		MessageType: "text",
+		MediaURL:    mediaURL,
+		MessageType: msgType,
 		WaTimestamp: time.Now().Unix(),
 	}
 	if err := s.repo.InsertMessage(ctx, userID, msg); err != nil {
-		// still return a synthetic message if insert fails on conflict
-		log := err
-		_ = log
+		_ = err
 	}
 	list, err := s.repo.ListMessages(ctx, userID, chatJID, 1)
 	if err == nil && len(list) > 0 {
@@ -231,11 +274,44 @@ func (s *Service) SendMessage(ctx context.Context, userID uuid.UUID, chatJID, te
 		WaMessageID: waID,
 		ChatJID:     chatJID,
 		SenderJID:   sender,
-		MessageType: "text",
+		MessageType: msgType,
 		Content:     text,
+		MediaURL:    mediaURL,
 		WaTimestamp: msg.WaTimestamp,
 		CreatedAt:   time.Now().UTC(),
 	}, nil
+}
+
+func extForMime(mime, msgType string) string {
+	switch {
+	case strings.Contains(mime, "png"):
+		return "png"
+	case strings.Contains(mime, "jpeg"), strings.Contains(mime, "jpg"):
+		return "jpg"
+	case strings.Contains(mime, "webp"):
+		return "webp"
+	case strings.Contains(mime, "mp4"):
+		return "mp4"
+	case strings.Contains(mime, "ogg"):
+		return "ogg"
+	case strings.Contains(mime, "mpeg"):
+		return "mp3"
+	case strings.Contains(mime, "pdf"):
+		return "pdf"
+	default:
+		switch msgType {
+		case "image":
+			return "jpg"
+		case "video":
+			return "mp4"
+		case "audio":
+			return "m4a"
+		case "sticker":
+			return "webp"
+		default:
+			return "bin"
+		}
+	}
 }
 
 func (s *Service) Unlink(ctx context.Context, userID uuid.UUID) error {

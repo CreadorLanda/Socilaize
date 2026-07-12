@@ -90,22 +90,20 @@ func (c *Controller) GetMessages(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, list)
 }
 
-// PostMessage — POST /bridges/whatsapp/messages { jid, text }
+// PostMessage — POST /bridges/whatsapp/messages { jid, text, type?, media_url? }
 func (c *Controller) PostMessage(ctx *gin.Context) {
-	var body struct {
-		JID  string `json:"jid" binding:"required"`
-		Text string `json:"text" binding:"required"`
-	}
+	var body SendRequest
 	if err := ctx.ShouldBindJSON(&body); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
-	msg, err := c.svc.SendMessage(ctx.Request.Context(), middleware.UserIDFrom(ctx), body.JID, body.Text)
+	msg, err := c.svc.SendMessage(ctx.Request.Context(), middleware.UserIDFrom(ctx), body)
 	if err != nil {
 		switch err.Error() {
 		case "bridge_not_linked":
 			ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		case "empty_message", "invalid_chat_jid":
+		case "empty_message", "invalid_chat_jid", "missing_media_url",
+			"invalid_media_url", "invalid_message_type", "media_disabled":
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
 			ctx.JSON(http.StatusBadGateway, gin.H{"error": "send_failed", "detail": err.Error()})

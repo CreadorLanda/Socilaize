@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Boom } from '@hapi/boom';
 import baileysPkg, {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
   type WAMessageKey,
@@ -18,6 +19,7 @@ const makeWASocket: typeof baileysPkg =
 
 import { config } from './config.ts';
 import { logger } from './logger.ts';
+import { filenameForType, mimeForType, uploadMediaToAPI } from './media.ts';
 import { postEvent } from './webhook.ts';
 
 /**
@@ -46,6 +48,8 @@ class Session {
   phone: string | null = null;
   lastError: string | null = null;
   status: StatusSnapshot['status'] = 'disconnected';
+  /** Remaining history (append) messages to ingest after reconnect/link. */
+  historyRemaining = 0;
 }
 
 const sessions = new Map<string, Session>();
@@ -111,6 +115,8 @@ export async function startPairing(userID: string, phone: string): Promise<Pairi
 
     if (connection === 'open') {
       session.status = 'linked';
+      // Allow a limited history sync after each successful connection.
+      session.historyRemaining = Math.max(0, config.historyBudget);
       const jid = sock.user?.id ?? '';
       postEvent({ type: 'pair_success', user_id: userID, jid });
     }
@@ -144,52 +150,86 @@ export async function startPairing(userID: string, phone: string): Promise<Pairi
   });
 
   // ── Incoming messages ────────────────────────────────────────────────────
-  // Relay incoming WhatsApp messages to the Go API. We only forward
-  // real-time notifications (type === 'notify'), skip our own outgoing
-  // messages, and classify the content safely.
+  // Relay messages to the Go API. Real-time uses type === 'notify'. A limited
+  // budget of history (type === 'append') is also ingested after link so the
+  // inbox isn't empty on first connect. Media is downloaded + re-uploaded to
+  // Socialize so media_url is a stable /api/media/{id}/file path.
   //
   // Security: content is never logged; message IDs and JIDs are logged at
   // debug only. The Go side validates JID format and caps content length.
   sock.ev.on('messages.upsert', (incoming) => {
-    // 'notify' is a new real-time message. 'append' is history sync —
-    // skip those to avoid flooding the DB on reconnect.
-    if (incoming.type !== 'notify') return;
+    const isNotify = incoming.type === 'notify';
+    const isHistory = incoming.type === 'append';
+    if (!isNotify && !isHistory) return;
 
-    for (const msg of incoming.messages) {
-      try {
-        // Skip our own sent messages (fromMe === true).
-        if (msg.key?.fromMe) continue;
+    // Process asynchronously so we can await media download without blocking
+    // the Baileys event loop.
+    void (async () => {
+      for (const msg of incoming.messages) {
+        try {
+          if (isHistory) {
+            if (session.historyRemaining <= 0) break;
+            session.historyRemaining -= 1;
+          }
 
-        const key: WAMessageKey | undefined = msg.key;
-        if (!key?.id || !key?.remoteJid) continue;
+          // Skip our own sent messages (fromMe === true).
+          if (msg.key?.fromMe) continue;
 
-        const remoteJid = key.remoteJid;
-        const senderJid = key.participant ?? remoteJid;
-        const waTimestamp = typeof msg.messageTimestamp === 'number'
-          ? msg.messageTimestamp
-          : Math.floor(Date.now() / 1000);
+          const key: WAMessageKey | undefined = msg.key;
+          if (!key?.id || !key?.remoteJid) continue;
 
-        // Extract text content from the various WhatsApp message types.
-        const extracted = extractMessageContent(msg);
-        if (!extracted) continue; // unsupported type, skip silently
+          const remoteJid = key.remoteJid;
+          const senderJid = key.participant ?? remoteJid;
+          const waTimestamp = typeof msg.messageTimestamp === 'number'
+            ? msg.messageTimestamp
+            : Math.floor(Date.now() / 1000);
 
-        logger.debug({ wa_id: key.id, type: extracted.type, chat: remoteJid }, 'wa: incoming message');
+          const extracted = extractMessageContent(msg);
+          if (!extracted) continue;
 
-        postEvent({
-          type: 'message',
-          user_id: userID,
-          wa_message_id: key.id,
-          chat_jid: remoteJid,
-          sender_jid: senderJid,
-          content: extracted.content,
-          message_type: extracted.type,
-          media_url: extracted.mediaUrl,
-          wa_timestamp: waTimestamp,
-        });
-      } catch (err) {
-        logger.warn({ err, wa_id: msg.key?.id }, 'wa: failed to process incoming message');
+          let mediaUrl = '';
+          if (['image', 'video', 'audio', 'document', 'sticker'].includes(extracted.type)) {
+            try {
+              const buffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                {
+                  logger: logger.child({ component: 'baileys-media' }) as any,
+                  reuploadRequest: sock.updateMediaMessage,
+                },
+              );
+              if (buffer && Buffer.isBuffer(buffer) && buffer.length > 0) {
+                const mime = extracted.mimeType || mimeForType(extracted.type);
+                const name = extracted.fileName || filenameForType(extracted.type, key.id);
+                mediaUrl = await uploadMediaToAPI(userID, buffer, name, mime);
+              }
+            } catch (err) {
+              logger.warn({ err, wa_id: key.id, type: extracted.type }, 'wa: media download failed');
+            }
+          }
+
+          logger.debug(
+            { wa_id: key.id, type: extracted.type, chat: remoteJid, history: isHistory },
+            'wa: incoming message',
+          );
+
+          await postEvent({
+            type: 'message',
+            user_id: userID,
+            wa_message_id: key.id,
+            chat_jid: remoteJid,
+            sender_jid: senderJid,
+            content: extracted.content,
+            message_type: extracted.type,
+            media_url: mediaUrl,
+            wa_timestamp: waTimestamp,
+          });
+        } catch (err) {
+          logger.warn({ err, wa_id: msg.key?.id }, 'wa: failed to process incoming message');
+        }
       }
-    }
+    })();
   });
 
   // If we already had creds on disk, no pairing is needed — the connection
@@ -259,6 +299,52 @@ export async function sendText(
   return { wa_message_id: id };
 }
 
+/**
+ * Send an image/video/audio/document/sticker buffer on a linked session.
+ */
+export async function sendMedia(
+  userID: string,
+  chatJid: string,
+  type: string,
+  buffer: Buffer,
+  caption: string,
+  mimetype: string,
+  fileName: string,
+): Promise<{ wa_message_id: string }> {
+  const session = sessions.get(userID);
+  if (!session?.sock || session.status !== 'linked') {
+    throw new Error('session_not_linked');
+  }
+  const sock = session.sock;
+  let content: Record<string, unknown>;
+  switch (type) {
+    case 'image':
+      content = { image: buffer, caption: caption || undefined, mimetype: mimetype || 'image/jpeg' };
+      break;
+    case 'video':
+      content = { video: buffer, caption: caption || undefined, mimetype: mimetype || 'video/mp4' };
+      break;
+    case 'audio':
+      content = { audio: buffer, mimetype: mimetype || 'audio/ogg; codecs=opus', ptt: false };
+      break;
+    case 'sticker':
+      content = { sticker: buffer, mimetype: mimetype || 'image/webp' };
+      break;
+    case 'document':
+    default:
+      content = {
+        document: buffer,
+        mimetype: mimetype || 'application/octet-stream',
+        fileName: fileName || 'file.bin',
+        caption: caption || undefined,
+      };
+      break;
+  }
+  const result = await sock.sendMessage(chatJid, content as any);
+  const id = result?.key?.id ?? `local_${Date.now()}`;
+  return { wa_message_id: id };
+}
+
 export async function unlink(userID: string): Promise<void> {
   const s = sessions.get(userID);
   if (!s) return;
@@ -281,6 +367,13 @@ export async function unlink(userID: string): Promise<void> {
   }
 }
 
+type Extracted = {
+  type: string;
+  content: string;
+  mimeType?: string;
+  fileName?: string;
+};
+
 /**
  * Safely extract content from a Baileys message object. Returns null for
  * unsupported types. Content is truncated to 64 KB to match the DB limit.
@@ -289,7 +382,7 @@ export async function unlink(userID: string): Promise<void> {
  * videoMessage, audioMessage, documentMessage, stickerMessage,
  * locationMessage, contactMessage.
  */
-function extractMessageContent(msg: any): { type: string; content: string; mediaUrl: string } | null {
+function extractMessageContent(msg: any): Extracted | null {
   const m = msg.message;
   if (!m) return null;
 
@@ -297,45 +390,54 @@ function extractMessageContent(msg: any): { type: string; content: string; media
 
   // Type classification priority: richer types first.
   if (m.conversation) {
-    return { type: 'text', content: String(m.conversation).slice(0, maxLen), mediaUrl: '' };
+    return { type: 'text', content: String(m.conversation).slice(0, maxLen) };
   }
   if (m.extendedTextMessage?.text) {
-    return { type: 'text', content: String(m.extendedTextMessage.text).slice(0, maxLen), mediaUrl: '' };
+    return { type: 'text', content: String(m.extendedTextMessage.text).slice(0, maxLen) };
   }
   if (m.imageMessage) {
     return {
       type: 'image',
       content: (m.imageMessage.caption ?? '').slice(0, maxLen),
-      mediaUrl: m.imageMessage.url ?? '',
+      mimeType: m.imageMessage.mimetype ?? 'image/jpeg',
     };
   }
   if (m.videoMessage) {
     return {
       type: 'video',
       content: (m.videoMessage.caption ?? '').slice(0, maxLen),
-      mediaUrl: m.videoMessage.url ?? '',
+      mimeType: m.videoMessage.mimetype ?? 'video/mp4',
     };
   }
   if (m.audioMessage) {
-    return { type: 'audio', content: '', mediaUrl: m.audioMessage.url ?? '' };
+    return {
+      type: 'audio',
+      content: '',
+      mimeType: m.audioMessage.mimetype ?? 'audio/ogg',
+    };
   }
   if (m.documentMessage) {
     return {
       type: 'document',
-      content: (m.documentMessage.caption ?? m.documentMessage.title ?? '').slice(0, maxLen),
-      mediaUrl: m.documentMessage.url ?? '',
+      content: (m.documentMessage.caption ?? m.documentMessage.title ?? m.documentMessage.fileName ?? '').slice(0, maxLen),
+      mimeType: m.documentMessage.mimetype ?? 'application/octet-stream',
+      fileName: m.documentMessage.fileName ?? undefined,
     };
   }
   if (m.stickerMessage) {
-    return { type: 'sticker', content: '', mediaUrl: m.stickerMessage.url ?? '' };
+    return {
+      type: 'sticker',
+      content: '',
+      mimeType: m.stickerMessage.mimetype ?? 'image/webp',
+    };
   }
   if (m.locationMessage) {
     const lat = m.locationMessage.degreesLatitude ?? 0;
     const lng = m.locationMessage.degreesLongitude ?? 0;
-    return { type: 'location', content: `${lat},${lng}`, mediaUrl: '' };
+    return { type: 'location', content: `${lat},${lng}` };
   }
   if (m.contactMessage) {
-    return { type: 'contact', content: m.contactMessage.displayName ?? '', mediaUrl: '' };
+    return { type: 'contact', content: m.contactMessage.displayName ?? '' };
   }
 
   // Protocol reaction messages, edit messages, payment messages, etc. —

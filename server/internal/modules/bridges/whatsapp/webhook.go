@@ -3,7 +3,9 @@ package whatsapp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,6 +52,28 @@ func validMessageType(t string) bool {
 	}
 }
 
+// UploadedMedia is returned by PostMedia after the sidecar uploads bytes.
+type UploadedMedia struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	MimeType string `json:"mime_type"`
+	Kind     string `json:"kind"`
+}
+
+// MediaStore is the subset of media.Service needed by the bridge webhook.
+type MediaStore interface {
+	Upload(
+		ctx context.Context,
+		ownerID uuid.UUID,
+		filename string,
+		contentType string,
+		r io.Reader,
+		sizeHint int64,
+		width, height, durationMs *int,
+	) (UploadedMedia, error)
+	Open(ctx context.Context, id uuid.UUID) (UploadedMedia, io.ReadCloser, error)
+}
+
 // WebhookController is the inbound side of the bridge — events posted by
 // the wa-bridge sidecar (pair_success, pair_error, logged_out, message).
 // It shares the InternalToken with the outbound Manager so a single secret
@@ -57,18 +81,69 @@ func validMessageType(t string) bool {
 type WebhookController struct {
 	repo  *Repository
 	token string
+	media MediaStore
 }
 
-func NewWebhookController(repo *Repository, internalToken string) *WebhookController {
-	return &WebhookController{repo: repo, token: internalToken}
+func NewWebhookController(repo *Repository, internalToken string, media MediaStore) *WebhookController {
+	return &WebhookController{repo: repo, token: internalToken, media: media}
+}
+
+func (c *WebhookController) authorize(ctx *gin.Context) bool {
+	auth := ctx.GetHeader("Authorization")
+	if auth != "Bearer "+c.token {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
+// PostMedia — POST /api/internal/wa/media (multipart: user_id, file).
+// The Baileys sidecar downloads & decrypts WA media, then stores it here so
+// the mobile client can load a stable Socialize URL.
+func (c *WebhookController) PostMedia(ctx *gin.Context) {
+	if !c.authorize(ctx) {
+		return
+	}
+	if c.media == nil {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "media_disabled"})
+		return
+	}
+	userRaw := ctx.PostForm("user_id")
+	userID, err := uuid.Parse(userRaw)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_user_id"})
+		return
+	}
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "missing_file"})
+		return
+	}
+	src, err := file.Open()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_file"})
+		return
+	}
+	defer src.Close()
+
+	name := filepath.Base(file.Filename)
+	if name == "" || name == "." {
+		name = "wa-media.bin"
+	}
+	ct := file.Header.Get("Content-Type")
+	obj, err := c.media.Upload(ctx.Request.Context(), userID, name, ct, src, file.Size, nil, nil, nil)
+	if err != nil {
+		log.Warn().Err(err).Str("user", userID.String()).Msg("wa-webhook: media upload failed")
+		ctx.JSON(http.StatusBadGateway, gin.H{"error": "upload_failed", "detail": err.Error()})
+		return
+	}
+	ctx.JSON(http.StatusCreated, obj)
 }
 
 // PostEvent is mounted at /api/internal/wa/events. The sidecar is the only
 // thing that should ever call it — the Bearer guard enforces that.
 func (c *WebhookController) PostEvent(ctx *gin.Context) {
-	auth := ctx.GetHeader("Authorization")
-	if auth != "Bearer "+c.token {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	if !c.authorize(ctx) {
 		return
 	}
 

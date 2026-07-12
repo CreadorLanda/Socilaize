@@ -97,7 +97,8 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `DELETE /api/bridges/whatsapp/link`      | required | ✅ remote logout + drop session     |
 | `GET    /api/bridges/whatsapp/chats`     | required | ✅ WA inbox from stored messages    |
 | `GET    /api/bridges/whatsapp/messages`  | required | ✅ list by jid query                |
-| `POST   /api/bridges/whatsapp/messages`  | required | ✅ send text via Baileys            |
+| `POST   /api/bridges/whatsapp/messages`  | required | ✅ send text/media via Baileys      |
+| `POST   /api/internal/wa/media`          | internal | ✅ bridge media re-upload           |
 | `POST   /api/chats`                      | required | ✅ create direct (pending) chat     |
 | `GET    /api/chats`                      | required | ✅ list chats + unread              |
 | `POST   /api/chats/:id/messages`         | required | ✅ send (+ WS `message.new`)        |

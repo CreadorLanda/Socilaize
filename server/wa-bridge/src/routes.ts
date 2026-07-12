@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 
 import { config } from './config.ts';
 import { logger } from './logger.ts';
-import { sendText, startPairing, status, unlink } from './manager.ts';
+import { sendMedia, sendText, startPairing, status, unlink } from './manager.ts';
 
 const app = new Hono();
 
@@ -76,6 +76,46 @@ app.post('/messages/send', async (c) => {
   } catch (err) {
     const message = (err as Error).message ?? 'send_failed';
     logger.warn({ err, user: body.user_id, chat: body.chat_jid }, 'send failed');
+    if (/not_linked|session_not_linked/i.test(message)) {
+      return c.json({ error: 'session_not_linked', detail: message }, 409);
+    }
+    return c.json({ error: 'send_failed', detail: message }, 502);
+  }
+});
+
+/**
+ * POST /messages/send-media  multipart:
+ *   user_id, chat_jid, type, caption?, file
+ */
+app.post('/messages/send-media', async (c) => {
+  try {
+    const form = await c.req.parseBody();
+    const userID = String(form['user_id'] ?? '');
+    const chatJid = String(form['chat_jid'] ?? '');
+    const type = String(form['type'] ?? 'document');
+    const caption = String(form['caption'] ?? '');
+    const file = form['file'];
+    if (!userID || !chatJid || !file) {
+      return c.json({ error: 'invalid_request' }, 400);
+    }
+    let buffer: Buffer;
+    let fileName = 'file.bin';
+    let mime = c.req.header('x-media-content-type') ?? 'application/octet-stream';
+    if (typeof file === 'string') {
+      buffer = Buffer.from(file);
+    } else if (file && typeof file === 'object' && 'arrayBuffer' in file) {
+      const ab = await (file as File).arrayBuffer();
+      buffer = Buffer.from(ab);
+      fileName = (file as File).name || fileName;
+      mime = (file as File).type || mime;
+    } else {
+      return c.json({ error: 'invalid_file' }, 400);
+    }
+    const result = await sendMedia(userID, chatJid, type, buffer, caption, mime, fileName);
+    return c.json(result);
+  } catch (err) {
+    const message = (err as Error).message ?? 'send_failed';
+    logger.warn({ err }, 'send-media failed');
     if (/not_linked|session_not_linked/i.test(message)) {
       return c.json({ error: 'session_not_linked', detail: message }, 409);
     }
