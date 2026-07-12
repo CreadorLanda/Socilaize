@@ -43,6 +43,7 @@ type Server struct {
 	pg           *pgxpool.Pool
 	rdb          *redis.Client
 	wa           *whatsapp.Manager
+	pushWorker   *notifications.Worker
 	pubSrv       *http.Server
 	internalSrv  *http.Server // mTLS-protected, nil when disabled
 	errCh        chan error
@@ -97,11 +98,12 @@ func New(cfg config.Config) (*Server, error) {
 	// Realtime hub (WebSocket fan-out for messaging events).
 	hub := realtime.NewHub()
 
-	// Notifications — device tokens, prefs, Redis push queue.
+	// Notifications — device tokens, prefs, Redis push queue + worker.
 	notifRepo := notifications.NewRepository(pg)
 	notifSvc := notifications.NewService(notifRepo, rdb)
 	notifCtl := notifications.NewController(notifSvc)
 	notifications.Register(authed, notifCtl)
+	pushWorker := notifications.NewWorker(notifRepo, rdb, cfg.Push.WebhookURL)
 
 	// Native E2E-encrypted messaging (push for offline peers via notifSvc).
 	msgRepo := messages.NewRepository(pg, cfg.Crypto.MessageKey)
@@ -162,7 +164,10 @@ func New(cfg config.Config) (*Server, error) {
 		}
 	}
 
-	return &Server{cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr, internalSrv: internalSrv, errCh: make(chan error, 2)}, nil
+	return &Server{
+		cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr,
+		pushWorker: pushWorker, internalSrv: internalSrv, errCh: make(chan error, 2),
+	}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.router }
@@ -189,6 +194,10 @@ func (s *Server) ListenAndServe() {
 			}
 		}()
 	}
+
+	if s.pushWorker != nil {
+		s.pushWorker.Start()
+	}
 }
 
 // Err returns a channel that receives the first listener error.
@@ -197,6 +206,9 @@ func (s *Server) Err() <-chan error { return s.errCh }
 // Close releases platform connections and stops all listeners.
 // Safe to call multiple times.
 func (s *Server) Close() {
+	if s.pushWorker != nil {
+		s.pushWorker.Stop()
+	}
 	if s.pubSrv != nil {
 		_ = s.pubSrv.Close()
 	}

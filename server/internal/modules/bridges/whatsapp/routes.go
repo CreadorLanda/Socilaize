@@ -10,4 +10,9 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	g.POST("/link", c.PostLink)
 	g.GET("/status", c.GetStatus)
 	g.DELETE("/link", c.DeleteLink)
+	// Inbox built from relayed messages + outbound send via Baileys.
+	// JIDs contain '@' so we use query/body instead of path params.
+	g.GET("/chats", c.GetChats)
+	g.GET("/messages", c.GetMessages)
+	g.POST("/messages", c.PostMessage)
 }

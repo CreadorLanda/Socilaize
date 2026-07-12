@@ -241,6 +241,24 @@ export function status(userID: string): StatusSnapshot {
   return out;
 }
 
+/**
+ * Send a text message on an already-linked session.
+ * Returns the WhatsApp message id when available.
+ */
+export async function sendText(
+  userID: string,
+  chatJid: string,
+  text: string,
+): Promise<{ wa_message_id: string }> {
+  const session = sessions.get(userID);
+  if (!session?.sock || session.status !== 'linked') {
+    throw new Error('session_not_linked');
+  }
+  const result = await session.sock.sendMessage(chatJid, { text });
+  const id = result?.key?.id ?? `local_${Date.now()}`;
+  return { wa_message_id: id };
+}
+
 export async function unlink(userID: string): Promise<void> {
   const s = sessions.get(userID);
   if (!s) return;

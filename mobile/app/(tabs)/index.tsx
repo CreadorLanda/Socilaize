@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { TabScene } from '@/components/ui/tab-scene';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { listChats, type ChatDTO } from '@/data/api/messages';
+import { waChatRouteId, waListChats, type WaChatSummary } from '@/data/api/whatsapp';
 import { bootstrapGroups } from '@/data/group-store';
 import {
   addCustomFilter,
@@ -31,9 +32,10 @@ export default function ChatsScreen() {
   const [showCreate, setShowCreate] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CustomFilter | null>(null);
   const [apiChats, setApiChats] = useState<ChatDTO[]>([]);
+  const [waChats, setWaChats] = useState<WaChatSummary[]>([]);
   const [apiLoaded, setApiLoaded] = useState(false);
 
-  // Fetch real chats + groups from the API.
+  // Fetch real chats + WA inbox + groups from the API.
   useEffect(() => {
     listChats()
       .then(setApiChats)
@@ -41,6 +43,11 @@ export default function ChatsScreen() {
         /* API not available — empty list */
       })
       .finally(() => setApiLoaded(true));
+    waListChats()
+      .then(setWaChats)
+      .catch(() => {
+        /* bridge empty / offline */
+      });
     bootstrapGroups().catch(() => {});
   }, []);
 
@@ -51,10 +58,10 @@ export default function ChatsScreen() {
     }
   }, [customFilters, activeFilter]);
 
-  // Map API chats to the local ChatPreview type.
+  // Map API + WhatsApp chats to the local ChatPreview type.
   const chats = useMemo(() => {
     if (!apiLoaded) return [] as ChatPreview[];
-    const combined: ChatPreview[] = apiChats.map((c) => ({
+    const native: ChatPreview[] = apiChats.map((c) => ({
       id: c.id,
       name: c.title ?? 'Unknown',
       username: '',
@@ -66,8 +73,26 @@ export default function ChatsScreen() {
       source: 'native' as const,
       isPending: c.status === 'pending',
       isGroup: c.type === 'group',
-      memberCount: c.type === 'group' ? undefined : undefined,
     }));
+
+    const wa: ChatPreview[] = waChats.map((w) => {
+      const short = w.chat_jid.split('@')[0] || w.chat_jid;
+      return {
+        id: waChatRouteId(w.chat_jid),
+        name: w.is_group ? `WA · ${short.slice(0, 12)}` : short,
+        username: w.chat_jid,
+        avatarUri: '',
+        lastMessage: w.last_content || w.last_type,
+        timestamp: w.last_at ? new Date(w.last_at).toLocaleTimeString() : '',
+        unreadCount: 0,
+        online: false,
+        source: 'whatsapp' as const,
+        isGroup: w.is_group,
+        bridgeJid: w.chat_jid,
+      };
+    });
+
+    const combined = [...native, ...wa];
 
     if (activeFilter === 'pending') return combined.filter((c) => c.isPending);
     if (activeFilter === 'unread') return combined.filter((c) => c.unreadCount > 0);
@@ -76,7 +101,7 @@ export default function ChatsScreen() {
     const custom = customFilters.find((f) => f.id === activeFilter);
     if (custom) return combined.filter((c) => custom.chatIds.includes(c.id));
     return combined;
-  }, [activeFilter, customFilters, apiChats, apiLoaded]);
+  }, [activeFilter, customFilters, apiChats, waChats, apiLoaded]);
 
   const handleSaveFilter = (name: string, chatIds: string[]) => {
     const id = addCustomFilter(name, chatIds);
