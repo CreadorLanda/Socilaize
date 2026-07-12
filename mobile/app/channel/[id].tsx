@@ -722,6 +722,7 @@ export default function ChannelScreen() {
                         width: asset.width,
                         height: asset.height,
                       });
+                      // Keep API-relative path for createPost; UI resolves via mediaFileURL.
                       mediaUri = uploaded.url;
                     } catch {
                       // Fall back to local preview so the post still lands in UI.
