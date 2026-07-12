@@ -29,10 +29,15 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { formatCount } from '@/components/ui/follow-button';
 import { ReactionTray } from '@/components/ui/reaction-tray';
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { mediaFileURL, uploadMedia } from '@/data/api/media';
 import {
   addChannelPost,
+  addCommentToPost,
   canManage,
   canPublish,
+  loadPostComments,
+  refreshChannel,
+  setPostReaction,
   toggleFollow,
   useChannel,
   useIsFollowing,
@@ -40,6 +45,7 @@ import {
 import { CURRENT_USER, type ChannelComment, type ChannelPost } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
+import * as ImagePicker from 'expo-image-picker';
 
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'];
 const COMMENT_EMOJIS = ['❤️', '🙌', '🔥', '👏', '😢', '😍', '😮', '😂'];
@@ -107,6 +113,12 @@ export default function ChannelScreen() {
     width: actionBarWidth,
   };
 
+  // Hydrate channel + posts from API when opening a real channel.
+  useEffect(() => {
+    if (!id) return;
+    refreshChannel(id).catch(() => {});
+  }, [id]);
+
   useEffect(() => {
     setPosts(channel?.posts ?? []);
   }, [channel, channel?.posts]);
@@ -122,7 +134,7 @@ export default function ChannelScreen() {
   const comments = commentPost?.comments ?? [];
   const mediaCount = useMemo(() => posts.filter((p) => !!p.mediaUri).length, [posts]);
   const commentCount = useMemo(
-    () => posts.reduce((sum, p) => sum + (p.comments?.length ?? 0), 0),
+    () => posts.reduce((sum, p) => sum + countComments(p.comments ?? []), 0),
     [posts],
   );
   const ruleDefaults = [
@@ -136,30 +148,31 @@ export default function ChannelScreen() {
     setPosts((prev) => prev.map((post) => (post.id === postId ? updater(post) : post)));
   };
 
-  const applyReactionDelta = (
-    reactions: NonNullable<ChannelPost['reactions']>,
-    emoji: string,
-    delta: number,
-  ) => {
-    const index = reactions.findIndex((item) => item.emoji === emoji);
-    if (index === -1) {
-      if (delta > 0) reactions.push({ emoji, count: delta });
-      return;
-    }
-    const nextCount = reactions[index].count + delta;
-    if (nextCount <= 0) { reactions.splice(index, 1); return; }
-    reactions[index] = { ...reactions[index], count: nextCount };
-  };
-
   const handleReaction = (emoji: string) => {
-    if (!actionPostId) return;
+    if (!actionPostId || !channel) return;
+    const current = actionPost?.myReaction ?? null;
+    // Toggle off when re-selecting the same emoji.
+    setPostReaction(channel.id, actionPostId, current === emoji ? null : emoji);
+    // Mirror into local posts for snappy UI before store re-emit.
     updatePost(actionPostId, (post) => {
       const reactions = [...(post.reactions ?? [])];
-      const current = post.myReaction ?? null;
-      if (current) applyReactionDelta(reactions, current, -1);
-      if (current === emoji) return { ...post, reactions, myReaction: null };
-      applyReactionDelta(reactions, emoji, 1);
-      return { ...post, reactions, myReaction: emoji };
+      const apply = (em: string, delta: number) => {
+        const i = reactions.findIndex((r) => r.emoji === em);
+        if (i < 0) {
+          if (delta > 0) reactions.push({ emoji: em, count: delta });
+          return;
+        }
+        const n = reactions[i].count + delta;
+        if (n <= 0) reactions.splice(i, 1);
+        else reactions[i] = { ...reactions[i], count: n };
+      };
+      if (current) apply(current, -1);
+      if (current !== emoji) apply(emoji, 1);
+      return {
+        ...post,
+        reactions,
+        myReaction: current === emoji ? null : emoji,
+      };
     });
     closeActionBar();
   };
@@ -182,6 +195,13 @@ export default function ChannelScreen() {
     setCommentPostId(postId);
     setCommentDraft('');
     setCommentAnonymous(false);
+    if (channel) {
+      loadPostComments(channel.id, postId)
+        .then((list) => {
+          updatePost(postId, (p) => ({ ...p, comments: list }));
+        })
+        .catch(() => {});
+    }
   };
 
   const closeCommentSheet = () => {
@@ -208,32 +228,43 @@ export default function ChannelScreen() {
 
   const submitComment = () => {
     const text = commentDraft.trim();
-    if (!text || !commentPostId) return;
-    const comment: ChannelComment = {
-      id: `c${Date.now()}`,
-      text,
-      timestamp: t('channel.just_now'),
-      anonymous: commentAnonymous,
-      authorName: commentAnonymous ? undefined : CURRENT_USER.name,
-      pending: true,
-      likes: 0,
-    };
+    if (!text || !commentPostId || !channel) return;
     const replyTo = commentReplyTo;
-    updatePost(commentPostId, (post) => {
-      const list = post.comments ?? [];
-      if (replyTo) {
+    // Nested replies stay local-only for now; top-level posts hit the API.
+    if (replyTo) {
+      const comment: ChannelComment = {
+        id: `c${Date.now()}`,
+        text,
+        timestamp: t('channel.just_now'),
+        anonymous: commentAnonymous,
+        authorName: commentAnonymous ? undefined : CURRENT_USER.name,
+        pending: true,
+        likes: 0,
+      };
+      updatePost(commentPostId, (post) => {
+        const list = post.comments ?? [];
         return {
           ...post,
           comments: list.map((c) =>
             c.id === replyTo.id ? { ...c, replies: [...(c.replies ?? []), comment] } : c,
           ),
         };
-      }
-      return { ...post, comments: [...list, comment] };
-    });
-    if (replyTo) {
+      });
       setExpandedComments((prev) => new Set(prev).add(replyTo.id));
     } else {
+      const comment = addCommentToPost(
+        channel.id,
+        commentPostId,
+        text,
+        commentAnonymous,
+        CURRENT_USER.name,
+      );
+      if (comment) {
+        updatePost(commentPostId, (post) => ({
+          ...post,
+          comments: [...(post.comments ?? []), comment],
+        }));
+      }
       setTimeout(() => commentScrollRef.current?.scrollToEnd({ animated: true }), 120);
     }
     setCommentDraft('');
@@ -661,7 +692,7 @@ export default function ChannelScreen() {
                 ]}
               />
               <Pressable
-                onPress={() => {
+                onPress={async () => {
                   if (!channel) return;
                   const needsText = postKind === 'text' || postKind === 'game';
                   if (needsText && !postDraft.trim()) return;
@@ -674,13 +705,35 @@ export default function ChannelScreen() {
                     game: t('channel_post.default_game'),
                   };
 
+                  let mediaUri: string | undefined;
+                  if (postKind === 'image' || postKind === 'video') {
+                    const picked = await ImagePicker.launchImageLibraryAsync({
+                      mediaTypes: postKind === 'video' ? ['videos'] : ['images'],
+                      quality: 0.85,
+                    });
+                    if (picked.canceled || !picked.assets?.[0]) return;
+                    const asset = picked.assets[0];
+                    try {
+                      const uploaded = await uploadMedia({
+                        uri: asset.uri,
+                        mimeType:
+                          asset.mimeType ??
+                          (postKind === 'video' ? 'video/mp4' : 'image/jpeg'),
+                        width: asset.width,
+                        height: asset.height,
+                      });
+                      // Keep API-relative path for createPost; UI resolves via mediaFileURL.
+                      mediaUri = uploaded.url;
+                    } catch {
+                      // Fall back to local preview so the post still lands in UI.
+                      mediaUri = asset.uri;
+                    }
+                  }
+
                   const post = addChannelPost(channel.id, {
                     text: postDraft.trim() || defaults[postKind] || t('channel_create.post_placeholder'),
                     type: postKind,
-                    mediaUri:
-                      postKind === 'image' || postKind === 'video'
-                        ? `https://picsum.photos/seed/ch-post-${Date.now()}/900/700`
-                        : undefined,
+                    mediaUri,
                     gameKind: postKind === 'game' ? postGame : undefined,
                     isLive: postKind === 'live' || postKind === 'voice',
                     liveViewers: postKind === 'live' || postKind === 'voice' ? 1 : undefined,
@@ -1205,6 +1258,7 @@ function Post({
   const reactions = post.reactions ?? [];
   const commentCount = post.comments?.length ?? 0;
   const kind = post.type ?? (post.mediaUri ? 'image' : 'text');
+  const mediaUri = post.mediaUri ? mediaFileURL(post.mediaUri) : undefined;
 
   return (
     <Pressable
@@ -1220,10 +1274,10 @@ function Post({
         pressed && { opacity: 0.94, transform: [{ scale: 0.995 }] },
       ]}
     >
-      {post.mediaUri && (kind === 'image' || kind === 'video') ? (
+      {mediaUri && (kind === 'image' || kind === 'video') ? (
         <View style={styles.postMediaWrap}>
           <Image
-            source={{ uri: post.mediaUri }}
+            source={{ uri: mediaUri }}
             style={[styles.postMedia, { backgroundColor: colors.surfaceMuted }]}
             contentFit="cover"
           />

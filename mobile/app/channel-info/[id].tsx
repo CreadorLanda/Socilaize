@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -10,6 +10,7 @@ import { formatCount } from '@/components/ui/follow-button';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import {
   canManage,
+  refreshChannel,
   toggleFollow,
   useChannel,
   useIsFollowing,
@@ -27,6 +28,10 @@ export default function ChannelInfoScreen() {
   const manage = canManage(channel);
   const [muted, setMuted] = useState(false);
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (id) refreshChannel(id).catch(() => {});
+  }, [id]);
 
   if (!channel) {
     return (

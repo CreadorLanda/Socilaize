@@ -20,6 +20,8 @@ import {
   canManage,
   isHandleAvailable,
   normalizeHandle,
+  persistChannelToApi,
+  refreshChannel,
   updateChannel,
   updateChannelSettings,
   useChannel,
@@ -66,6 +68,10 @@ export default function ChannelSettingsScreen() {
   const [showMemberList, setShowMemberList] = useState(true);
   const [showHistoryToNew, setShowHistoryToNew] = useState(true);
   const [rulesText, setRulesText] = useState('');
+
+  useEffect(() => {
+    if (id) refreshChannel(id).catch(() => {});
+  }, [id]);
 
   useEffect(() => {
     if (!channel) return;
@@ -130,7 +136,7 @@ export default function ChannelSettingsScreen() {
       return;
     }
 
-    updateChannel(channel.id, {
+    const profile = {
       name,
       handle: h,
       description,
@@ -140,8 +146,8 @@ export default function ChannelSettingsScreen() {
         .map((r) => r.trim())
         .filter(Boolean)
         .slice(0, 12),
-    });
-    updateChannelSettings(channel.id, {
+    };
+    const settings = {
       visibility,
       whoCanPost,
       joinMode,
@@ -152,7 +158,10 @@ export default function ChannelSettingsScreen() {
       slowModeSec,
       showMemberList,
       showHistoryToNew,
-    });
+    };
+    updateChannel(channel.id, profile);
+    updateChannelSettings(channel.id, settings);
+    persistChannelToApi(channel.id, profile, settings);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     router.back();
   };
