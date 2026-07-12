@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -229,6 +231,64 @@ func (r *Repository) InsertMessage(ctx context.Context, userID uuid.UUID, msg In
 		msg.WaTimestamp,
 	)
 	return err
+}
+
+// ChatSummary is a WhatsApp conversation derived from stored messages.
+type ChatSummary struct {
+	ChatJID     string    `json:"chat_jid"`
+	LastContent string    `json:"last_content"`
+	LastType    string    `json:"last_type"`
+	LastAt      time.Time `json:"last_at"`
+	IsGroup     bool      `json:"is_group"`
+	MessageCount int      `json:"message_count"`
+}
+
+// ListChats aggregates distinct chat_jid rows for the user (recent first).
+func (r *Repository) ListChats(ctx context.Context, userID uuid.UUID, limit int) ([]ChatSummary, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	const q = `
+		SELECT DISTINCT ON (chat_jid)
+			chat_jid, message_type, content, created_at
+		FROM wa_messages
+		WHERE user_id = $1
+		ORDER BY chat_jid, created_at DESC
+	`
+	// Postgres DISTINCT ON requires ORDER BY chat_jid first; re-sort in Go by last_at.
+	rows, err := r.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tmp []ChatSummary
+	for rows.Next() {
+		var c ChatSummary
+		var content string
+		var mtype string
+		if err := rows.Scan(&c.ChatJID, &mtype, &content, &c.LastAt); err != nil {
+			return nil, err
+		}
+		c.LastType = mtype
+		c.LastContent = r.decryptContent(content)
+		c.IsGroup = strings.HasSuffix(c.ChatJID, "@g.us")
+		tmp = append(tmp, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(tmp, func(i, j int) bool { return tmp[i].LastAt.After(tmp[j].LastAt) })
+	if len(tmp) > limit {
+		tmp = tmp[:limit]
+	}
+	// Counts
+	for i := range tmp {
+		_ = r.db.QueryRow(ctx, `
+			SELECT COUNT(*) FROM wa_messages WHERE user_id = $1 AND chat_jid = $2
+		`, userID, tmp[i].ChatJID).Scan(&tmp[i].MessageCount)
+	}
+	return tmp, nil
 }
 
 // ListMessages returns the most recent messages for a user's chat.

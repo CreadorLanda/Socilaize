@@ -169,6 +169,39 @@ func (m *Manager) Unlink(ctx context.Context, userID uuid.UUID) error {
 // events against the same shared secret.
 func (m *Manager) InternalToken() string { return m.token }
 
+// SendText asks the Baileys sidecar to send a text message to a JID.
+func (m *Manager) SendText(ctx context.Context, userID uuid.UUID, chatJID, text string) (string, error) {
+	if m.bridgeURL == "" {
+		return "", ErrBridgeDisabled
+	}
+	body, _ := json.Marshal(map[string]string{
+		"user_id":  userID.String(),
+		"chat_jid": chatJID,
+		"text":     text,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		m.bridgeURL+"/messages/send", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+m.token)
+	res, err := m.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("call bridge: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 300 {
+		return "", fmt.Errorf("bridge send %d: %s", res.StatusCode, string(raw))
+	}
+	var out struct {
+		WaMessageID string `json:"wa_message_id"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	return out.WaMessageID, nil
+}
+
 // classifyByEnvelope maps the sidecar's stable error strings onto our
 // existing service-level sentinels. Keeps the controller's HTTP mapping
 // (429 / 422 / 502) unchanged.

@@ -92,9 +92,12 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `PUT  /api/users/me/keys`                | required | ✅ identity + signed + OTK upload   |
 | `GET  /api/users/me/keys/count`          | required | ✅ OTK reservoir gauge              |
 | `GET  /api/users/by-username/:username/keys` | required | ✅ X3DH bundle, consumes one OTK |
-| `POST   /api/bridges/whatsapp/link`      | required | ✅ phone-pairing via whatsmeow      |
+| `POST   /api/bridges/whatsapp/link`      | required | ✅ phone-pairing via Baileys        |
 | `GET    /api/bridges/whatsapp/status`    | required | ✅ polled view + pairing code TTL   |
 | `DELETE /api/bridges/whatsapp/link`      | required | ✅ remote logout + drop session     |
+| `GET    /api/bridges/whatsapp/chats`     | required | ✅ WA inbox from stored messages    |
+| `GET    /api/bridges/whatsapp/messages`  | required | ✅ list by jid query                |
+| `POST   /api/bridges/whatsapp/messages`  | required | ✅ send text via Baileys            |
 | `POST   /api/chats`                      | required | ✅ create direct (pending) chat     |
 | `GET    /api/chats`                      | required | ✅ list chats + unread              |
 | `POST   /api/chats/:id/messages`         | required | ✅ send (+ WS `message.new`)        |

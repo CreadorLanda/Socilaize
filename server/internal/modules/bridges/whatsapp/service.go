@@ -169,7 +169,75 @@ func (s *Service) Status(ctx context.Context, userID uuid.UUID) (StatusResponse,
 	return out, nil
 }
 
-// Unlink — best-effort remote logout, then drop the row.
+// ListChats returns WhatsApp conversations built from stored inbound messages.
+func (s *Service) ListChats(ctx context.Context, userID uuid.UUID) ([]ChatSummary, error) {
+	return s.repo.ListChats(ctx, userID, 50)
+}
+
+// ListMessages returns decrypted WA messages for a chat JID.
+func (s *Service) ListMessages(ctx context.Context, userID uuid.UUID, chatJID string) ([]StoredMessage, error) {
+	if !validJID(chatJID) {
+		return nil, errors.New("invalid_chat_jid")
+	}
+	return s.repo.ListMessages(ctx, userID, chatJID, 50)
+}
+
+// SendMessage relays text through Baileys and stores a local copy.
+func (s *Service) SendMessage(ctx context.Context, userID uuid.UUID, chatJID, text string) (StoredMessage, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return StoredMessage{}, errors.New("empty_message")
+	}
+	if !validJID(chatJID) {
+		return StoredMessage{}, errors.New("invalid_chat_jid")
+	}
+	st, err := s.Status(ctx, userID)
+	if err != nil {
+		return StoredMessage{}, err
+	}
+	if st.Status != StatusLinked {
+		return StoredMessage{}, errors.New("bridge_not_linked")
+	}
+	waID, err := s.manager.SendText(ctx, userID, chatJID, text)
+	if err != nil {
+		return StoredMessage{}, err
+	}
+	if waID == "" {
+		waID = "out_" + uuid.NewString()
+	}
+	// Self jid if known
+	sender := st.JID
+	if sender == "" {
+		sender = "me@s.whatsapp.net"
+	}
+	msg := IncomingMessage{
+		WaMessageID: waID,
+		ChatJID:     chatJID,
+		SenderJID:   sender,
+		Content:     text,
+		MessageType: "text",
+		WaTimestamp: time.Now().Unix(),
+	}
+	if err := s.repo.InsertMessage(ctx, userID, msg); err != nil {
+		// still return a synthetic message if insert fails on conflict
+		log := err
+		_ = log
+	}
+	list, err := s.repo.ListMessages(ctx, userID, chatJID, 1)
+	if err == nil && len(list) > 0 {
+		return list[0], nil
+	}
+	return StoredMessage{
+		WaMessageID: waID,
+		ChatJID:     chatJID,
+		SenderJID:   sender,
+		MessageType: "text",
+		Content:     text,
+		WaTimestamp: msg.WaTimestamp,
+		CreatedAt:   time.Now().UTC(),
+	}, nil
+}
+
 func (s *Service) Unlink(ctx context.Context, userID uuid.UUID) error {
 	if err := s.manager.Unlink(ctx, userID); err != nil {
 		return fmt.Errorf("manager unlink: %w", err)

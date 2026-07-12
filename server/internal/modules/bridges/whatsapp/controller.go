@@ -62,3 +62,55 @@ func (c *Controller) DeleteLink(ctx *gin.Context) {
 	}
 	ctx.Status(http.StatusNoContent)
 }
+
+// GetChats — GET /bridges/whatsapp/chats
+func (c *Controller) GetChats(ctx *gin.Context) {
+	list, err := c.svc.ListChats(ctx.Request.Context(), middleware.UserIDFrom(ctx))
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+		return
+	}
+	if list == nil {
+		list = []ChatSummary{}
+	}
+	ctx.JSON(http.StatusOK, list)
+}
+
+// GetMessages — GET /bridges/whatsapp/messages?jid=
+func (c *Controller) GetMessages(ctx *gin.Context) {
+	jid := ctx.Query("jid")
+	list, err := c.svc.ListMessages(ctx.Request.Context(), middleware.UserIDFrom(ctx), jid)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if list == nil {
+		list = []StoredMessage{}
+	}
+	ctx.JSON(http.StatusOK, list)
+}
+
+// PostMessage — POST /bridges/whatsapp/messages { jid, text }
+func (c *Controller) PostMessage(ctx *gin.Context) {
+	var body struct {
+		JID  string `json:"jid" binding:"required"`
+		Text string `json:"text" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	msg, err := c.svc.SendMessage(ctx.Request.Context(), middleware.UserIDFrom(ctx), body.JID, body.Text)
+	if err != nil {
+		switch err.Error() {
+		case "bridge_not_linked":
+			ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		case "empty_message", "invalid_chat_jid":
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": "send_failed", "detail": err.Error()})
+		}
+		return
+	}
+	ctx.JSON(http.StatusCreated, msg)
+}

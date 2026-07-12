@@ -76,6 +76,7 @@ import {
   type MessageDTO,
   type RealtimeEvent,
 } from '@/data/api/messages';
+import { parseWaChatId, waListMessages, waSendMessage } from '@/data/api/whatsapp';
 import {
   CHATS,
   DANDARA,
@@ -224,10 +225,68 @@ export default function ChatScreen() {
     };
   }, []);
 
-  // Load real chat messages from the API once we know who "me" is.
+  const waJid = id ? parseWaChatId(id) : null;
+
+  // Load real chat messages (native API or WhatsApp bridge).
   useEffect(() => {
     if (!id || !meId) return;
     let cancelled = false;
+
+    if (waJid) {
+      waListMessages(waJid)
+        .then((list) => {
+          if (cancelled || !list?.length) return;
+          const ordered = [...list].reverse();
+          const mapped: Message[] = ordered.map((m) => {
+            const fromMe =
+              m.sender_jid.includes('me@') ||
+              (!!m.sender_jid && m.sender_jid === m.chat_jid && false) ||
+              // Outbound copies use our jid; treat non-chat peer as them.
+              m.wa_message_id.startsWith('out_') ||
+              m.sender_jid.startsWith('me');
+            // Better heuristic: if sender is the chat peer it's not from me
+            // for 1:1 chats (chat_jid === peer). For groups participant differs.
+            const isFromMe =
+              m.wa_message_id.startsWith('out_') ||
+              m.sender_jid === 'me@s.whatsapp.net' ||
+              (m.sender_jid === m.chat_jid && m.wa_message_id.startsWith('out'));
+            return {
+              id: String(m.id || m.wa_message_id),
+              text: m.content || '',
+              fromMe: isFromMe,
+              timestamp: m.created_at
+                ? new Date(m.created_at).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : '',
+              senderName: isFromMe ? undefined : m.sender_jid.split('@')[0],
+              source: 'whatsapp' as const,
+              status: 'delivered' as const,
+            };
+          });
+          // Fix fromMe: inbound store never has fromMe; outbound we stored with our jid
+          setMessages(
+            mapped.map((msg, i) => {
+              const raw = ordered[i];
+              // Messages from webhook skip fromMe; if sender_jid === chat_jid for 1:1 it's peer
+              const peerIsChat = !raw.chat_jid.endsWith('@g.us');
+              if (peerIsChat) {
+                return {
+                  ...msg,
+                  fromMe: raw.sender_jid !== raw.chat_jid || raw.wa_message_id.startsWith('out_'),
+                };
+              }
+              return msg;
+            }),
+          );
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
+
     listMessages(id, 50)
       .then((apiMsgs) => {
         if (cancelled || !apiMsgs || apiMsgs.length === 0) return;
@@ -253,7 +312,7 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id, meId]);
+  }, [id, meId, waJid]);
 
   // Load chat info from the API.
   useEffect(() => {
@@ -897,6 +956,26 @@ export default function ChatScreen() {
     if (isAIChat || /@dandara/i.test(text)) triggerDandara(text);
 
     if (id && !isAIChat) {
+      if (waJid) {
+        waSendMessage(waJid, text)
+          .then((m) => {
+            const mapped: Message = {
+              id: String(m.id || m.wa_message_id),
+              text: m.content,
+              fromMe: true,
+              timestamp: nowTime(),
+              status: 'sent',
+              source: 'whatsapp',
+            };
+            setMessages((prev) => {
+              const without = prev.filter((x) => x.id !== tempId);
+              if (without.some((x) => x.id === mapped.id)) return without;
+              return [...without, mapped];
+            });
+          })
+          .catch(() => {});
+        return;
+      }
       const replyTo = reply ? serverMessageId(reply.id) ?? undefined : undefined;
       apiSendMessage(id, text, 'text', replyTo ?? undefined)
         .then((dto) => {
