@@ -34,6 +34,19 @@ mobile/
 └── scripts/
 ```
 
+## Push notifications
+
+On login / settings the app requests permission via `expo-notifications` and
+registers an Expo push token with `PUT /api/notifications/devices`
+(`mobile/data/push.ts`). The Go push worker delivers:
+
+| Token shape | Backend |
+| --- | --- |
+| `ExponentPushToken[...]` | Expo Push API (→ FCM/APNs) |
+| native FCM token | FCM HTTP v1 when `FCM_PROJECT_ID` + credentials are set on the server |
+
+Physical device recommended; iOS Simulator will skip registration.
+
 ## Design system
 
 All visual decisions flow from `constants/theme.ts`. Read the full spec — palette, themes, spacing, radii, typography, recipes — in [`docs/tech/design-system.md`](../docs/tech/design-system.md).

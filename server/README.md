@@ -127,7 +127,7 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `GET    /api/notifications/prefs`        | required | ✅ notification toggles             |
 | `PATCH  /api/notifications/prefs`        | required | ✅ update toggles                   |
 | `POST   /api/notifications/test`         | required | ✅ enqueue smoke push               |
-| push worker (`q:push.send`)              | internal | ✅ BRPOP + log + optional webhook   |
+| push worker (`q:push.send`)              | internal | ✅ Expo + FCM HTTP v1 + webhook     |
 | `POST   /api/stories`                    | required | ✅ create story (TTL 24h)           |
 | `GET    /api/stories`                    | required | ✅ feed                             |
 | `GET    /api/stories/:id`                | required | ✅ one story                        |
