@@ -1,20 +1,44 @@
 import { useSyncExternalStore } from 'react';
 
 import {
+  addPostComment as apiAddComment,
+  clearPostReaction as apiClearReact,
   createChannelApi,
   createChannelPost as apiCreatePost,
   followChannel as apiFollow,
+  getChannel as apiGetChannel,
   listChannels,
+  listPostComments as apiListComments,
   mapChannelDTO,
+  mapPostDTO,
+  patchChannel as apiPatchChannel,
+  reactToPost as apiReact,
   unfollowChannel as apiUnfollow,
+  type ChannelCommentDTO,
   type ChannelDTO,
 } from '@/data/api/channels';
 import {
   CHANNELS as SEED_CHANNELS,
   type Channel,
   type ChannelCategory,
+  type ChannelComment,
   type ChannelPost,
 } from './mock';
+
+function isUUID(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function mapCommentDTO(c: ChannelCommentDTO): ChannelComment {
+  return {
+    id: c.id,
+    text: c.text,
+    timestamp: 'now',
+    anonymous: c.anonymous,
+    authorName: c.anonymous ? undefined : c.author_name || undefined,
+    likes: 0,
+  };
+}
 
 /**
  * Channel store — seed mocks + live API merge.
@@ -113,15 +137,16 @@ export async function bootstrapChannels(): Promise<void> {
     const mapped = list.map(mapChannelDTO);
     const byId = new Map(channels.map((c) => [c.id, c]));
     for (const c of mapped) {
-      byId.set(c.id, c);
+      // Keep richer posts already loaded via refreshChannel.
+      const prev = byId.get(c.id);
+      if (prev?.posts?.length && !c.posts.length) {
+        byId.set(c.id, { ...c, posts: prev.posts });
+      } else {
+        byId.set(c.id, c);
+      }
     }
     channels = Array.from(byId.values());
     const nextFollow = new Set(followed);
-    for (const c of mapped) {
-      if (c.role !== 'none' && c.role) nextFollow.add(c.id);
-      // DTO.following
-    }
-    // re-read following from DTO
     for (const raw of list) {
       if (raw.following) nextFollow.add(raw.id);
     }
@@ -130,6 +155,21 @@ export async function bootstrapChannels(): Promise<void> {
     emit();
   } catch {
     apiBooted = true;
+  }
+}
+
+/**
+ * Fetch a single channel with posts from the API and merge into the store.
+ * Safe for mock seed ids (no-ops when not a UUID).
+ */
+export async function refreshChannel(id: string): Promise<ManagedChannel | undefined> {
+  if (!isUUID(id)) return getChannel(id);
+  try {
+    const dto = await apiGetChannel(id);
+    mergeDTO(dto);
+    return getChannel(id);
+  } catch {
+    return getChannel(id);
   }
 }
 
@@ -170,9 +210,13 @@ export function toggleFollow(id: string) {
   if (was) next.delete(id);
   else next.add(id);
   followed = next;
+  // Optimistic member count
+  channels = channels.map((c) => {
+    if (c.id !== id) return c;
+    return { ...c, members: Math.max(0, c.members + (was ? -1 : 1)) };
+  });
   emit();
-  // Persist when channel is a real UUID from API.
-  if (/^[0-9a-f-]{36}$/i.test(id)) {
+  if (isUUID(id)) {
     (was ? apiUnfollow(id) : apiFollow(id))
       .then(mergeDTO)
       .catch(() => {
@@ -307,6 +351,33 @@ export function updateChannelSettings(
   return updated;
 }
 
+/** Persist profile + settings fields to the API (UUID channels only). */
+export function persistChannelToApi(
+  id: string,
+  profile: Partial<Pick<ManagedChannel, 'name' | 'handle' | 'description' | 'category'>>,
+  settings: Partial<ChannelSettings>,
+): void {
+  if (!isUUID(id)) return;
+  const body: Record<string, unknown> = {};
+  if (profile.name != null) body.name = profile.name;
+  if (profile.handle != null) body.handle = profile.handle.replace(/^@/, '');
+  if (profile.description != null) body.description = profile.description;
+  if (profile.category != null) body.category = profile.category;
+  if (settings.visibility != null) body.visibility = settings.visibility;
+  if (settings.whoCanPost != null) body.who_can_post = settings.whoCanPost;
+  if (settings.joinMode != null) body.join_mode = settings.joinMode;
+  if (settings.commentsEnabled != null) body.comments_enabled = settings.commentsEnabled;
+  if (settings.allowAnonymousComments != null) {
+    body.allow_anon_comments = settings.allowAnonymousComments;
+  }
+  if (settings.reactionsEnabled != null) body.reactions_enabled = settings.reactionsEnabled;
+  apiPatchChannel(id, body)
+    .then(mergeDTO)
+    .catch(() => {
+      /* keep local */
+    });
+}
+
 export function canPublish(channel: ManagedChannel | undefined): boolean {
   if (!channel) return false;
   if (channel.role === 'owner' || channel.role === 'admin') return true;
@@ -358,23 +429,20 @@ export function addChannelPost(
   );
   emit();
 
-  if (/^[0-9a-f-]{36}$/i.test(channelId)) {
+  if (isUUID(channelId)) {
+    // Prefer relative media path for the API when given a full URL.
+    let mediaUrl = post.mediaUri;
+    if (mediaUrl?.includes('/api/media/')) {
+      const idx = mediaUrl.indexOf('/api/media/');
+      mediaUrl = mediaUrl.slice(idx);
+    }
     apiCreatePost(channelId, {
       text: post.text,
       post_type: post.type,
-      media_url: post.mediaUri,
+      media_url: mediaUrl,
     })
       .then((dto) => {
-        const mapped = {
-          id: dto.id,
-          text: dto.text,
-          mediaUri: dto.media_url,
-          timestamp: 'now',
-          views: dto.views,
-          type: (dto.post_type as ChannelPost['type']) || 'text',
-          reactions: [],
-          comments: [],
-        } as ChannelPost;
+        const mapped = mapPostDTO(dto);
         channels = channels.map((c) => {
           if (c.id !== channelId) return c;
           return {
@@ -388,6 +456,132 @@ export function addChannelPost(
   }
 
   return post;
+}
+
+/** Optimistic reaction toggle; persists for UUID posts. */
+export function setPostReaction(
+  channelId: string,
+  postId: string,
+  emoji: string | null,
+): void {
+  let previous: string | null | undefined;
+  channels = channels.map((c) => {
+    if (c.id !== channelId) return c;
+    return {
+      ...c,
+      posts: c.posts.map((post) => {
+        if (post.id !== postId) return post;
+        previous = post.myReaction ?? null;
+        const reactions = [...(post.reactions ?? [])];
+        const apply = (em: string, delta: number) => {
+          const i = reactions.findIndex((r) => r.emoji === em);
+          if (i < 0) {
+            if (delta > 0) reactions.push({ emoji: em, count: delta });
+            return;
+          }
+          const n = reactions[i].count + delta;
+          if (n <= 0) reactions.splice(i, 1);
+          else reactions[i] = { ...reactions[i], count: n };
+        };
+        if (previous) apply(previous, -1);
+        if (emoji && emoji !== previous) apply(emoji, 1);
+        return {
+          ...post,
+          reactions,
+          myReaction: emoji && emoji !== previous ? emoji : null,
+        };
+      }),
+    };
+  });
+  emit();
+
+  if (!isUUID(postId)) return;
+  const nextEmoji = emoji && emoji !== previous ? emoji : null;
+  if (nextEmoji) {
+    apiReact(postId, nextEmoji).catch(() => {});
+  } else if (previous) {
+    apiClearReact(postId).catch(() => {});
+  }
+}
+
+/** Load comments for a post from the API and merge into the store. */
+export async function loadPostComments(
+  channelId: string,
+  postId: string,
+): Promise<ChannelComment[]> {
+  if (!isUUID(postId)) {
+    return getChannel(channelId)?.posts.find((p) => p.id === postId)?.comments ?? [];
+  }
+  try {
+    const list = await apiListComments(postId);
+    const mapped = (list ?? []).map(mapCommentDTO);
+    channels = channels.map((c) => {
+      if (c.id !== channelId) return c;
+      return {
+        ...c,
+        posts: c.posts.map((p) => (p.id === postId ? { ...p, comments: mapped } : p)),
+      };
+    });
+    emit();
+    return mapped;
+  } catch {
+    return getChannel(channelId)?.posts.find((p) => p.id === postId)?.comments ?? [];
+  }
+}
+
+/** Optimistic comment; persists for UUID posts. */
+export function addCommentToPost(
+  channelId: string,
+  postId: string,
+  text: string,
+  anonymous: boolean,
+  authorName?: string,
+): ChannelComment | undefined {
+  const comment: ChannelComment = {
+    id: `c_${Date.now().toString(36)}`,
+    text: text.trim(),
+    timestamp: 'now',
+    anonymous,
+    authorName: anonymous ? undefined : authorName,
+    pending: true,
+    likes: 0,
+  };
+  if (!comment.text) return undefined;
+
+  channels = channels.map((c) => {
+    if (c.id !== channelId) return c;
+    return {
+      ...c,
+      posts: c.posts.map((p) =>
+        p.id === postId ? { ...p, comments: [...(p.comments ?? []), comment] } : p,
+      ),
+    };
+  });
+  emit();
+
+  if (isUUID(postId)) {
+    apiAddComment(postId, comment.text, anonymous)
+      .then((dto) => {
+        const mapped = mapCommentDTO(dto);
+        channels = channels.map((c) => {
+          if (c.id !== channelId) return c;
+          return {
+            ...c,
+            posts: c.posts.map((p) => {
+              if (p.id !== postId) return p;
+              return {
+                ...p,
+                comments: (p.comments ?? []).map((x) => (x.id === comment.id ? mapped : x)),
+              };
+            }),
+          };
+        });
+        emit();
+      })
+      .catch(() => {});
+  }
+
+  return comment;
 }
 
 export function isHandleAvailable(handle: string, exceptId?: string): boolean {
