@@ -159,20 +159,21 @@ func (r *Repository) ListChats(ctx context.Context, userID uuid.UUID) ([]Chat, e
 // PeerUser holds minimal info about a chat's peer for direct chats.
 type PeerUser struct {
 	ID          uuid.UUID
+	Username    string
 	DisplayName string
 	AvatarURI   string
 }
 
 func (r *Repository) PeerUser(ctx context.Context, chatID, userID uuid.UUID) (*PeerUser, error) {
 	const q = `
-		SELECT u.id, u.display_name, COALESCE(u.avatar_uri, '')
+		SELECT u.id, u.username, u.display_name, COALESCE(u.avatar_uri, '')
 		FROM chat_participants cp
 		JOIN users u ON u.id = cp.user_id
 		WHERE cp.chat_id = $1 AND cp.user_id <> $2
 		LIMIT 1
 	`
 	var p PeerUser
-	if err := r.db.QueryRow(ctx, q, chatID, userID).Scan(&p.ID, &p.DisplayName, &p.AvatarURI); err != nil {
+	if err := r.db.QueryRow(ctx, q, chatID, userID).Scan(&p.ID, &p.Username, &p.DisplayName, &p.AvatarURI); err != nil {
 		return nil, err
 	}
 	return &p, nil

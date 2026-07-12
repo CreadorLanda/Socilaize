@@ -38,6 +38,9 @@ type Chat struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	LastMessage *MessagePreview `json:"last_message,omitempty"`
 	UnreadCount int             `json:"unread_count"`
+	// Direct-chat peer (client E2EE session establishment).
+	PeerUserID   *uuid.UUID `json:"peer_user_id,omitempty"`
+	PeerUsername *string    `json:"peer_username,omitempty"`
 }
 
 type MessagePreview struct {

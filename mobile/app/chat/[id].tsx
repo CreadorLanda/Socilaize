@@ -92,9 +92,11 @@ import {
 } from '@/data/mock';
 import {
   collapseReactions,
+  decryptMessageContent,
   mapApiMessage,
   serverMessageId,
 } from '@/data/message-map';
+import { encryptForPeer, ensureKeysPublished } from '@/data/crypto';
 import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
@@ -289,11 +291,22 @@ export default function ChatScreen() {
     }
 
     listMessages(id, 50)
-      .then((apiMsgs) => {
+      .then(async (apiMsgs) => {
         if (cancelled || !apiMsgs || apiMsgs.length === 0) return;
         // API returns newest-first; UI expects chronological (oldest first).
         const ordered = [...apiMsgs].reverse();
-        const mapped = ordered.map((m) => mapApiMessage(m, meId));
+        const peerId = apiChatInfo?.peer_user_id;
+        const mapped = await Promise.all(
+          ordered.map(async (m) => {
+            const base = mapApiMessage(m, meId);
+            if (base.text === '🔒 …' || (m.content && m.content.startsWith('soc1.'))) {
+              const plain = await decryptMessageContent(m, meId, peerId);
+              return { ...base, text: plain };
+            }
+            return base;
+          }),
+        );
+        if (cancelled) return;
         setMessages(mapped);
 
         // Ack delivery for inbound, then mark the latest as read.
@@ -313,11 +326,12 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id, meId, waJid]);
+  }, [id, meId, waJid, apiChatInfo?.peer_user_id]);
 
-  // Load chat info from the API.
+  // Load chat info from the API + ensure E2EE keys are ready.
   useEffect(() => {
     if (!id) return;
+    ensureKeysPublished().catch(() => {});
     listChats()
       .then((chats) => {
         const found = chats.find((c) => c.id === id);
@@ -340,26 +354,32 @@ export default function ChatScreen() {
       if (ev.type === 'message.new' && payload) {
         const dto = payload as unknown as MessageDTO;
         if (String(dto.chat_id) !== id && ev.chat_id !== id) return;
-        const mapped = mapApiMessage(dto, meId);
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === mapped.id)) return prev;
-          // Drop matching optimistic bubble (temp id) with same text from me.
-          if (mapped.fromMe) {
-            const withoutOpt = prev.filter(
-              (m) => !(m.fromMe && m.id.startsWith('tmp_') && m.text === mapped.text),
-            );
-            return [...withoutOpt, mapped];
+        const peerId = apiChatInfo?.peer_user_id;
+        void (async () => {
+          const mapped = mapApiMessage(dto, meId);
+          if (mapped.text === '🔒 …' || (dto.content && dto.content.startsWith('soc1.'))) {
+            mapped.text = await decryptMessageContent(dto, meId, peerId);
           }
-          return [...prev, mapped];
-        });
-        if (!mapped.fromMe && !mapped.deletedAt) {
-          const mid = Number(mapped.id);
-          if (Number.isFinite(mid)) {
-            postReceipts(id, [mid], 'delivered').catch(() => {});
-            markRead(id, mid).catch(() => {});
-            postReceipts(id, [mid], 'read').catch(() => {});
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === mapped.id)) return prev;
+            // Drop matching optimistic bubble (temp id) with same text from me.
+            if (mapped.fromMe) {
+              const withoutOpt = prev.filter(
+                (m) => !(m.fromMe && m.id.startsWith('tmp_') && m.text === mapped.text),
+              );
+              return [...withoutOpt, mapped];
+            }
+            return [...prev, mapped];
+          });
+          if (!mapped.fromMe && !mapped.deletedAt) {
+            const mid = Number(mapped.id);
+            if (Number.isFinite(mid)) {
+              postReceipts(id, [mid], 'delivered').catch(() => {});
+              markRead(id, mid).catch(() => {});
+              postReceipts(id, [mid], 'read').catch(() => {});
+            }
           }
-        }
+        })();
         return;
       }
 
@@ -978,9 +998,25 @@ export default function ChatScreen() {
         return;
       }
       const replyTo = reply ? serverMessageId(reply.id) ?? undefined : undefined;
-      apiSendMessage(id, text, 'text', replyTo ?? undefined)
-        .then((dto) => {
+      (async () => {
+        let payload = text;
+        // Client-side E2EE for direct chats when peer keys are available.
+        if (apiChatInfo?.type !== 'group' && apiChatInfo?.peer_user_id) {
+          try {
+            await ensureKeysPublished();
+            payload = await encryptForPeer(apiChatInfo.peer_user_id, text, {
+              peerUsername: apiChatInfo.peer_username,
+            });
+          } catch {
+            // Fall back to plaintext if peer has no bundle yet.
+            payload = text;
+          }
+        }
+        try {
+          const dto = await apiSendMessage(id, payload, 'text', replyTo ?? undefined);
           const mapped = mapApiMessage(dto, meId);
+          // Show plaintext in UI even if wire was encrypted.
+          mapped.text = text;
           setMessages((prev) => {
             if (prev.some((m) => m.id === mapped.id)) {
               return prev.filter((m) => m.id !== tempId);
@@ -993,10 +1029,10 @@ export default function ChatScreen() {
             }
             return [...prev, mapped];
           });
-        })
-        .catch(() => {
+        } catch {
           // Keep optimistic bubble; failed sync surfaces on next open/reload.
-        });
+        }
+      })();
     }
   };
 

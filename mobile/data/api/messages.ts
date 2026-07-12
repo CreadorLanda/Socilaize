@@ -18,6 +18,9 @@ export interface ChatDTO {
     created_at: string;
   };
   unread_count: number;
+  /** Direct chat peer — used for client-side E2EE. */
+  peer_user_id?: string;
+  peer_username?: string;
 }
 
 export interface MessageDTO {

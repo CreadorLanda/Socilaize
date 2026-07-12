@@ -8,6 +8,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
 import { bootstrapAuth } from '@/data/auth-store';
+import { ensureKeysPublished } from '@/data/crypto';
 import { registerPushWithServer } from '@/data/push';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -31,6 +32,8 @@ export default function RootLayout() {
         router.replace('/(tabs)');
         // Register Expo/FCM token once a session is restored.
         registerPushWithServer().catch(() => {});
+        // Generate / publish Signal-style pre-key material for E2EE.
+        ensureKeysPublished().catch(() => {});
       }
       setBooted(true);
     });

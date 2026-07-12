@@ -398,6 +398,10 @@ func (s *Service) enrichDirectPeer(ctx context.Context, c *Chat, forUser uuid.UU
 	if peer.AvatarURI != "" {
 		c.AvatarURL = &peer.AvatarURI
 	}
+	id := peer.ID
+	c.PeerUserID = &id
+	uname := peer.Username
+	c.PeerUsername = &uname
 }
 
 func (s *Service) loadChat(ctx context.Context, chatID uuid.UUID, forUser uuid.UUID) (Chat, error) {

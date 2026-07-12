@@ -3,11 +3,17 @@ import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { listChats, type ChatDTO } from '@/data/api/messages';
+import {
+  ensureKeysPublished,
+  getIdentityPublic,
+  loadSession,
+  safetyNumber,
+} from '@/data/crypto';
 import { refreshGroup, useGroup } from '@/data/group-store';
 import { CHATS, MESSAGES, type ChatPreview, type Message } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
@@ -75,6 +81,36 @@ export default function ChatInfoScreen() {
   const [locked, setLocked] = useState(false);
   const [favorite, setFavorite] = useState(false);
   const [fileVisible, setFileVisible] = useState(true);
+  const [safetyDigits, setSafetyDigits] = useState<string | null>(null);
+  const isWA = chat?.source === 'whatsapp';
+
+  useEffect(() => {
+    if (isWA || !apiChat?.peer_user_id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await ensureKeysPublished();
+        const local = await getIdentityPublic();
+        if (!local || cancelled) return;
+        const session = await loadSession(apiChat.peer_user_id!);
+        const digits = safetyNumber(local, session?.peerIdentityPublic);
+        if (!cancelled) setSafetyDigits(digits);
+      } catch {
+        /* keys not ready */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiChat?.peer_user_id, isWA]);
+
+  const showSafetyNumber = () => {
+    if (!safetyDigits) {
+      Alert.alert(t('chat_info.encryption_title'), t('chat_info.encryption_hint'));
+      return;
+    }
+    Alert.alert(t('chat_info.encryption_title'), safetyDigits);
+  };
 
   if (!chat) {
     return (
@@ -84,7 +120,6 @@ export default function ChatInfoScreen() {
     );
   }
 
-  const isWA = chat.source === 'whatsapp';
   const memberCount = group?.members.length ?? chat.memberCount ?? 0;
   const mediaItems = (MESSAGES[chat.id] ?? [])
     .filter((m) => m.media?.uri || m.attachment?.kind === 'sticker')
@@ -261,8 +296,15 @@ export default function ChatInfoScreen() {
             icon={isWA ? 'logo-whatsapp' : 'lock-closed-outline'}
             iconColor={isWA ? '#25D366' : undefined}
             label={t('chat_info.encryption_title')}
-            subtitle={isWA ? t('chat_info.encryption_wa_hint') : t('chat_info.encryption_hint')}
+            subtitle={
+              isWA
+                ? t('chat_info.encryption_wa_hint')
+                : safetyDigits
+                  ? safetyDigits.slice(0, 24) + '…'
+                  : t('chat_info.encryption_hint')
+            }
             colors={colors}
+            onPress={isWA ? undefined : showSafetyNumber}
           />
           <Divider colors={colors} />
           <Row

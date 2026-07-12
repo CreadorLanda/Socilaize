@@ -1,5 +1,6 @@
 import { decodeMediaContent, mediaFileURL } from '@/data/api/media';
 import type { MessageDTO, ReactionDTO } from '@/data/api/messages';
+import { decryptFromPeer, isEnvelope } from '@/data/crypto';
 import type { MediaAttachment, Message } from '@/data/mock';
 
 /** Map API message → UI Message used by the chat screen. */
@@ -38,7 +39,36 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
       };
     }
   }
+  // Client-E2EE envelope: keep ciphertext until async decrypt fills in.
+  if (isEnvelope(m.content)) {
+    return { ...base, text: '🔒 …' };
+  }
   return base;
+}
+
+/**
+ * Decrypt envelope content when possible. For outbound messages we decrypt
+ * with the peer's session (same root key). Returns original text on failure.
+ */
+export async function decryptMessageContent(
+  m: MessageDTO,
+  meId?: string | null,
+  peerUserId?: string | null,
+): Promise<string> {
+  if (!isEnvelope(m.content)) return m.content;
+  const peer =
+    peerUserId ||
+    (meId && m.sender_id !== meId ? m.sender_id : null) ||
+    (meId && m.sender_id === meId ? peerUserId : null);
+  // For messages we sent, peer is the other party; for received, sender is peer.
+  const sessionPeer =
+    meId && m.sender_id === meId ? peerUserId ?? undefined : m.sender_id;
+  if (!sessionPeer) return m.content;
+  try {
+    return await decryptFromPeer(sessionPeer, m.content);
+  } catch {
+    return '[encrypted]';
+  }
 }
 
 export function formatMsgTime(iso: string): string {
