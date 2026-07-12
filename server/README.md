@@ -130,6 +130,14 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `POST   /api/stories/:id/view`           | required | ✅ mark viewed                      |
 | `POST   /api/stories/:id/react`          | required | ✅ react                            |
 | `DELETE /api/stories/:id`                | required | ✅ delete own                       |
+| `POST   /api/channels`                   | required | ✅ create channel                   |
+| `GET    /api/channels`                   | required | ✅ discover list                    |
+| `GET    /api/channels/:id`               | required | ✅ detail + posts                   |
+| `POST   /api/channels/:id/follow`        | required | ✅ follow/join                      |
+| `DELETE /api/channels/:id/follow`        | required | ✅ unfollow                         |
+| `POST   /api/channels/:id/posts`         | required | ✅ publish post                     |
+| `POST   /api/channel-posts/:id/react`    | required | ✅ react to post                    |
+| `POST   /api/channel-posts/:id/comments` | required | ✅ comment                          |
 
 Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.

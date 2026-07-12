@@ -1,6 +1,15 @@
 import { useSyncExternalStore } from 'react';
 
 import {
+  createChannelApi,
+  createChannelPost as apiCreatePost,
+  followChannel as apiFollow,
+  listChannels,
+  mapChannelDTO,
+  unfollowChannel as apiUnfollow,
+  type ChannelDTO,
+} from '@/data/api/channels';
+import {
   CHANNELS as SEED_CHANNELS,
   type Channel,
   type ChannelCategory,
@@ -8,8 +17,7 @@ import {
 } from './mock';
 
 /**
- * Client-side channel store (no backend yet).
- * Owns follow state, user-created channels, and permission settings.
+ * Channel store — seed mocks + live API merge.
  */
 
 export type ChannelVisibility = 'public' | 'private';
@@ -81,6 +89,7 @@ function seedManaged(): ManagedChannel[] {
 
 let channels: ManagedChannel[] = seedManaged();
 let followed = new Set<string>(['ch1']);
+let apiBooted = false;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -90,6 +99,58 @@ function emit() {
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+/** Load public channels from API and merge (API wins on id collision). */
+export async function bootstrapChannels(): Promise<void> {
+  if (apiBooted) return;
+  try {
+    const list = await listChannels();
+    if (!list?.length) {
+      apiBooted = true;
+      return;
+    }
+    const mapped = list.map(mapChannelDTO);
+    const byId = new Map(channels.map((c) => [c.id, c]));
+    for (const c of mapped) {
+      byId.set(c.id, c);
+    }
+    channels = Array.from(byId.values());
+    const nextFollow = new Set(followed);
+    for (const c of mapped) {
+      if (c.role !== 'none' && c.role) nextFollow.add(c.id);
+      // DTO.following
+    }
+    // re-read following from DTO
+    for (const raw of list) {
+      if (raw.following) nextFollow.add(raw.id);
+    }
+    followed = nextFollow;
+    apiBooted = true;
+    emit();
+  } catch {
+    apiBooted = true;
+  }
+}
+
+function mergeDTO(dto: ChannelDTO) {
+  const mapped = mapChannelDTO(dto);
+  const idx = channels.findIndex((c) => c.id === mapped.id);
+  if (idx >= 0) {
+    const next = [...channels];
+    next[idx] = { ...next[idx], ...mapped, posts: mapped.posts.length ? mapped.posts : next[idx].posts };
+    channels = next;
+  } else {
+    channels = [mapped, ...channels];
+  }
+  if (dto.following) {
+    followed = new Set(followed).add(dto.id);
+  } else {
+    const n = new Set(followed);
+    n.delete(dto.id);
+    followed = n;
+  }
+  emit();
 }
 
 function normalizeHandle(raw: string) {
@@ -104,11 +165,20 @@ function normalizeHandle(raw: string) {
 // ── Follows ─────────────────────────────────────────────────────────────────
 
 export function toggleFollow(id: string) {
+  const was = followed.has(id);
   const next = new Set(followed);
-  if (next.has(id)) next.delete(id);
+  if (was) next.delete(id);
   else next.add(id);
   followed = next;
   emit();
+  // Persist when channel is a real UUID from API.
+  if (/^[0-9a-f-]{36}$/i.test(id)) {
+    (was ? apiUnfollow(id) : apiFollow(id))
+      .then(mergeDTO)
+      .catch(() => {
+        /* keep optimistic */
+      });
+  }
 }
 
 export function useIsFollowing(id: string): boolean {
@@ -170,6 +240,33 @@ export function createChannel(input: CreateChannelInput): ManagedChannel {
   channels = [channel, ...channels];
   followed = new Set(followed).add(id);
   emit();
+
+  // Fire-and-forget API create; replace local id when server responds.
+  createChannelApi({
+    name: channel.name,
+    handle: channel.handle,
+    description: channel.description,
+    category: channel.category,
+    visibility: input.visibility,
+    who_can_post: input.whoCanPost,
+    comments_enabled: input.commentsEnabled,
+    allow_anon_comments: input.allowAnonymousComments,
+    reactions_enabled: input.reactionsEnabled,
+    join_mode: input.joinMode,
+  })
+    .then((dto) => {
+      const mapped = mapChannelDTO(dto);
+      channels = channels.filter((c) => c.id !== id);
+      channels = [mapped, ...channels];
+      followed = new Set(followed);
+      followed.delete(id);
+      followed.add(mapped.id);
+      emit();
+    })
+    .catch(() => {
+      /* keep local-only channel */
+    });
+
   return channel;
 }
 
@@ -260,6 +357,36 @@ export function addChannelPost(
     c.id === channelId ? { ...c, posts: [post, ...c.posts] } : c,
   );
   emit();
+
+  if (/^[0-9a-f-]{36}$/i.test(channelId)) {
+    apiCreatePost(channelId, {
+      text: post.text,
+      post_type: post.type,
+      media_url: post.mediaUri,
+    })
+      .then((dto) => {
+        const mapped = {
+          id: dto.id,
+          text: dto.text,
+          mediaUri: dto.media_url,
+          timestamp: 'now',
+          views: dto.views,
+          type: (dto.post_type as ChannelPost['type']) || 'text',
+          reactions: [],
+          comments: [],
+        } as ChannelPost;
+        channels = channels.map((c) => {
+          if (c.id !== channelId) return c;
+          return {
+            ...c,
+            posts: [mapped, ...c.posts.filter((p) => p.id !== post.id)],
+          };
+        });
+        emit();
+      })
+      .catch(() => {});
+  }
+
   return post;
 }
 

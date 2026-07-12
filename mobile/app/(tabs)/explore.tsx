@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Dimensions,
   FlatList,
@@ -19,7 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { FollowButton, formatCount } from '@/components/ui/follow-button';
 import { TabScene } from '@/components/ui/tab-scene';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { useChannels } from '@/data/channel-store';
+import { bootstrapChannels, useChannels } from '@/data/channel-store';
 import { CHANNEL_CATEGORIES, type Channel, type ChannelCategory } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
@@ -42,6 +42,10 @@ export default function DiscoverScreen() {
   const [category, setCategory] = useState<ChannelCategory>('all');
   const [query, setQuery] = useState('');
   const allChannels = useChannels();
+
+  useEffect(() => {
+    bootstrapChannels().catch(() => {});
+  }, []);
 
   const channels = useMemo(() => {
     const q = query.trim().toLowerCase();
