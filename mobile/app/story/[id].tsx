@@ -107,14 +107,14 @@ export default function StoryViewerScreen() {
   const story = visibleStories[index];
   const progress = useSharedValue(0);
 
-  // Mark viewed on server + local when story changes.
+  // Mark viewed on server + local when story changes (skip optimistic uploads).
   useEffect(() => {
-    if (!story?.id) return;
+    if (!story?.id || story.uploadStatus) return;
     if (/^[0-9a-f-]{36}$/i.test(story.id)) {
       viewStory(story.id).catch(() => {});
     }
     markStoryViewedLocal(story.id);
-  }, [story?.id]);
+  }, [story?.id, story?.uploadStatus]);
 
   const comments = useMemo(() => {
     if (!story) return [] as StoryComment[];

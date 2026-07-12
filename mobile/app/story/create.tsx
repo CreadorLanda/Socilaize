@@ -34,11 +34,9 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { uploadMedia } from '@/data/api/media';
-import { createStory } from '@/data/api/stories';
 import type { StoryVisibility } from '@/data/mock';
 import { useProfile } from '@/data/profile-store';
-import { prependStoryFromDTO } from '@/data/story-store';
+import { queueStoryPublish } from '@/data/story-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -86,9 +84,9 @@ export default function CreateStoryScreen() {
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [audioRecording, setAudioRecording] = useState(false);
-  const [publishing, setPublishing] = useState(false);
   const audioTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioStart = useRef(0);
+  const publishLock = useRef(false);
 
   const shutterScale = useSharedValue(1);
   const shutterStyle = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
@@ -252,13 +250,6 @@ export default function CreateStoryScreen() {
     }
   };
 
-  const audienceLabel =
-    audience === 'public'
-      ? t('stories.privacy_public')
-      : audience === 'close'
-        ? t('stories.privacy_close')
-        : t('stories.privacy_contacts');
-
   const buildInteractiveCaption = (): string => {
     if (sticker === 'poll') {
       return JSON.stringify({
@@ -285,93 +276,68 @@ export default function CreateStoryScreen() {
     return 5;
   };
 
-  const publish = async () => {
-    if (publishing) return;
+  /**
+   * WhatsApp-style: close the composer immediately and publish in background.
+   * Upload + API run via queueStoryPublish; a global toast reports status.
+   */
+  const publish = () => {
+    if (publishLock.current) return;
 
-    try {
-      let mediaUrl: string | undefined;
-      let kind: 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question' = 'text';
+    let kind: 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question' = 'text';
 
-      // Stickers take priority when composing text-like interactive stories.
-      if (sticker === 'poll') {
-        kind = 'poll';
-        if (!caption.trim()) {
-          Alert.alert(t('stories.poll_mode'), t('stories.poll_placeholder'));
-          return;
-        }
-      } else if (sticker === 'question') {
-        kind = 'question';
-        if (!caption.trim()) {
-          Alert.alert(t('stories.question_mode'), t('stories.question_placeholder'));
-          return;
-        }
-      } else if (textOnly) {
-        kind = 'text';
-        if (!caption.trim()) {
-          Alert.alert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
-          return;
-        }
-      } else if (isAudio && mediaUri) {
-        kind = 'audio';
-      } else if (mediaUri) {
-        kind = isVideo ? 'video' : 'image';
-      } else if (caption.trim()) {
-        kind = 'text';
-      } else {
-        Alert.alert(t('stories.sent_notice'), 'Pick a photo, video, audio, or write something.');
+    if (sticker === 'poll') {
+      kind = 'poll';
+      if (!caption.trim()) {
+        Alert.alert(t('stories.poll_mode'), t('stories.poll_placeholder'));
         return;
       }
-
-      setPublishing(true);
-
-      if (kind === 'audio' && mediaUri) {
-        const up = await uploadMedia({
-          uri: mediaUri,
-          name: `story-audio-${Date.now()}.m4a`,
-          mimeType: 'audio/mp4',
-          durationMs: audioSec * 1000,
-        });
-        mediaUrl = up.url;
-      } else if ((kind === 'image' || kind === 'video') && mediaUri) {
-        const up = await uploadMedia({
-          uri: mediaUri,
-          mimeType: kind === 'video' ? 'video/mp4' : 'image/jpeg',
-        });
-        mediaUrl = up.url;
+    } else if (sticker === 'question') {
+      kind = 'question';
+      if (!caption.trim()) {
+        Alert.alert(t('stories.question_mode'), t('stories.question_placeholder'));
+        return;
       }
-
-      const bodyCaption =
-        kind === 'poll' || kind === 'question' ? buildInteractiveCaption() : caption.trim();
-
-      const dto = await createStory({
-        kind,
-        caption: bodyCaption,
-        media_url: mediaUrl,
-        accent,
-        visibility: audience,
-        is_anonymous: postAnonymous,
-        duration_sec: resolveDurationSec(kind),
-      });
-      prependStoryFromDTO(dto);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        t('stories.sent_notice'),
-        t('stories.sent_detail', {
-          audience: audienceLabel,
-          anon: postAnonymous ? t('stories.sent_as_anon') : '',
-        }),
-        [{ text: 'OK', onPress: () => router.back() }],
-      );
-    } catch (err) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const detail =
-        err && typeof err === 'object' && 'message' in err
-          ? String((err as { message?: string }).message)
-          : 'publish_failed';
-      Alert.alert(t('stories.sent_notice'), detail);
-    } finally {
-      setPublishing(false);
+    } else if (textOnly) {
+      kind = 'text';
+      if (!caption.trim()) {
+        Alert.alert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
+        return;
+      }
+    } else if (isAudio && mediaUri) {
+      kind = 'audio';
+    } else if (mediaUri) {
+      kind = isVideo ? 'video' : 'image';
+    } else if (caption.trim()) {
+      kind = 'text';
+    } else {
+      Alert.alert(t('stories.sent_notice'), 'Pick a photo, video, audio, or write something.');
+      return;
     }
+
+    publishLock.current = true;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    const bodyCaption =
+      kind === 'poll' || kind === 'question' ? buildInteractiveCaption() : caption.trim();
+
+    queueStoryPublish({
+      kind,
+      caption: bodyCaption,
+      localMediaUri: mediaUri,
+      mediaMimeType:
+        kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mp4' : 'image/jpeg',
+      audioDurationMs: kind === 'audio' ? audioSec * 1000 : undefined,
+      accent,
+      visibility: audience,
+      isAnonymous: postAnonymous,
+      durationSec: resolveDurationSec(kind),
+      authorName: profile.name || 'You',
+      authorUsername: profile.username,
+      authorAvatar: profile.avatarUri,
+    });
+
+    // Leave immediately — status continues on the toast + your story ring.
+    router.back();
   };
 
   // ── CAPTURE ──────────────────────────────────────────────────────────────
@@ -773,22 +739,16 @@ export default function CreateStoryScreen() {
 
         <Pressable
           onPress={publish}
-          disabled={publishing}
           style={({ pressed }) => [
             styles.shareBtn,
-            {
-              backgroundColor: colors.primary,
-              opacity: publishing ? 0.7 : 1,
-            },
-            pressed && !publishing && { transform: [{ scale: 0.98 }], opacity: 0.92 },
+            { backgroundColor: colors.primary },
+            pressed && { transform: [{ scale: 0.98 }], opacity: 0.92 },
           ]}
         >
           <Text style={[styles.shareBtnText, { color: colors.onPrimary }]}>
-            {publishing ? '…' : t('stories.share_story')}
+            {t('stories.share_story')}
           </Text>
-          {!publishing ? (
-            <Ionicons name="arrow-forward" size={18} color={colors.onPrimary} />
-          ) : null}
+          <Ionicons name="arrow-forward" size={18} color={colors.onPrimary} />
         </Pressable>
       </View>
 

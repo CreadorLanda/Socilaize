@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
+import { AppToast } from '@/components/ui/app-toast';
 import { bootstrapAuth } from '@/data/auth-store';
 import { ensureKeysPublished } from '@/data/crypto';
 import { registerPushWithServer } from '@/data/push';
@@ -152,6 +153,8 @@ export default function RootLayout() {
               }}
             />
           ) : null}
+          {/* Global toast for background story publish, etc. */}
+          <AppToast />
         </View>
         <StatusBar style="auto" />
       </ThemeProvider>

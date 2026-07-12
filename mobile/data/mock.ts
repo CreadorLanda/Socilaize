@@ -527,6 +527,11 @@ export type Story = {
   /** Live broadcast story — no auto-advance, live chat. */
   isLive?: boolean;
   liveViewers?: number;
+  /**
+   * Client-only upload lifecycle for background publish (WhatsApp-style).
+   * Absent / undefined once the server has accepted the story.
+   */
+  uploadStatus?: 'uploading' | 'failed';
 };
 
 /** Placeholder covers for channel mock seed only (stories use the API). */

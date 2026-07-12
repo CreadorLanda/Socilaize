@@ -27,6 +27,7 @@ import { useProfile } from '@/data/profile-store';
 import {
   bootstrapStories,
   refreshStories,
+  retryStoryPublish,
   useStories,
   useStoriesLoading,
 } from '@/data/story-store';
@@ -200,15 +201,23 @@ function CreateRailCard({
   ownStory?: Story;
 }) {
   const { colors, isDark } = useTheme();
+  const uploading = ownStory?.uploadStatus === 'uploading';
+  const failed = ownStory?.uploadStatus === 'failed';
+  const ringColor = failed ? '#DC2626' : uploading ? colors.primary : colors.primary;
+
   return (
     <Pressable
       onPress={() => {
         Haptics.selectionAsync();
-        // Tap ring → open own story if any, long path via plus goes create.
-        if (ownStory) {
+        if (ownStory?.uploadStatus === 'failed') {
+          retryStoryPublish(ownStory.id);
+          return;
+        }
+        if (ownStory && !ownStory.uploadStatus) {
           router.push(`/story/${ownStory.id}`);
           return;
         }
+        if (ownStory?.uploadStatus === 'uploading') return;
         router.push('/story/create');
       }}
       onLongPress={() => {
@@ -220,7 +229,7 @@ function CreateRailCard({
         styles.createRail,
         {
           backgroundColor: isDark ? colors.surfaceElevated : colors.surface,
-          borderColor: colors.primary,
+          borderColor: ringColor,
         },
         pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] },
       ]}
@@ -248,19 +257,35 @@ function CreateRailCard({
             style={[
               styles.createPlus,
               {
-                backgroundColor: colors.primary,
+                backgroundColor: failed ? '#DC2626' : colors.primary,
                 borderColor: isDark ? colors.surfaceElevated : colors.surface,
               },
             ]}
           >
-            <Ionicons name="add" size={14} color={colors.onPrimary} />
+            <Ionicons
+              name={uploading ? 'cloud-upload' : failed ? 'refresh' : 'add'}
+              size={14}
+              color={colors.onPrimary}
+            />
           </Pressable>
         </View>
         <Text style={[styles.createLabel, { color: colors.text }]} numberOfLines={2}>
-          {ownStory ? t('stories.your_frame') : t('stories.add_title')}
+          {uploading
+            ? t('stories.uploading')
+            : failed
+              ? t('stories.post_failed')
+              : ownStory
+                ? t('stories.your_frame')
+                : t('stories.add_title')}
         </Text>
         <Text style={[styles.createSub, { color: colors.textMuted }]} numberOfLines={1}>
-          {ownStory ? t('stories.create_hint') : t('stories.add_subtitle')}
+          {uploading
+            ? t('stories.sending')
+            : failed
+              ? t('stories.retry')
+              : ownStory
+                ? t('stories.create_hint')
+                : t('stories.add_subtitle')}
         </Text>
       </View>
     </Pressable>
