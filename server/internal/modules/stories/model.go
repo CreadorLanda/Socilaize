@@ -9,10 +9,12 @@ import (
 type Kind string
 
 const (
-	KindImage Kind = "image"
-	KindVideo Kind = "video"
-	KindText  Kind = "text"
-	KindAudio Kind = "audio"
+	KindImage    Kind = "image"
+	KindVideo    Kind = "video"
+	KindText     Kind = "text"
+	KindAudio    Kind = "audio"
+	KindPoll     Kind = "poll"
+	KindQuestion Kind = "question"
 )
 
 type Visibility string

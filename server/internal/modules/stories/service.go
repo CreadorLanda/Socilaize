@@ -60,7 +60,7 @@ func (s *Service) toStory(x row, me uuid.UUID) Story {
 func (s *Service) Create(ctx context.Context, author uuid.UUID, req CreateRequest) (Story, error) {
 	kind := req.Kind
 	switch kind {
-	case KindImage, KindVideo, KindText, KindAudio:
+	case KindImage, KindVideo, KindText, KindAudio, KindPoll, KindQuestion:
 	default:
 		return Story{}, ErrInvalidKind
 	}
@@ -74,7 +74,8 @@ func (s *Service) Create(ctx context.Context, author uuid.UUID, req CreateReques
 		return Story{}, ErrInvalidVis
 	}
 	caption := strings.TrimSpace(req.Caption)
-	if kind == KindText && caption == "" {
+	// Text-like kinds need a caption (poll/question store options in caption).
+	if (kind == KindText || kind == KindPoll || kind == KindQuestion) && caption == "" {
 		return Story{}, ErrEmptyCaption
 	}
 	if (kind == KindImage || kind == KindVideo || kind == KindAudio) && strings.TrimSpace(req.MediaURL) == "" {

@@ -1,7 +1,7 @@
 import { api } from './client';
 import { mediaFileURL } from './media';
 
-export type StoryKind = 'image' | 'video' | 'text' | 'audio';
+export type StoryKind = 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question';
 export type StoryVisibility = 'public' | 'contacts' | 'close';
 
 export interface StoryDTO {

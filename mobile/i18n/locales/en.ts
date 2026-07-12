@@ -585,6 +585,7 @@ export default {
     live_viewers: '{{count}} watching',
     live_hint: 'Broadcast to your audience in real time',
     live_starting: 'You are about to go live',
+    live_coming_soon: 'Live stories are coming soon. You can already share photo, video, text, audio, polls, and questions.',
     live_chat: 'Live chat',
     live_ended: 'Live ended',
     end_live: 'End live',

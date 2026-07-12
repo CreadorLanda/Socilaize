@@ -49,6 +49,23 @@ import { t } from '@/i18n';
 const REACTIONS = ['❤️', '🔥', '😂', '😮', '🙌'] as const;
 type ReplyMode = 'comment' | 'private';
 
+/** Poll/question captions may be plain text or JSON `{ q, a?, b? }`. */
+function parseInteractiveCaption(
+  caption: string,
+  kind: string,
+): { q: string; a?: string; b?: string } {
+  const trimmed = (caption || '').trim();
+  if ((kind === 'poll' || kind === 'question') && trimmed.startsWith('{')) {
+    try {
+      const o = JSON.parse(trimmed) as { q?: string; a?: string; b?: string };
+      return { q: o.q || trimmed, a: o.a, b: o.b };
+    } catch {
+      /* fall through */
+    }
+  }
+  return { q: trimmed };
+}
+
 export default function StoryViewerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -234,6 +251,7 @@ export default function StoryViewerScreen() {
     story.kind === 'question' ||
     !story.coverUri;
   const isAudio = story.kind === 'audio';
+  const interactive = parseInteractiveCaption(story.caption, story.kind);
   const displayName = story.isAnonymous ? t('stories.anonymous_author') : story.user;
   const commentsEnabled = story.allowComments !== false;
   const totalComments = comments.length + comments.reduce((n, c) => n + (c.replies?.length ?? 0), 0);
@@ -359,27 +377,33 @@ export default function StoryViewerScreen() {
             {story.kind === 'poll' ? (
               <View style={styles.pollPreview}>
                 <Text style={styles.pollEyebrow}>{t('stories.poll_mode')}</Text>
-                <Text style={styles.pollQuestion}>{story.caption}</Text>
+                <Text style={styles.pollQuestion}>{interactive.q || story.caption}</Text>
                 <View style={styles.pollOpt}>
-                  <Text style={styles.pollOptText}>{t('stories.poll_yes')}</Text>
+                  <Text style={styles.pollOptText}>
+                    {interactive.a || t('stories.poll_yes')}
+                  </Text>
                 </View>
                 <View style={styles.pollOpt}>
-                  <Text style={styles.pollOptText}>{t('stories.poll_no')}</Text>
+                  <Text style={styles.pollOptText}>
+                    {interactive.b || t('stories.poll_no')}
+                  </Text>
                 </View>
               </View>
             ) : story.kind === 'question' ? (
               <View style={styles.pollPreview}>
                 <Text style={styles.pollEyebrow}>{t('stories.question_mode')}</Text>
-                <Text style={styles.pollQuestion}>{story.caption}</Text>
+                <Text style={styles.pollQuestion}>{interactive.q || story.caption}</Text>
                 <View style={[styles.pollOpt, { backgroundColor: '#EEF2FF' }]}>
                   <Text style={[styles.pollOptText, { color: story.accent }]}>
                     {t('stories.answer_placeholder')}
                   </Text>
                 </View>
               </View>
-            ) : (
-              <Text style={[styles.caption, isTextStory && styles.textCaption]}>{story.caption}</Text>
-            )}
+            ) : story.caption ? (
+              <Text style={[styles.caption, isTextStory && styles.textCaption]}>
+                {story.caption}
+              </Text>
+            ) : null}
           </View>
 
           {reactBurst ? (

@@ -55,6 +55,7 @@ type StickerKind = 'poll' | 'question' | 'mention' | null;
 
 const { width: W, height: H } = Dimensions.get('window');
 const ACCENTS = ['#2D5BFF', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#A78BFA', '#EF4444', '#FFFFFF'];
+/** All creatable modes — live is listed but blocked until hangout ships. */
 const CAPTURE_MODES: CaptureMode[] = ['type', 'normal', 'boomerang', 'handsfree', 'audio', 'live'];
 
 export default function CreateStoryScreen() {
@@ -85,7 +86,7 @@ export default function CreateStoryScreen() {
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [audioRecording, setAudioRecording] = useState(false);
-  const [isLiveSetup, setIsLiveSetup] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const audioTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioStart = useRef(0);
 
@@ -105,20 +106,20 @@ export default function CreateStoryScreen() {
       setMediaUri(null);
       setIsVideo(false);
       setIsAudio(false);
-      setIsLiveSetup(false);
+      setSticker(null);
       setPhase('edit');
       setActiveTool('text');
     }
-    if (captureMode === 'live' && phase === 'capture') {
-      setTextOnly(false);
-      setMediaUri(null);
-      setIsVideo(true);
-      setIsAudio(false);
-      setIsLiveSetup(true);
-      setPhase('edit');
-      setActiveTool(null);
-    }
   }, [captureMode, phase]);
+
+  const selectCaptureMode = (mode: CaptureMode) => {
+    if (mode === 'live') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(t('stories.go_live'), t('stories.live_coming_soon') || 'Live is coming soon.');
+      return;
+    }
+    setCaptureMode(mode);
+  };
 
   const lastGalleryThumb = mediaUri && !isAudio ? mediaUri : null;
 
@@ -149,8 +150,7 @@ export default function CreateStoryScreen() {
     setCaption('');
     setSticker(null);
     setActiveTool(null);
-    setIsLiveSetup(false);
-    if (captureMode === 'type' || captureMode === 'audio' || captureMode === 'live') {
+    if (captureMode === 'type' || captureMode === 'audio') {
       setCaptureMode('normal');
     }
   };
@@ -259,20 +259,53 @@ export default function CreateStoryScreen() {
         ? t('stories.privacy_close')
         : t('stories.privacy_contacts');
 
-  const publish = async () => {
-    if (isLiveSetup) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(t('stories.go_live'), t('stories.live_starting'), [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-      return;
+  const buildInteractiveCaption = (): string => {
+    if (sticker === 'poll') {
+      return JSON.stringify({
+        q: caption.trim(),
+        a: (pollA || t('stories.poll_yes')).trim(),
+        b: (pollB || t('stories.poll_no')).trim(),
+      });
     }
+    if (sticker === 'question') {
+      return JSON.stringify({ q: caption.trim() });
+    }
+    return caption.trim();
+  };
+
+  const resolveDurationSec = (kind: string): number => {
+    if (kind === 'audio') return Math.min(30, Math.max(5, audioSec || 5));
+    if (kind === 'video') {
+      if (captureMode === 'boomerang') return 3;
+      if (captureMode === 'handsfree') return 15;
+      return 10;
+    }
+    if (kind === 'poll' || kind === 'question') return 8;
+    if (kind === 'text') return 6;
+    return 5;
+  };
+
+  const publish = async () => {
+    if (publishing) return;
 
     try {
       let mediaUrl: string | undefined;
-      let kind: 'image' | 'video' | 'text' | 'audio' = 'text';
+      let kind: 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question' = 'text';
 
-      if (textOnly) {
+      // Stickers take priority when composing text-like interactive stories.
+      if (sticker === 'poll') {
+        kind = 'poll';
+        if (!caption.trim()) {
+          Alert.alert(t('stories.poll_mode'), t('stories.poll_placeholder'));
+          return;
+        }
+      } else if (sticker === 'question') {
+        kind = 'question';
+        if (!caption.trim()) {
+          Alert.alert(t('stories.question_mode'), t('stories.question_placeholder'));
+          return;
+        }
+      } else if (textOnly) {
         kind = 'text';
         if (!caption.trim()) {
           Alert.alert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
@@ -280,6 +313,18 @@ export default function CreateStoryScreen() {
         }
       } else if (isAudio && mediaUri) {
         kind = 'audio';
+      } else if (mediaUri) {
+        kind = isVideo ? 'video' : 'image';
+      } else if (caption.trim()) {
+        kind = 'text';
+      } else {
+        Alert.alert(t('stories.sent_notice'), 'Pick a photo, video, audio, or write something.');
+        return;
+      }
+
+      setPublishing(true);
+
+      if (kind === 'audio' && mediaUri) {
         const up = await uploadMedia({
           uri: mediaUri,
           name: `story-audio-${Date.now()}.m4a`,
@@ -287,28 +332,25 @@ export default function CreateStoryScreen() {
           durationMs: audioSec * 1000,
         });
         mediaUrl = up.url;
-      } else if (mediaUri) {
-        kind = isVideo ? 'video' : 'image';
+      } else if ((kind === 'image' || kind === 'video') && mediaUri) {
         const up = await uploadMedia({
           uri: mediaUri,
-          mimeType: isVideo ? 'video/mp4' : 'image/jpeg',
+          mimeType: kind === 'video' ? 'video/mp4' : 'image/jpeg',
         });
         mediaUrl = up.url;
-      } else if (caption.trim()) {
-        kind = 'text';
-      } else {
-        Alert.alert(t('stories.sent_notice'), 'Pick a photo or write something.');
-        return;
       }
+
+      const bodyCaption =
+        kind === 'poll' || kind === 'question' ? buildInteractiveCaption() : caption.trim();
 
       const dto = await createStory({
         kind,
-        caption: caption.trim(),
+        caption: bodyCaption,
         media_url: mediaUrl,
         accent,
         visibility: audience,
         is_anonymous: postAnonymous,
-        duration_sec: isAudio ? Math.max(5, audioSec) : 5,
+        duration_sec: resolveDurationSec(kind),
       });
       prependStoryFromDTO(dto);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -327,6 +369,8 @@ export default function CreateStoryScreen() {
           ? String((err as { message?: string }).message)
           : 'publish_failed';
       Alert.alert(t('stories.sent_notice'), detail);
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -409,7 +453,7 @@ export default function CreateStoryScreen() {
             <View style={{ height: 8 }} />
           )}
 
-          <ModeCarousel mode={captureMode} onChange={setCaptureMode} />
+          <ModeCarousel mode={captureMode} onChange={selectCaptureMode} />
 
           <View style={styles.shutterRow}>
             <Pressable
@@ -480,32 +524,27 @@ export default function CreateStoryScreen() {
   }
 
   // ── EDIT ─────────────────────────────────────────────────────────────────
+  const solidBg = textOnly || isAudio || sticker === 'poll' || sticker === 'question';
   return (
     <View
       style={[
         styles.root,
-        (textOnly || isAudio || isLiveSetup) && {
-          backgroundColor: isLiveSetup ? '#0A0B0F' : isAudio ? '#12141A' : accent,
+        solidBg && {
+          backgroundColor: isAudio ? '#12141A' : accent,
         },
       ]}
     >
       <StatusBar style="light" />
 
-      {!textOnly && !isAudio && !isLiveSetup && mediaUri ? (
+      {!solidBg && mediaUri ? (
         <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
       ) : null}
-      {!textOnly && !isAudio && !isLiveSetup && mediaUri ? <View style={styles.editScrim} /> : null}
-      {textOnly || isAudio ? (
+      {!solidBg && mediaUri ? <View style={styles.editScrim} /> : null}
+      {solidBg ? (
         <>
           <View style={[StyleSheet.absoluteFill, { backgroundColor: isAudio ? '#12141A' : accent }]} />
           <View style={styles.textOrbA} />
           <View style={styles.textOrbB} />
-        </>
-      ) : null}
-      {isLiveSetup ? (
-        <>
-          <View style={styles.liveSetupBg} />
-          <View style={styles.livePulseRing} />
         </>
       ) : null}
 
@@ -551,30 +590,6 @@ export default function CreateStoryScreen() {
         </View>
 
         <View style={styles.editBody} pointerEvents="box-none">
-          {isLiveSetup ? (
-            <View style={styles.liveSetupCard}>
-              <View style={styles.liveBadgeBig}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveBadgeBigText}>{t('stories.live_now')}</Text>
-              </View>
-              <Image
-                source={{ uri: profile.avatarUri }}
-                style={styles.liveAvatar}
-                contentFit="cover"
-              />
-              <Text style={styles.liveTitle}>{t('stories.live_starting')}</Text>
-              <Text style={styles.liveHint}>{t('stories.live_hint')}</Text>
-              <TextInput
-                value={caption}
-                onChangeText={setCaption}
-                placeholder={t('stories.caption_placeholder')}
-                placeholderTextColor="rgba(255,255,255,0.45)"
-                style={styles.liveTitleInput}
-                maxLength={80}
-              />
-            </View>
-          ) : null}
-
           {isAudio ? (
             <View style={styles.audioEditCard}>
               <View style={styles.audioOrb}>
@@ -585,7 +600,9 @@ export default function CreateStoryScreen() {
             </View>
           ) : null}
 
-          {textOnly || activeTool === 'text' || isAudio ? (
+          {(textOnly || activeTool === 'text' || isAudio) &&
+          sticker !== 'poll' &&
+          sticker !== 'question' ? (
             <TextInput
               value={caption}
               onChangeText={setCaption}
@@ -597,7 +614,7 @@ export default function CreateStoryScreen() {
               autoFocus={textOnly || activeTool === 'text'}
               style={[styles.storyTextInput, textOnly && styles.storyTextInputLarge]}
             />
-          ) : mediaUri && !textOnly ? (
+          ) : mediaUri && !textOnly && !sticker ? (
             <Pressable onPress={() => setActiveTool('text')} style={styles.captionTapZone}>
               {caption ? (
                 <Text style={styles.overlayCaption}>{caption}</Text>
@@ -756,17 +773,20 @@ export default function CreateStoryScreen() {
 
         <Pressable
           onPress={publish}
+          disabled={publishing}
           style={({ pressed }) => [
             styles.shareBtn,
-            { backgroundColor: isLiveSetup ? '#EF4444' : colors.primary },
-            pressed && { transform: [{ scale: 0.98 }], opacity: 0.92 },
+            {
+              backgroundColor: colors.primary,
+              opacity: publishing ? 0.7 : 1,
+            },
+            pressed && !publishing && { transform: [{ scale: 0.98 }], opacity: 0.92 },
           ]}
         >
-          {isLiveSetup ? <Ionicons name="radio" size={18} color="#FFF" /> : null}
           <Text style={[styles.shareBtnText, { color: colors.onPrimary }]}>
-            {isLiveSetup ? t('stories.go_live') : t('stories.share_story')}
+            {publishing ? '…' : t('stories.share_story')}
           </Text>
-          {!isLiveSetup ? (
+          {!publishing ? (
             <Ionicons name="arrow-forward" size={18} color={colors.onPrimary} />
           ) : null}
         </Pressable>

@@ -585,6 +585,7 @@ export default {
     live_viewers: '{{count}} a ver',
     live_hint: 'Emite em tempo real para a tua audiência',
     live_starting: 'Estás prestes a entrar em live',
+    live_coming_soon: 'Lives ainda não estão disponíveis. Já podes partilhar foto, vídeo, texto, áudio, enquetes e perguntas.',
     live_chat: 'Chat ao vivo',
     live_ended: 'Live terminada',
     end_live: 'Terminar live',
