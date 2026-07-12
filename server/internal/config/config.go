@@ -24,8 +24,14 @@ type Config struct {
 // PushConfig configures the offline push worker.
 type PushConfig struct {
 	// WebhookURL optional HTTP endpoint that receives push jobs + device tokens.
-	// Useful for a small FCM relay or n8n/Make webhook while native FCM is pending.
+	// Useful for n8n/Make or a custom relay alongside FCM/Expo delivery.
 	WebhookURL string
+	// FCMProjectID is the Firebase project id for HTTP v1 sends.
+	FCMProjectID string
+	// FCMCredentialsFile path to a service-account JSON (or use FCM_CREDENTIALS_JSON).
+	FCMCredentialsFile string
+	// FCMCredentialsJSON raw service-account JSON body (takes precedence over file).
+	FCMCredentialsJSON string
 }
 
 // MediaConfig controls on-disk upload storage (S3/R2 later).
@@ -103,7 +109,10 @@ func Load() (Config, error) {
 			MaxUploadBytes: getenvInt64("MEDIA_MAX_BYTES", 25<<20),
 		},
 		Push: PushConfig{
-			WebhookURL: os.Getenv("PUSH_WEBHOOK_URL"),
+			WebhookURL:         os.Getenv("PUSH_WEBHOOK_URL"),
+			FCMProjectID:       os.Getenv("FCM_PROJECT_ID"),
+			FCMCredentialsFile: os.Getenv("FCM_CREDENTIALS_FILE"),
+			FCMCredentialsJSON: os.Getenv("FCM_CREDENTIALS_JSON"),
 		},
 	}
 

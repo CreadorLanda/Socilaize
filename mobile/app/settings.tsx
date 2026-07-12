@@ -9,13 +9,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { clearSession } from '@/data/auth-store';
-import * as SecureStore from 'expo-secure-store';
 
 import {
   getNotifPrefs,
   patchNotifPrefs,
-  registerPushDevice,
 } from '@/data/api/notifications';
+import { registerPushWithServer } from '@/data/push';
 import { useProfile } from '@/data/profile-store';
 import {
   getActivePack,
@@ -47,8 +46,7 @@ export default function SettingsScreen() {
   const [notifStories, setNotifStories] = useState(true);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
-  // Load notification prefs + register a stable dev push token (until Expo
-  // Notifications is wired for real FCM/APNs tokens).
+  // Load notification prefs + register Expo/FCM push token with the API.
   useEffect(() => {
     let cancelled = false;
     getNotifPrefs()
@@ -63,16 +61,9 @@ export default function SettingsScreen() {
       .catch(() => {
         if (!cancelled) setPrefsLoaded(true);
       });
-    // Stable per-install dev token until expo-notifications is wired for FCM/APNs.
-    (async () => {
-      const KEY = 'push.dev_token';
-      let token = await SecureStore.getItemAsync(KEY);
-      if (!token) {
-        token = `dev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-        await SecureStore.setItemAsync(KEY, token);
-      }
-      await registerPushDevice(token).catch(() => {});
-    })();
+    registerPushWithServer().catch(() => {
+      /* permission denied / simulator / offline */
+    });
     return () => {
       cancelled = true;
     };

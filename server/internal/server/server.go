@@ -103,7 +103,14 @@ func New(cfg config.Config) (*Server, error) {
 	notifSvc := notifications.NewService(notifRepo, rdb)
 	notifCtl := notifications.NewController(notifSvc)
 	notifications.Register(authed, notifCtl)
-	pushWorker := notifications.NewWorker(notifRepo, rdb, cfg.Push.WebhookURL)
+	pushWorker := notifications.NewWorker(notifRepo, rdb, notifications.WorkerOpts{
+		WebhookURL: cfg.Push.WebhookURL,
+		FCM: notifications.FCMConfig{
+			ProjectID:       cfg.Push.FCMProjectID,
+			CredentialsFile: cfg.Push.FCMCredentialsFile,
+			CredentialsJSON: []byte(cfg.Push.FCMCredentialsJSON),
+		},
+	})
 
 	// Native E2E-encrypted messaging (push for offline peers via notifSvc).
 	msgRepo := messages.NewRepository(pg, cfg.Crypto.MessageKey)

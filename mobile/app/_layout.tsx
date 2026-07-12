@@ -8,6 +8,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
 import { bootstrapAuth } from '@/data/auth-store';
+import { registerPushWithServer } from '@/data/push';
 import { useTheme } from '@/hooks/use-theme';
 
 export const unstable_settings = {
@@ -26,7 +27,11 @@ export default function RootLayout() {
     let mounted = true;
     bootstrapAuth().then((user) => {
       if (!mounted) return;
-      if (user) router.replace('/(tabs)');
+      if (user) {
+        router.replace('/(tabs)');
+        // Register Expo/FCM token once a session is restored.
+        registerPushWithServer().catch(() => {});
+      }
       setBooted(true);
     });
     return () => {

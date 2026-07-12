@@ -14,26 +14,44 @@ import (
 
 // Worker drains q:push.send and attempts delivery.
 //
-// Delivery backends (first match wins for side-effects):
-//  1. PUSH_WEBHOOK_URL — POST JSON {user_id,title,body,data,tokens[]}
-//  2. Always logs at info for dogfood visibility
+// Delivery backends (all that apply run):
+//  1. Expo Push API — tokens matching ExponentPushToken[...] / ExpoPushToken[...]
+//  2. FCM HTTP v1 — native device tokens when FCM credentials are configured
+//  3. PUSH_WEBHOOK_URL — optional HTTP relay of the full job + tokens
+//  4. Always logs at info for dogfood visibility
 //
-// Real FCM/APNs HTTP v1 can plug in here later without changing producers.
+// Invalid / unregistered tokens are pruned from push_devices.
 type Worker struct {
 	repo       *Repository
 	rdb        *redis.Client
 	webhookURL string
 	http       *http.Client
+	fcm        *FCMSender
+	expo       *ExpoSender
 	cancel     context.CancelFunc
 }
 
-func NewWorker(repo *Repository, rdb *redis.Client, webhookURL string) *Worker {
-	return &Worker{
+// WorkerOpts configures optional delivery backends.
+type WorkerOpts struct {
+	WebhookURL string
+	FCM        FCMConfig
+}
+
+func NewWorker(repo *Repository, rdb *redis.Client, opts WorkerOpts) *Worker {
+	w := &Worker{
 		repo:       repo,
 		rdb:        rdb,
-		webhookURL: webhookURL,
+		webhookURL: opts.WebhookURL,
 		http:       &http.Client{Timeout: 8 * time.Second},
+		expo:       NewExpoSender(),
 	}
+	if fcm, err := NewFCMSender(opts.FCM); err != nil {
+		log.Warn().Err(err).Msg("push worker: fcm disabled (bad credentials)")
+	} else if fcm != nil {
+		w.fcm = fcm
+		log.Info().Str("project", opts.FCM.ProjectID).Msg("push worker: fcm http v1 enabled")
+	}
+	return w
 }
 
 // Start runs the consumer loop until Stop is called.
@@ -45,7 +63,12 @@ func (w *Worker) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	go w.loop(ctx)
-	log.Info().Str("queue", pushQueueKey).Msg("push worker started")
+	log.Info().
+		Str("queue", pushQueueKey).
+		Bool("fcm", w.fcm != nil).
+		Bool("expo", w.expo != nil).
+		Bool("webhook", w.webhookURL != "").
+		Msg("push worker started")
 }
 
 // Stop cancels the loop.
@@ -103,16 +126,49 @@ func (w *Worker) handle(ctx context.Context, raw string) {
 		return
 	}
 
+	expoToks, fcmToks, other := splitTokens(tokens)
+
 	log.Info().
 		Str("user", job.UserID).
 		Str("category", job.Category).
 		Str("title", job.Title).
 		Int("devices", len(tokens)).
+		Int("expo", len(expoToks)).
+		Int("fcm", len(fcmToks)).
+		Int("other", len(other)).
 		Msg("push deliver")
+
+	var invalid []string
+
+	if w.expo != nil && len(expoToks) > 0 {
+		inv, err := w.expo.Deliver(ctx, job, expoToks)
+		if err != nil {
+			log.Warn().Err(err).Msg("expo push failed")
+		}
+		invalid = append(invalid, inv...)
+	}
+
+	if w.fcm != nil && len(fcmToks) > 0 {
+		inv, err := w.fcm.Deliver(ctx, job, fcmToks)
+		if err != nil {
+			log.Warn().Err(err).Msg("fcm push failed")
+		}
+		invalid = append(invalid, inv...)
+	} else if len(fcmToks) > 0 {
+		log.Debug().Int("n", len(fcmToks)).Msg("fcm tokens present but fcm not configured")
+	}
 
 	if w.webhookURL != "" {
 		if err := w.postWebhook(ctx, job, tokens); err != nil {
 			log.Warn().Err(err).Msg("push webhook failed")
+		}
+	}
+
+	for _, tok := range invalid {
+		if err := w.repo.DeleteByToken(ctx, uid, tok); err != nil {
+			log.Warn().Err(err).Msg("prune invalid push token")
+		} else {
+			log.Info().Str("user", job.UserID).Msg("pruned unregistered push token")
 		}
 	}
 }
