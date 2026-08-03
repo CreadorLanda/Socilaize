@@ -255,6 +255,20 @@ export default {
     following: 'Following',
     verified: 'Verified channel',
   },
+  group_create: {
+    title: 'New group',
+    create: 'Create',
+    name_placeholder: 'Group name',
+    description_placeholder: 'Description (optional)',
+    add_people: 'Add people',
+  },
+  people: {
+    search_placeholder: 'Search people',
+    recent: 'Recent chats',
+    selected: '{{count}} selected',
+    no_results: 'Nobody found.',
+    search_hint: 'Type to search by username.',
+  },
   chat: {
     disappearing_on_notice: '{{name}} turned on disappearing messages. They are deleted {{duration}} after being read.',
     disappearing_off_notice: '{{name}} turned off disappearing messages.',
@@ -387,6 +401,10 @@ export default {
     section: 'In your notes',
   },
   chat_info: {
+    manage_member_hint: 'Choose what this person can do in the group.',
+    promote_member: 'Make admin',
+    demote_member: 'Remove admin',
+    remove_member: 'Remove from group',
     disappearing_hint: 'The clock starts when a message is read, not when it is sent.',
     disappear_3600: '1 hour',
     disappear_86400: '24 hours',

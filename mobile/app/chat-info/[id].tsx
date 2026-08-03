@@ -7,6 +7,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 're
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ListPicker } from '@/components/chat/list-picker';
+import { PeoplePicker } from '@/components/ui/people-picker';
 import { NoteEditor } from '@/components/chat/note-editor';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import {
@@ -19,7 +20,12 @@ import {
   type ReportReason,
 } from '@/data/api/messages';
 import { appAlert, appPrompt } from '@/data/dialog-store';
-import { leaveGroup } from '@/data/api/groups';
+import {
+  addGroupMembers,
+  leaveGroup,
+  removeGroupMember,
+  setGroupMemberRole,
+} from '@/data/api/groups';
 import { getCurrentUser } from '@/data/auth-store';
 import {
   hasLockCode,
@@ -306,6 +312,43 @@ export default function ChatInfoScreen() {
         },
       })).concat([{ text: t('common.cancel'), onPress: () => {} }]),
     );
+  };
+
+  /**
+   * Managing a group's people.
+   *
+   * addGroupMembers, removeGroupMember and setGroupMemberRole all existed in
+   * the API layer and none of them was ever called: a group could be created
+   * and then never changed.
+   */
+  const meId = getCurrentUser()?.id;
+  const isGroupAdmin =
+    isGroup && (group?.members ?? []).some((m) => m.id === meId && m.role === 'admin');
+  const [addingMembers, setAddingMembers] = useState(false);
+
+  const manageMember = (m: { id: string; name: string; role?: string }) => {
+    if (!id || !isGroupAdmin || m.id === meId) return;
+    const isAdmin = m.role === 'admin';
+    appAlert(m.name, t('chat_info.manage_member_hint'), [
+      {
+        text: isAdmin ? t('chat_info.demote_member') : t('chat_info.promote_member'),
+        onPress: () => {
+          setGroupMemberRole(id, m.id, isAdmin ? 'member' : 'admin')
+            .then(() => refreshGroup(id))
+            .catch(failed);
+        },
+      },
+      {
+        text: t('chat_info.remove_member'),
+        style: 'destructive',
+        onPress: () => {
+          removeGroupMember(id, m.id)
+            .then(() => refreshGroup(id))
+            .catch(failed);
+        },
+      },
+      { text: t('common.cancel'), style: 'cancel' },
+    ]);
   };
 
   const failed = () =>
@@ -683,17 +726,27 @@ export default function ChatInfoScreen() {
               {t('chat_info.members_count', { count: memberCount })}
             </SectionTitle>
             <Section colors={colors}>
-              <Row icon="person-add-outline" label={t('chat_info.add_members')} colors={colors} />
-              <Divider colors={colors} />
-              <Row
-                icon="bookmark-outline"
-                label={t('chat_info.add_to_contacts')}
-                colors={colors}
-              />
+              {/* Only for admins: the server refuses anyone else, and a row
+                  that opens onto a refusal is worse than one that is absent. */}
+              {isGroupAdmin ? (
+                <Row
+                  icon="person-add-outline"
+                  label={t('chat_info.add_members')}
+                  colors={colors}
+                  onPress={() => setAddingMembers(true)}
+                />
+              ) : null}
               {(group?.members ?? []).slice(0, 8).map((m) => (
                 <View key={m.id}>
                   <Divider colors={colors} />
-                  <View style={styles.row}>
+                  <Pressable
+                    onPress={() => manageMember(m)}
+                    disabled={!isGroupAdmin || m.id === meId}
+                    style={({ pressed }) => [
+                      styles.row,
+                      pressed && isGroupAdmin && { backgroundColor: colors.surfaceMuted },
+                    ]}
+                  >
                     <Image
                       source={{ uri: m.avatarUri }}
                       style={[styles.rowAvatar, { backgroundColor: colors.surfaceMuted }]}
@@ -716,7 +769,7 @@ export default function ChatInfoScreen() {
                         </Text>
                       </View>
                     ) : null}
-                  </View>
+                  </Pressable>
                 </View>
               ))}
             </Section>
@@ -831,6 +884,19 @@ export default function ChatInfoScreen() {
 
       {id ? (
         <>
+          <PeoplePicker
+            visible={addingMembers}
+            title={t('chat_info.add_members')}
+            confirmLabel={t('common.done')}
+            excludeIds={(group?.members ?? []).map((m) => m.id)}
+            onClose={() => setAddingMembers(false)}
+            onConfirm={(people) => {
+              if (people.length === 0) return;
+              addGroupMembers(id, people.map((p) => p.id))
+                .then(() => refreshGroup(id))
+                .catch(failed);
+            }}
+          />
           <ListPicker visible={showLists} chatId={id} onClose={() => setShowLists(false)} />
           <NoteEditor
             visible={showNote}

@@ -255,6 +255,20 @@ export default {
     following: 'A seguir',
     verified: 'Canal verificado',
   },
+  group_create: {
+    title: 'Novo grupo',
+    create: 'Criar',
+    name_placeholder: 'Nome do grupo',
+    description_placeholder: 'Descrição (opcional)',
+    add_people: 'Adicionar pessoas',
+  },
+  people: {
+    search_placeholder: 'Procurar pessoas',
+    recent: 'Conversas recentes',
+    selected: '{{count}} selecionadas',
+    no_results: 'Ninguém encontrado.',
+    search_hint: 'Escreve para procurar por username.',
+  },
   chat: {
     disappearing_on_notice: '{{name}} ativou mensagens temporárias. Serão apagadas {{duration}} depois de lidas.',
     disappearing_off_notice: '{{name}} desativou as mensagens temporárias.',
@@ -387,6 +401,10 @@ export default {
     section: 'Nas tuas notas',
   },
   chat_info: {
+    manage_member_hint: 'Escolhe o que esta pessoa pode fazer no grupo.',
+    promote_member: 'Tornar administrador',
+    demote_member: 'Deixar de ser administrador',
+    remove_member: 'Remover do grupo',
     disappearing_hint: 'O tempo começa a contar quando a mensagem é lida, não quando é enviada.',
     disappear_3600: '1 hora',
     disappear_86400: '24 horas',

@@ -450,6 +450,22 @@ export default function ChatsScreen() {
           contentContainerStyle={styles.list}
         />
 
+        {/* New group sits above the new-chat button rather than behind a
+            long press: there was no way to create one at all, and a gesture
+            nobody is told about would not have fixed that. */}
+        <Pressable
+          onPress={() => router.push('/group/create')}
+          style={({ pressed }) => [
+            styles.fabSmall,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            pressed && styles.fabPressed,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={t('group_create.title')}
+        >
+          <Ionicons name="people" size={20} color={colors.primary} />
+        </Pressable>
+
         <Pressable
           onPress={() => router.push('/search')}
           style={({ pressed }) => [
@@ -1228,6 +1244,19 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
+  },
+  fabSmall: {
+    position: 'absolute',
+    right: Spacing.lg + 8,
+    // Clear of the main button, which is 56 tall at Spacing.lg from the edge.
+    bottom: Spacing.lg + 68,
+    width: 44,
+    height: 44,
+    borderRadius: Radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
   },
   fabPressed: {
     transform: [{ scale: 0.95 }],

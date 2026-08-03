@@ -117,6 +117,14 @@ export default function RootLayout() {
             <Stack.Screen name="chat-media/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="channel-members/[id]" options={{ headerShown: false }} />
             <Stack.Screen
+              name="group/create"
+              options={{
+                headerShown: false,
+                presentation: 'modal',
+                animation: 'slide_from_bottom',
+              }}
+            />
+            <Stack.Screen
               name="story/[id]"
               options={{
                 headerShown: false,
