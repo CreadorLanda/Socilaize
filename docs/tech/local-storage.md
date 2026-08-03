@@ -40,7 +40,6 @@ PRAGMA journal_mode = WAL;
 
 CREATE TABLE chats (
   id              TEXT PRIMARY KEY,           -- 's:<uuid>' or 'wa:<jid>'
-  source          TEXT NOT NULL,              -- native | whatsapp
   name            TEXT NOT NULL,
   username        TEXT,
   avatar_uri      TEXT,
@@ -49,7 +48,6 @@ CREATE TABLE chats (
   pinned          INTEGER NOT NULL DEFAULT 0,
   archived        INTEGER NOT NULL DEFAULT 0,
   is_group        INTEGER NOT NULL DEFAULT 0,
-  bridge_jid      TEXT                        -- whatsapp JID, when source='whatsapp'
 );
 
 CREATE TABLE messages (
@@ -62,7 +60,6 @@ CREATE TABLE messages (
   media_meta      TEXT,                       -- JSON for poll options, event fields, etc.
   status          TEXT NOT NULL DEFAULT 'sent', -- sent | delivered | read | failed
   reply_to_id     TEXT,
-  bridge_origin   TEXT,                       -- 'whatsapp' for bridged messages
   is_ai           INTEGER NOT NULL DEFAULT 0,  -- 1 for Dandara replies
   created_at      INTEGER NOT NULL,
   edited_at       INTEGER,
@@ -96,7 +93,6 @@ CREATE TABLE contacts (
   username        TEXT,
   phone_hash      BLOB,
   avatar_uri      TEXT,
-  bridge_jid      TEXT
 );
 
 CREATE TABLE drafts (
@@ -174,7 +170,7 @@ On reconnect, the client calls `GET /messages/since?cursor=<last_known>` to drai
 
 ### Cursors
 
-`sync_cursors` tracks per-stream positions (`messages`, `bridge:whatsapp`, `channels:posts`, `stories`, …) so reconnect is cheap and resumable.
+`sync_cursors` tracks per-stream positions (`messages`, `channels:posts`, `stories`, …) so reconnect is cheap and resumable.
 
 ---
 

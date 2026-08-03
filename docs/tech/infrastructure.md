@@ -10,7 +10,6 @@ See [deployment.md](./deployment.md) for the full deployment story. This page is
 | PostgreSQL 16     | Supabase (managed, hybrid topology)  | Authoritative server metadata + pending envelopes  |
 | Redis 7           | Docker on the VPS (or Upstash)       | Queues (Streams), cache, presence, pub/sub        |
 | Object storage    | S3-compatible (Supabase Storage or Cloudflare R2) | Envelope-encrypted media |
-| mautrix-whatsapp  | Docker sidecar on the VPS (opt-in)   | One worker per linked user                         |
 | Caddy             | VPS                                   | Reverse proxy + automatic TLS (Let's Encrypt)     |
 | SQLite + SQLCipher | On every user device                 | Full chat history, encrypted at rest               |
 

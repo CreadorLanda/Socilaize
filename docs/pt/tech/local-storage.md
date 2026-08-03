@@ -40,7 +40,6 @@ PRAGMA journal_mode = WAL;
 
 CREATE TABLE chats (
   id              TEXT PRIMARY KEY,           -- 's:<uuid>' ou 'wa:<jid>'
-  source          TEXT NOT NULL,              -- native | whatsapp
   name            TEXT NOT NULL,
   username        TEXT,
   avatar_uri      TEXT,
@@ -49,7 +48,6 @@ CREATE TABLE chats (
   pinned          INTEGER NOT NULL DEFAULT 0,
   archived        INTEGER NOT NULL DEFAULT 0,
   is_group        INTEGER NOT NULL DEFAULT 0,
-  bridge_jid      TEXT                        -- JID whatsapp quando source='whatsapp'
 );
 
 CREATE TABLE messages (
@@ -62,7 +60,6 @@ CREATE TABLE messages (
   media_meta      TEXT,                       -- JSON: opções de poll, campos de evento, etc.
   status          TEXT NOT NULL DEFAULT 'sent', -- sent | delivered | read | failed
   reply_to_id     TEXT,
-  bridge_origin   TEXT,                       -- 'whatsapp' para mensagens com ponte
   is_ai           INTEGER NOT NULL DEFAULT 0,  -- 1 para respostas da Dandara
   created_at      INTEGER NOT NULL,
   edited_at       INTEGER,
@@ -96,7 +93,6 @@ CREATE TABLE contacts (
   username        TEXT,
   phone_hash      BLOB,
   avatar_uri      TEXT,
-  bridge_jid      TEXT
 );
 
 CREATE TABLE drafts (
@@ -174,7 +170,7 @@ Na reconexão, o cliente chama `GET /messages/since?cursor=<last_known>` para dr
 
 ### Cursores
 
-`sync_cursors` mantém posições por stream (`messages`, `bridge:whatsapp`, `channels:posts`, `stories`, …) para a reconexão ser barata e resumível.
+`sync_cursors` mantém posições por stream (`messages`, `channels:posts`, `stories`, …) para a reconexão ser barata e resumível.
 
 ---
 

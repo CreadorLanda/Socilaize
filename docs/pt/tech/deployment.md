@@ -1,7 +1,5 @@
 # 🚢 Deployment
 
-> Como o Socialize vai do laptop do programador para um URL público, na **topologia híbrida**: Postgres no Supabase (gerido), Redis + API Go + mautrix-whatsapp numa única VPS (alvo: Oracle Always-Free Ampere).
-
 ---
 
 ## Topologia em diagrama
@@ -15,7 +13,6 @@
 │  Go API  (systemd unit, :8080 em localhost)                         │
 │         │                                                           │
 │         ├─ Redis (Docker, :6379 em localhost) — filas, presença     │
-│         └─ mautrix-whatsapp (Docker, opt-in) — worker(s) da ponte   │
 │                                                                     │
 └─────────────────────────────────────────┬───────────────────────────┘
                                           │  pgx sobre TLS (porta 6543)
@@ -30,7 +27,6 @@
 Porquê este split:
 
 - **Backups importam mais no Postgres.** Apps de mensagens morrem mal sem a DB. O Supabase dá backups diários (free) e PITR (Pro) sem escreveres uma cron.
-- **O resto é barato de reconstruir.** Redis tem estado curto (filas drenam em segundos, OTPs expiram em 5 min, presença reset na reconexão). Sessões mautrix são blobs cifrados — re-link basta.
 - **Uma VPS = um modelo mental.** SSH, `systemctl`, `docker compose`, feito. Sem service mesh, sem Kubernetes.
 
 ---
@@ -196,19 +192,6 @@ curl -s https://api.<o-teu-domínio>/api/readyz    # 200 com checks pg + redis
 
 ---
 
-## Passo 5 — Ponte WhatsApp (opt-in)
-
-Quando estiveres pronto para ligar `backend/bridge-whatsapp`:
-
-```bash
-cd /opt/socialize/source/server
-sudo docker compose -f deploy/docker/docker-compose.yml --profile bridge up -d
-```
-
-A ponte precisa de config própria dentro do container (`/data/config.yaml`); a implementação aterra em `backend/bridge-whatsapp`. Ver [whatsapp-bridge.md](./whatsapp-bridge.md).
-
----
-
 ## Atualizações
 
 Para enviar uma nova versão da API:
@@ -243,7 +226,6 @@ Assim que `backend/dev` estiver estável, uma pequena GitHub Action faz isto em 
 | Dados Postgres        | **Supabase** (automático)                   | Diário; PITR no Pro |
 | Redis                 | Aceitamos perda no restart (estado efémero) | n/a          |
 | `/opt/socialize/server/.env` | Manual — guardar cópia num gestor de passwords | a cada mudança |
-| Blobs de sessão mautrix | Cifrados em disco + na tabela `bridge_links` no Postgres → cobertos pelos backups do Supabase | com Postgres |
 
 Drill de restore (faz uma vez antes de precisares):
 1. Sobe um projeto Supabase novo.
@@ -284,5 +266,4 @@ Métricas aplicacionais do binário Go expostas em `/metrics` (a adicionar num f
 - [Arquitetura](./architecture.md)
 - [Backend (Go, MVC)](./backend-go.md)
 - [Database](./database.md)
-- [Ponte WhatsApp](./whatsapp-bridge.md)
 - [Encriptação](../security/encryption.md)
