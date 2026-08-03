@@ -868,6 +868,12 @@ export default {
     share_message: 'Find me on Yo: {{link}}',
   },
   settings: {
+    read_receipts_off: 'You stop seeing theirs too',
+    privacy_failed_title: 'Not saved',
+    privacy_failed_body: 'The setting went back to what it was. Try again.',
+    delete_continue: 'Continue',
+    delete_final_title: 'Delete for good?',
+    delete_final_body: 'This erases your account, your chats, the channels you created and your keys. It is immediate and there is no undo.',
     title: 'Settings',
     section_account: 'Account',
     section_privacy: 'Privacy',

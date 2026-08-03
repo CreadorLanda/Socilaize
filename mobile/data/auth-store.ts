@@ -13,6 +13,14 @@ import { ACCESS_KEY, REFRESH_KEY } from './api/client';
  */
 
 const USER_KEY = 'auth.user';
+/**
+ * The signed-in number, kept on the device.
+ *
+ * The server stores only a hash of it — deliberately, so a breach cannot
+ * hand out phone numbers — which means it can never tell us what ours is.
+ * The device is the only place that can answer, so it keeps its own copy.
+ */
+const PHONE_KEY = 'auth.phone';
 
 let cachedUser: ApiUser | null = null;
 let booted = false;
@@ -47,11 +55,12 @@ export async function bootstrapAuth(): Promise<ApiUser | null> {
   }
 }
 
-export async function setSession(user: ApiUser, tokens: Tokens): Promise<void> {
+export async function setSession(user: ApiUser, tokens: Tokens, phone?: string): Promise<void> {
   await Promise.all([
     SecureStore.setItemAsync(ACCESS_KEY, tokens.access_token),
     SecureStore.setItemAsync(REFRESH_KEY, tokens.refresh_token),
     SecureStore.setItemAsync(USER_KEY, JSON.stringify(user)),
+    ...(phone ? [SecureStore.setItemAsync(PHONE_KEY, phone)] : []),
   ]);
   cachedUser = user;
   emit();
@@ -88,6 +97,7 @@ export async function clearSession(): Promise<void> {
     SecureStore.deleteItemAsync(ACCESS_KEY),
     SecureStore.deleteItemAsync(REFRESH_KEY),
     SecureStore.deleteItemAsync(USER_KEY),
+    SecureStore.deleteItemAsync(PHONE_KEY),
   ]);
   cachedUser = null;
   emit();
@@ -101,4 +111,13 @@ export function useCurrentUser(): ApiUser | null {
 /** Non-reactive sync read, for cases where you only need the current value. */
 export function getCurrentUser(): ApiUser | null {
   return cachedUser;
+}
+
+/** The signed-in number, or empty when this device never recorded one. */
+export async function getSessionPhone(): Promise<string> {
+  try {
+    return (await SecureStore.getItemAsync(PHONE_KEY)) ?? '';
+  } catch {
+    return '';
+  }
 }

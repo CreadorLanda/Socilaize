@@ -16,6 +16,27 @@ type User struct {
 	AvatarURI      string    `json:"avatar_uri,omitempty"`
 	UsernamePublic bool      `json:"username_public"`
 	CreatedAt      time.Time `json:"created_at"`
+
+	// Privacy. Served on /users/me only — see PublicView.
+	LastSeenVisibility Visibility `json:"last_seen_visibility"`
+	PhotoVisibility    Visibility `json:"photo_visibility"`
+	// Reciprocal: off means you neither send read receipts nor see anyone
+	// else's. A setting that only hides your own is a way to take without
+	// giving.
+	ReadReceipts bool `json:"read_receipts"`
+}
+
+// Visibility is who may see a given detail.
+type Visibility string
+
+const (
+	VisEveryone Visibility = "everyone"
+	VisContacts Visibility = "contacts"
+	VisNobody   Visibility = "nobody"
+)
+
+func (v Visibility) valid() bool {
+	return v == VisEveryone || v == VisContacts || v == VisNobody
 }
 
 // PatchRequest is the body of PATCH /users/me. Pointer fields mean "only
@@ -26,6 +47,10 @@ type PatchRequest struct {
 	Bio            *string `json:"bio,omitempty"             binding:"omitempty,max=500"`
 	AvatarURI      *string `json:"avatar_uri,omitempty"      binding:"omitempty,url"`
 	UsernamePublic *bool   `json:"username_public,omitempty"`
+
+	LastSeenVisibility *Visibility `json:"last_seen_visibility,omitempty"`
+	PhotoVisibility    *Visibility `json:"photo_visibility,omitempty"`
+	ReadReceipts       *bool       `json:"read_receipts,omitempty"`
 }
 
 type AvailabilityResponse struct {

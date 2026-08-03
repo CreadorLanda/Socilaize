@@ -16,6 +16,10 @@ export type ApiUser = {
   avatar_uri?: string;
   username_public: boolean;
   created_at: string;
+  /** Privacy. Served on /users/me. */
+  last_seen_visibility?: 'everyone' | 'contacts' | 'nobody';
+  photo_visibility?: 'everyone' | 'contacts' | 'nobody';
+  read_receipts?: boolean;
 };
 
 export type StartResponse = {

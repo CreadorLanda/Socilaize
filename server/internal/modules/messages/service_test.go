@@ -435,3 +435,93 @@ func TestForwardCountCannotBeLaundered(t *testing.T) {
 		t.Fatalf("forwarding a 6-hop message gave %d, want 7", got)
 	}
 }
+
+// TestReadReceiptsAreReciprocal is the rule that makes the setting honest:
+// turning yours off also stops you seeing anyone else's.
+//
+// A switch that only hides your own is a way to take without giving, and
+// people would rightly stop trusting the tick.
+func TestReadReceiptsAreReciprocal(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+	usersRepo := users.NewRepository(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "olá"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	readBy := func(viewer uuid.UUID) int {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, viewer, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for _, m := range msgs {
+			if m.ID == sent.ID {
+				return m.ReadBy
+			}
+		}
+		t.Fatal("message missing")
+		return -1
+	}
+
+	// With receipts on, a read is recorded and Alice sees it.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts: %v", err)
+	}
+	if got := readBy(alice); got != 1 {
+		t.Fatalf("read not recorded: %d", got)
+	}
+
+	// Alice turns hers off. She stops seeing Bob's.
+	off := false
+	if _, err := usersRepo.Patch(ctx, alice, users.PatchRequest{ReadReceipts: &off}); err != nil {
+		t.Fatalf("patch alice: %v", err)
+	}
+	if got := readBy(alice); got != 0 {
+		t.Fatalf("alice still sees read receipts with hers off: %d", got)
+	}
+	// Bob, who kept his on, is unaffected.
+	if got := readBy(bob); got != 1 {
+		t.Fatalf("bob lost sight of a receipt he did not opt out of: %d", got)
+	}
+
+	// And Alice's own reads stop being recorded as reads.
+	fromBob, err := svc.SendMessage(ctx, chat.ID, bob, SendMessageRequest{Content: "e tu"})
+	if err != nil {
+		t.Fatalf("SendMessage(bob): %v", err)
+	}
+	if err := svc.SetReceipts(ctx, chat.ID, alice, ReceiptRequest{
+		MessageIDs: []int64{fromBob.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts(alice): %v", err)
+	}
+	msgs, _ := svc.ListMessages(ctx, chat.ID, bob, 50, 0)
+	for _, m := range msgs {
+		if m.ID == fromBob.ID {
+			if m.ReadBy != 0 {
+				t.Fatalf("alice sent a read receipt with hers off: %d", m.ReadBy)
+			}
+			// Delivered still counts — knowing it arrived is not the same
+			// as knowing it was read, and only the second is opted out of.
+			if m.DeliveredTo != 1 {
+				t.Fatalf("delivery was suppressed too: %d", m.DeliveredTo)
+			}
+		}
+	}
+}

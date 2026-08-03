@@ -8,7 +8,8 @@ import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View }
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { clearSession } from '@/data/auth-store';
+import { deleteMe, me, patchMe, type UserPatch } from '@/data/api/users';
+import { clearSession, getSessionPhone } from '@/data/auth-store';
 import { resetAllStores } from '@/data/reset';
 
 import {
@@ -37,10 +38,52 @@ export default function SettingsScreen() {
   useActiveThemeId();
   const activePack = getActivePack();
 
-  // UI state — local only; persistence is out of scope for this screen.
+  // Privacy, loaded from the account and written back on change. These were
+  // React state and nothing else: every switch reset itself the moment you
+  // left the screen, and none of it ever reached the server.
   const [lastSeen, setLastSeen] = useState<Visibility>('everyone');
   const [profilePhoto, setProfilePhoto] = useState<Visibility>('everyone');
   const [readReceipts, setReadReceipts] = useState(true);
+  const [phone, setPhone] = useState('');
+  const [privacyLoaded, setPrivacyLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    me()
+      .then((u) => {
+        if (cancelled) return;
+        setLastSeen(u.last_seen_visibility ?? 'everyone');
+        setProfilePhoto(u.photo_visibility ?? 'everyone');
+        setReadReceipts(u.read_receipts !== false);
+        // Not from the server: it holds a hash of the number, never the
+        // number. The device is the only place that can answer this.
+        void getSessionPhone().then(setPhone);
+        setPrivacyLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) setPrivacyLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Optimistic, with a rollback.
+   *
+   * A privacy switch that silently fails to save is worse than one that
+   * refuses: the person believes they are hidden and they are not.
+   */
+  const savePrivacy = useCallback(
+    (patch: UserPatch, rollback: () => void) => {
+      if (!privacyLoaded) return;
+      patchMe(patch).catch(() => {
+        rollback();
+        Alert.alert(t('settings.privacy_failed_title'), t('settings.privacy_failed_body'));
+      });
+    },
+    [privacyLoaded],
+  );
   const [notifMessages, setNotifMessages] = useState(true);
   const [notifGroups, setNotifGroups] = useState(true);
   const [notifCalls, setNotifCalls] = useState(false);
@@ -96,10 +139,18 @@ export default function SettingsScreen() {
         ? t('settings.visibility_contacts')
         : t('settings.visibility_nobody');
 
-  const pickVisibility = (title: string, current: Visibility, set: (v: Visibility) => void) => {
+  const pickVisibility = (
+    title: string,
+    current: Visibility,
+    set: (v: Visibility) => void,
+    field: 'last_seen_visibility' | 'photo_visibility',
+  ) => {
     const opt = (v: Visibility) => ({
       text: visibilityLabel(v) + (v === current ? '  ✓' : ''),
-      onPress: () => set(v),
+      onPress: () => {
+        set(v);
+        savePrivacy({ [field]: v }, () => set(current));
+      },
     });
     Alert.alert(title, undefined, [
       opt('everyone'),
@@ -109,10 +160,41 @@ export default function SettingsScreen() {
     ]);
   };
 
+  /**
+   * Deleting the account. Two steps, and the second names what goes.
+   *
+   * The button used to open a dialog whose destructive option had no
+   * handler at all — it looked like a decision and did nothing. Now it is
+   * real and irreversible, which is exactly why it asks twice.
+   */
   const confirmDelete = () =>
     Alert.alert(t('settings.delete_confirm_title'), t('settings.delete_confirm_body'), [
       { text: t('settings.cancel'), style: 'cancel' },
-      { text: t('settings.delete'), style: 'destructive' },
+      {
+        text: t('settings.delete_continue'),
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert(t('settings.delete_final_title'), t('settings.delete_final_body'), [
+            { text: t('settings.cancel'), style: 'cancel' },
+            {
+              text: t('settings.delete'),
+              style: 'destructive',
+              onPress: () => {
+                deleteMe()
+                  .then(() => {
+                    // Local state has to go too: the account is gone, and
+                    // leaving its history on the device would outlive it.
+                    void resetAllStores();
+                    return clearSession();
+                  })
+                  .catch(() => {
+                    Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+                  })
+                  .finally(() => router.replace('/onboarding'));
+              },
+            },
+          ]),
+      },
     ]);
 
   const confirmLogout = () =>
@@ -184,13 +266,17 @@ export default function SettingsScreen() {
         </Pressable>
 
         <Group title={t('settings.section_account')}>
-          <Row icon="call-outline" label={t('settings.phone')} value={t('settings.phone_hidden')} />
+          {/* The real number, not a placeholder. It is the one thing in this
+              section the person cannot look up anywhere else in the app. */}
           <Row
-            icon="mail-outline"
-            label={t('settings.email')}
-            value={t('settings.email_empty')}
-            onPress={() => {}}
+            icon="call-outline"
+            label={t('settings.phone')}
+            value={phone || t('settings.phone_hidden')}
           />
+          {/* No onPress: there is no email on an account yet, and a row that
+              responds to a tap by doing nothing is worse than one that does
+              not respond at all. */}
+          <Row icon="mail-outline" label={t('settings.email')} value={t('settings.email_empty')} />
           <Row icon="trash-outline" label={t('settings.delete_account')} danger onPress={confirmDelete} last />
         </Group>
 
@@ -199,21 +285,25 @@ export default function SettingsScreen() {
             icon="eye-outline"
             label={t('settings.last_seen')}
             value={visibilityLabel(lastSeen)}
-            onPress={() => pickVisibility(t('settings.last_seen'), lastSeen, setLastSeen)}
+            onPress={() => pickVisibility(t('settings.last_seen'), lastSeen, setLastSeen, 'last_seen_visibility')}
           />
           <Row
             icon="image-outline"
             label={t('settings.profile_photo')}
             value={visibilityLabel(profilePhoto)}
-            onPress={() => pickVisibility(t('settings.profile_photo'), profilePhoto, setProfilePhoto)}
+            onPress={() => pickVisibility(t('settings.profile_photo'), profilePhoto, setProfilePhoto, 'photo_visibility')}
           />
           <Row
             icon="checkmark-done-outline"
             label={t('settings.read_receipts')}
+            value={readReceipts ? undefined : t('settings.read_receipts_off')}
             control={
               <Switch
                 value={readReceipts}
-                onValueChange={setReadReceipts}
+                onValueChange={(v) => {
+                  setReadReceipts(v);
+                  savePrivacy({ read_receipts: v }, () => setReadReceipts(!v));
+                }}
                 trackColor={{ false: colors.border, true: colors.primary }}
                 thumbColor="#FFFFFF"
               />

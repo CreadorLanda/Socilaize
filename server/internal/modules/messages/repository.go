@@ -549,7 +549,12 @@ const messageSelectBase = `
 	) rc ON TRUE
 `
 
-func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit int, before int64) ([]Message, error) {
+// ListMessages returns a page of history.
+//
+// hideRead blanks the read counts, for a caller who has turned read receipts
+// off: the reciprocity is applied here so it cannot be skipped by a client
+// that would rather not.
+func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit int, before int64, hideRead bool) ([]Message, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -602,7 +607,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 			SenderName:      senderName,
 			SenderAvatar:    senderAvatar,
 			DeliveredTo:     deliveredTo,
-			ReadBy:          readBy,
+			ReadBy:          readByFor(readBy, hideRead),
 			ForwardCount:    forwardCount,
 			SourceChannelID: srcChannel,
 			SourcePostID:    srcPost,
@@ -953,4 +958,14 @@ func (r *Repository) InsertReport(ctx context.Context, chatID, reporterID uuid.U
 		       created_at = NOW()
 	`, chatID, reporterID, reason, note)
 	return err
+}
+
+// readByFor drops the read count when the caller has opted out of receipts.
+// Delivered is untouched: knowing a message arrived is not the same as
+// knowing it was read, and only the second is what the setting is about.
+func readByFor(readBy int, hide bool) int {
+	if hide {
+		return 0
+	}
+	return readBy
 }

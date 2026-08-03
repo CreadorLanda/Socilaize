@@ -85,7 +85,7 @@ export default function VerifyScreen() {
         device: 'mobile',
         platform: devicePlatform(),
       });
-      await setSession(res.user, res.tokens);
+      await setSession(res.user, res.tokens, e164);
       // Returning users land straight in the app. The backend marks a fresh
       // account with an empty display_name + a `u<hash>` placeholder username
       // — so a non-empty display_name is a reliable "already onboarded" flag.

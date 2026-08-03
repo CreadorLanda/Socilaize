@@ -868,6 +868,12 @@ export default {
     share_message: 'Encontra-me no Yo: {{link}}',
   },
   settings: {
+    read_receipts_off: 'Também não vês os dos outros',
+    privacy_failed_title: 'Não foi guardado',
+    privacy_failed_body: 'A definição voltou ao que estava. Tenta de novo.',
+    delete_continue: 'Continuar',
+    delete_final_title: 'Apagar mesmo?',
+    delete_final_body: 'Isto apaga a conta, as conversas, os canais que criaste e as tuas chaves. É imediato e não há como voltar atrás.',
     title: 'Definições',
     section_account: 'Conta',
     section_privacy: 'Privacidade',

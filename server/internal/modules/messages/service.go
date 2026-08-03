@@ -319,7 +319,18 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
 		return nil, err
 	}
-	msgs, err := s.repo.ListMessages(ctx, chatID, limit, before)
+	// The other half of the bargain: with read receipts off you do not see
+	// anyone else's either. Enforced on the way out rather than by asking
+	// the client to hide them, because a setting the client enforces is a
+	// setting the client can decline to enforce.
+	hideRead := false
+	if u, err := s.users.ByID(ctx, userID); err == nil && !u.ReadReceipts {
+		if chat, err := s.repo.ChatForUser(ctx, chatID, userID); err == nil && chat.Type == ChatDirect {
+			hideRead = true
+		}
+	}
+
+	msgs, err := s.repo.ListMessages(ctx, chatID, limit, before, hideRead)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +403,21 @@ func (s *Service) SetReceipts(ctx context.Context, chatID, userID uuid.UUID, req
 	}
 	if req.Status != ReceiptDelivered && req.Status != ReceiptRead {
 		return ErrInvalidReceipt
+	}
+
+	// Read receipts are reciprocal, and only in one-to-one chats — the same
+	// bargain other messengers strike. With them off, a "read" is recorded
+	// as no more than delivered: you cannot withhold yours and still send
+	// them, or the setting would mean nothing.
+	//
+	// Groups are exempt because a group read receipt is about a room rather
+	// than about you, and hiding one person's would make the rest wrong.
+	if req.Status == ReceiptRead {
+		if chat, err := s.repo.ChatForUser(ctx, chatID, userID); err == nil && chat.Type == ChatDirect {
+			if u, err := s.users.ByID(ctx, userID); err == nil && !u.ReadReceipts {
+				req.Status = ReceiptDelivered
+			}
+		}
 	}
 	ids, err := s.repo.MessageIDsInChat(ctx, chatID, req.MessageIDs)
 	if err != nil {

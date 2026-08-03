@@ -22,7 +22,8 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 const userColumns = `id, username, display_name,
 	COALESCE(bio, '') AS bio,
 	COALESCE(avatar_uri, '') AS avatar_uri,
-	username_public, created_at`
+	username_public, created_at,
+	last_seen_visibility, photo_visibility, read_receipts`
 
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
@@ -30,6 +31,7 @@ func scanUser(row pgx.Row) (*User, error) {
 		&u.ID, &u.Username, &u.DisplayName,
 		&u.Bio, &u.AvatarURI,
 		&u.UsernamePublic, &u.CreatedAt,
+		&u.LastSeenVisibility, &u.PhotoVisibility, &u.ReadReceipts,
 	); err != nil {
 		return nil, err
 	}
@@ -82,6 +84,15 @@ func (r *Repository) Patch(ctx context.Context, id uuid.UUID, p PatchRequest) (*
 	if p.UsernamePublic != nil {
 		add("username_public", *p.UsernamePublic)
 	}
+	if p.LastSeenVisibility != nil {
+		add("last_seen_visibility", string(*p.LastSeenVisibility))
+	}
+	if p.PhotoVisibility != nil {
+		add("photo_visibility", string(*p.PhotoVisibility))
+	}
+	if p.ReadReceipts != nil {
+		add("read_receipts", *p.ReadReceipts)
+	}
 	if len(setters) == 0 {
 		return r.ByID(ctx, id)
 	}
@@ -130,3 +141,20 @@ func (r *Repository) Search(ctx context.Context, query string, callerID uuid.UUI
 
 // IsNoRows mirrors the helper in auth — keeps the pgx import out of callers.
 func IsNoRows(err error) bool { return err != nil && errors.Is(err, pgx.ErrNoRows) }
+
+// Delete removes an account and everything that hangs off it.
+//
+// Immediate and irreversible, with no grace period: a "deleted" account that
+// quietly still exists is a lie told to someone who asked to be gone. Every
+// table that references users cascades, so this one statement takes the
+// messages, keys, memberships, stories and devices with it.
+func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}

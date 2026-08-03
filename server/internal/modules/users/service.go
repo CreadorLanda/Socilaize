@@ -9,9 +9,10 @@ import (
 )
 
 var (
-	ErrNotFound        = errors.New("user_not_found")
-	ErrUsernameInvalid = errors.New("username_invalid")
-	ErrUsernameTaken   = errors.New("username_taken")
+	ErrNotFound          = errors.New("user_not_found")
+	ErrInvalidVisibility = errors.New("invalid_visibility")
+	ErrUsernameInvalid   = errors.New("username_invalid")
+	ErrUsernameTaken     = errors.New("username_taken")
 )
 
 // usernameRe — same rule the mobile client uses (3–20 chars, lowercase
@@ -89,9 +90,31 @@ func (s *Service) Patch(ctx context.Context, userID uuid.UUID, p PatchRequest) (
 			return nil, ErrUsernameTaken
 		}
 	}
+	// Reject an unknown visibility rather than letting the CHECK constraint
+	// fail: a 400 naming the field is something a client can act on, a 500
+	// from the database is not.
+	for _, v := range []*Visibility{p.LastSeenVisibility, p.PhotoVisibility} {
+		if v != nil && !v.valid() {
+			return nil, ErrInvalidVisibility
+		}
+	}
+
 	u, err := s.repo.Patch(ctx, userID, p)
 	if IsNoRows(err) {
 		return nil, ErrNotFound
 	}
 	return u, err
+}
+
+// Delete removes the account for good.
+//
+// No grace period and no soft flag: an account that is "deleted" but still
+// there is a lie told to someone who asked to be gone. Everything that
+// references the user cascades away with it.
+func (s *Service) Delete(ctx context.Context, userID uuid.UUID) error {
+	err := s.repo.Delete(ctx, userID)
+	if IsNoRows(err) {
+		return ErrNotFound
+	}
+	return err
 }
