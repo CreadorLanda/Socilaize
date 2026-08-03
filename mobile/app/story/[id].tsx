@@ -1,10 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
+
+import { AnonInbox } from '@/components/story/anon-inbox';
+import { ViewersSheet } from '@/components/story/viewers-sheet';
+import { Dialog } from '@/components/ui/dialog';
+import { CachedImage } from '@/components/ui/cached-image';
+import { ensureLocal, mediaIdFromURL } from '@/data/media-cache';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   FlatList,
   Keyboard,
@@ -36,12 +42,21 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { SlideSwap } from '@/components/ui/slide-swap';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { reactStory, viewStory } from '@/data/api/stories';
+import {
+  addComment,
+  deleteStory,
+  listComments,
+  reactStory,
+  viewStory,
+  writeAnon,
+  type StoryCommentDTO,
+} from '@/data/api/stories';
 import type { Story, StoryComment } from '@/data/mock';
 import {
   bootstrapStories,
   ensureStory,
   markStoryViewedLocal,
+  removeStoryLocal,
   useStories,
 } from '@/data/story-store';
 import { t } from '@/i18n';
@@ -98,13 +113,73 @@ export default function StoryViewerScreen() {
     };
   }, [id]);
 
+  /**
+   * Position on the story the route asked for — once.
+   *
+   * `id` is fixed for the life of this screen, but `visibleStories` gets a
+   * new identity on every store emit, and marking a story viewed is itself
+   * an emit. Re-running meant advancing to the second story marked it seen,
+   * which fired this, which found the original id back at index 0 and threw
+   * the viewer there — so it was impossible to move past the first one.
+   */
+  const positionedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!id || visibleStories.length === 0) return;
+    if (positionedFor.current === id) return;
     const found = visibleStories.findIndex((item) => item.id === id);
-    if (found >= 0) setIndex(found);
+    if (found >= 0) {
+      positionedFor.current = id;
+      setIndex(found);
+    }
   }, [id, visibleStories]);
 
   const story = visibleStories[index];
+  const isOwnStory = !!story?.isOwn;
+  const [replyTo, setReplyTo] = useState<{ id: number; author: string } | null>(null);
+  const [viewersOpen, setViewersOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [anonOpen, setAnonOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  /**
+   * Delete this story, then get out of its way.
+   *
+   * The local removal happens first so the viewer never renders a story the
+   * server has already dropped — the request is confirmed by the time the
+   * next frame draws. Advancing rather than always closing keeps a run of
+   * your own stories watchable while you prune them.
+   */
+  const removeStory = () => {
+    if (!story || deleting) return;
+    const doomed = story.id;
+    const hasNext = index < visibleStories.length - 1;
+    setDeleting(true);
+    deleteStory(doomed)
+      .then(() => {
+        removeStoryLocal(doomed);
+        setConfirmDelete(false);
+        if (hasNext) setPaused(false);
+        else router.back();
+      })
+      .catch(() => {
+        setConfirmDelete(false);
+        setToast(t('stories.delete_failed'));
+        setPaused(false);
+      })
+      .finally(() => setDeleting(false));
+  };
+  // The sheet covers the story, so let the timer stop while it is open.
+  useEffect(() => {
+    if (viewersOpen) setPaused(true);
+  }, [viewersOpen]);
+
+  // Swiping from someone else's story onto your own leaves the mode on
+  // 'private', and the tab that would change it back is no longer rendered
+  // — the composer would keep pretending to send private replies to
+  // yourself.
+  useEffect(() => {
+    if (isOwnStory && replyMode === 'private') setReplyMode('comment');
+  }, [isOwnStory, replyMode]);
   const progress = useSharedValue(0);
 
   // Mark viewed on server + local when story changes (skip optimistic uploads).
@@ -116,16 +191,70 @@ export default function StoryViewerScreen() {
     markStoryViewedLocal(story.id);
   }, [story?.id, story?.uploadStatus]);
 
+  /**
+   * Comments from the server, replacing the fixture the sheet used to read.
+   *
+   * `story.comments` only ever existed on the bundled mock, so every real
+   * story opened an empty sheet no matter how much had been written on it.
+   * Optimistic local entries still sit on top until the fetch lands.
+   */
+  const [serverComments, setServerComments] = useState<StoryCommentDTO[]>([]);
+  const commentsFor = story?.id;
+  useEffect(() => {
+    if (!commentsFor || !/^[0-9a-f-]{36}$/i.test(commentsFor)) {
+      setServerComments([]);
+      return;
+    }
+    let cancelled = false;
+    listComments(commentsFor)
+      .then((list) => {
+        if (!cancelled) setServerComments(list ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [commentsFor]);
+
   const comments = useMemo(() => {
     if (!story) return [] as StoryComment[];
-    const base = story.comments ?? [];
-    const extra = localComments[story.id] ?? [];
-    return [...extra, ...base];
-  }, [story, localComments]);
 
+    const toUI = (c: StoryCommentDTO): StoryComment => ({
+      id: String(c.id),
+      author: c.is_anonymous ? t('stories.anonymous_author') : c.author_name || c.author_username,
+      avatarUri: c.author_avatar,
+      text: c.body,
+      postedAt: relativeCommentTime(c.created_at),
+      isAnonymous: c.is_anonymous,
+    });
+
+    // The server sends one flat list with parent_id; the sheet renders a
+    // tree. Nesting here rather than server-side keeps the wire format
+    // simple and means an unmatched parent — a reply whose top comment was
+    // deleted — degrades to a top-level row instead of disappearing.
+    const tops = new Map<string, StoryComment>();
+    for (const c of serverComments) {
+      if (c.parent_id == null) tops.set(String(c.id), { ...toUI(c), replies: [] });
+    }
+    for (const c of serverComments) {
+      if (c.parent_id == null) continue;
+      const parent = tops.get(String(c.parent_id));
+      if (parent) parent.replies = [...(parent.replies ?? []), toUI(c)];
+      else tops.set(String(c.id), toUI(c));
+    }
+
+    const extra = localComments[story.id] ?? [];
+    return [...extra, ...Array.from(tops.values())];
+  }, [story, serverComments, localComments]);
+
+  // Warm the neighbours so a swipe lands on a picture, not a spinner.
+  // Image.prefetch cannot do this any more: it fetches without credentials,
+  // so it was priming a 401 for every story either side of this one.
   useEffect(() => {
     [visibleStories[index - 1], visibleStories[index + 1]].forEach((item) => {
-      if (item && item.kind !== 'text' && item.kind !== 'audio') Image.prefetch(item.coverUri);
+      if (!item || item.kind === 'text' || item.kind === 'audio') return;
+      const mediaId = mediaIdFromURL(item.coverUri);
+      if (mediaId) void ensureLocal(mediaId);
     });
   }, [index, visibleStories]);
 
@@ -149,15 +278,25 @@ export default function StoryViewerScreen() {
     else router.back();
   }, [index, visibleStories.length]);
 
+  // Read out the three fields the countdown depends on.
+  //
+  // Depending on `story` itself restarted the timer on every store emit —
+  // the object is rebuilt each time — so the bar kept jumping back to zero
+  // and a story never finished on its own. Naming the fields keeps the
+  // dependency list both honest and stable.
+  const storyId = story?.id;
+  const storyDuration = story?.durationSec;
+  const storyIsLive = story?.isLive;
+
   useEffect(() => {
     // Live stories stay open — no auto-advance.
-    if (!story || paused || story.isLive) {
+    if (!storyId || paused || storyIsLive) {
       cancelAnimation(progress);
-      if (story?.isLive) progress.value = 1;
+      if (storyIsLive) progress.value = 1;
       return;
     }
     progress.value = 0;
-    const durationMs = Math.max(4, story.durationSec) * 1000;
+    const durationMs = Math.max(4, storyDuration ?? 0) * 1000;
     progress.value = withTiming(
       1,
       { duration: durationMs, easing: Easing.linear },
@@ -166,7 +305,7 @@ export default function StoryViewerScreen() {
       },
     );
     return () => cancelAnimation(progress);
-  }, [story?.id, paused, progress, goNext, story]);
+  }, [storyId, storyDuration, storyIsLive, paused, progress, goNext]);
 
   const longPress = Gesture.LongPress()
     .minDuration(160)
@@ -199,7 +338,16 @@ export default function StoryViewerScreen() {
 
     if (replyMode === 'private') {
       setReply('');
-      setToast(t('stories.private_reply_sent'));
+      // An anonymous story cannot take an ordinary private reply: opening a
+      // chat names both people, so the first reply would undo exactly the
+      // anonymity the author was promised. It goes through the blind
+      // channel instead.
+      if (story.isAnonymous && /^[0-9a-f-]{36}$/i.test(story.id)) {
+        writeAnon(story.id, text).catch(() => {});
+        setToast(t('anon.sent'));
+      } else {
+        setToast(t('stories.private_reply_sent'));
+      }
       setTimeout(() => setToast(null), 1400);
       return;
     }
@@ -210,8 +358,25 @@ export default function StoryViewerScreen() {
       return;
     }
 
-    const anon = replyAnonymous && story.allowAnonymousReplies !== false;
-    const next: StoryComment = {
+    postComment(text, replyAnonymous);
+    setReply('');
+    if (!commentsOpen) setCommentsOpen(true);
+  };
+
+  /**
+   * Post a comment. The only place that does.
+   *
+   * There used to be two copies of this — one behind the composer, one
+   * behind the sheet's own input — and only the first was ever wired to the
+   * server. Comments typed where people actually type them went into local
+   * state and nowhere else, so they vanished on reload.
+   */
+  const postComment = (raw: string, anonymous: boolean, parentId?: number) => {
+    const text = raw.trim();
+    if (!text || !story) return;
+
+    const anon = anonymous && story.allowAnonymousReplies !== false;
+    const optimistic: StoryComment = {
       id: `local-${Date.now()}`,
       author: anon ? t('stories.anonymous_author') : 'You',
       avatarUri: anon
@@ -221,14 +386,63 @@ export default function StoryViewerScreen() {
       postedAt: t('channel.just_now'),
       isAnonymous: anon,
     };
-    setLocalComments((prev) => ({
-      ...prev,
-      [story.id]: [next, ...(prev[story.id] ?? [])],
-    }));
-    setReply('');
+    const storyId = story.id;
+    // A reply shows up nested straight away; only top-level comments go into
+    // the optimistic list, or a reply would briefly appear as its own thread
+    // and then jump under its parent when the fetch lands.
+    if (parentId == null) {
+      setLocalComments((prev) => ({
+        ...prev,
+        [storyId]: [optimistic, ...(prev[storyId] ?? [])],
+      }));
+    } else {
+      setServerComments((prev) => [
+        ...prev,
+        {
+          id: -Date.now(),
+          story_id: storyId,
+          parent_id: parentId,
+          body: text,
+          author_id: '',
+          author_name: 'You',
+          author_username: '',
+          author_avatar: '',
+          is_anonymous: anon,
+          is_mine: true,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
     setToast(t('stories.comment_sent'));
     setTimeout(() => setToast(null), 1400);
-    if (!commentsOpen) setCommentsOpen(true);
+
+    if (!/^[0-9a-f-]{36}$/i.test(storyId)) return;
+
+    const dropOptimistic = () => {
+      if (parentId == null) {
+        setLocalComments((prev) => ({
+          ...prev,
+          [storyId]: (prev[storyId] ?? []).filter((c) => c.id !== optimistic.id),
+        }));
+      } else {
+        // Negative ids are the placeholders minted above; the server never
+        // issues one, so this cannot remove a real row.
+        setServerComments((prev) => prev.filter((c) => c.id > 0));
+      }
+    };
+
+    addComment(storyId, text, { anonymous: anon, parentId })
+      .then((saved) => {
+        // Swap the placeholder for the stored row, so the id is real and a
+        // later delete has something to act on.
+        dropOptimistic();
+        setServerComments((prev) => [...prev, saved]);
+      })
+      .catch(() => {
+        dropOptimistic();
+        setToast(t('stories.comment_failed'));
+        setTimeout(() => setToast(null), 1600);
+      });
   };
 
   if (!story) {
@@ -269,8 +483,11 @@ export default function StoryViewerScreen() {
           </View>
         ) : (
           <>
-            <Image
-              source={{ uri: story.coverUri }}
+            {/* Through the cache, not straight to <Image>. The media endpoint
+                is authenticated and expo-image cannot attach the header, so
+                every story cover came back 401 and rendered as nothing. */}
+            <CachedImage
+              url={story.coverUri}
               style={StyleSheet.absoluteFill}
               contentFit="cover"
               transition={200}
@@ -337,6 +554,34 @@ export default function StoryViewerScreen() {
                 <Ionicons name="pause" size={12} color="#FFF" />
                 <Text style={styles.pauseText}>{t('stories.hold_to_pause')}</Text>
               </Animated.View>
+            ) : null}
+
+            {isOwnStory && story.isAnonymous ? (
+              <Pressable
+                onPress={() => {
+                  setPaused(true);
+                  setAnonOpen(true);
+                }}
+                hitSlop={12}
+                style={styles.iconButton}
+                accessibilityLabel={t('anon.inbox_title')}
+              >
+                <Ionicons name="eye-off-outline" size={22} color="#FFFFFF" />
+              </Pressable>
+            ) : null}
+
+            {isOwnStory ? (
+              <Pressable
+                onPress={() => {
+                  setPaused(true);
+                  setConfirmDelete(true);
+                }}
+                hitSlop={12}
+                style={styles.iconButton}
+                accessibilityLabel={t('stories.delete')}
+              >
+                <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+              </Pressable>
             ) : null}
 
             <Pressable
@@ -425,9 +670,62 @@ export default function StoryViewerScreen() {
         </SafeAreaView>
       </SlideSwap>
 
+      <Dialog
+        visible={confirmDelete}
+        icon="trash-outline"
+        title={t('stories.delete_title')}
+        body={t('stories.delete_body')}
+        onDismiss={() => {
+          setConfirmDelete(false);
+          setPaused(false);
+        }}
+        actions={[
+          {
+            label: t('common.cancel'),
+            cancel: true,
+            onPress: () => {
+              setConfirmDelete(false);
+              setPaused(false);
+            },
+          },
+          { label: t('stories.delete'), destructive: true, onPress: removeStory },
+        ]}
+      />
+
+      <AnonInbox
+        visible={anonOpen}
+        onClose={() => {
+          setAnonOpen(false);
+          setPaused(false);
+        }}
+      />
+
+      <ViewersSheet
+        visible={viewersOpen}
+        storyId={story.id}
+        totalViewers={story.viewers}
+        onClose={() => {
+          setViewersOpen(false);
+          setPaused(false);
+        }}
+      />
+
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
         <View style={styles.metrics}>
-          <Metric icon="eye-outline" label={t('stories.views', { count: story.viewers })} />
+          {/* Tappable only on your own story — the endpoint refuses anyone
+              else, so offering the tap to a viewer would promise something
+              that comes back 403. */}
+          {isOwnStory ? (
+            <Pressable onPress={() => setViewersOpen(true)} hitSlop={8}>
+              <Metric
+                icon="eye-outline"
+                label={t('stories.views', { count: story.viewers })}
+                chevron
+              />
+            </Pressable>
+          ) : (
+            <Metric icon="eye-outline" label={t('stories.views', { count: story.viewers })} />
+          )}
           <Pressable onPress={() => commentsEnabled && setCommentsOpen(true)} hitSlop={8}>
             <Metric
               icon="chatbubble-ellipses-outline"
@@ -466,22 +764,28 @@ export default function StoryViewerScreen() {
           </View>
         ) : null}
 
-        {/* Reply mode switcher */}
-        <View style={styles.modeSwitch}>
-          <ModeTab
-            active={replyMode === 'comment'}
-            label={t('stories.comment_public')}
-            hint={t('stories.comment_public_hint')}
-            disabled={!commentsEnabled}
-            onPress={() => setReplyMode('comment')}
-          />
-          <ModeTab
-            active={replyMode === 'private'}
-            label={t('stories.reply_private')}
-            hint={t('stories.reply_private_hint')}
-            onPress={() => setReplyMode('private')}
-          />
-        </View>
+        {/* Reply mode switcher.
+
+            Private reply is absent on your own story: it would open a chat
+            with yourself. Commenting and reacting still make sense there —
+            authors do both on their own posts everywhere else. */}
+        {isOwnStory ? null : (
+          <View style={styles.modeSwitch}>
+            <ModeTab
+              active={replyMode === 'comment'}
+              label={t('stories.comment_public')}
+              hint={t('stories.comment_public_hint')}
+              disabled={!commentsEnabled}
+              onPress={() => setReplyMode('comment')}
+            />
+            <ModeTab
+              active={replyMode === 'private'}
+              label={t('stories.reply_private')}
+              hint={t('stories.reply_private_hint')}
+              onPress={() => setReplyMode('private')}
+            />
+          </View>
+        )}
 
         {replyMode === 'comment' && commentsEnabled && story.allowAnonymousReplies !== false ? (
           <Pressable
@@ -559,24 +863,20 @@ export default function StoryViewerScreen() {
         story={story}
         comments={comments}
         bottomInset={insets.bottom}
-        onClose={() => setCommentsOpen(false)}
+        onClose={() => {
+          setCommentsOpen(false);
+          // The reply target only exists while its banner is on screen. The
+          // composer behind the sheet has no banner, so a target left set
+          // would post to the wrong place with nothing to warn you.
+          setReplyTo(null);
+        }}
+        replyTo={replyTo}
+        onCancelReplyTo={() => setReplyTo(null)}
+        onReplyTo={(id, author) => setReplyTo({ id, author })}
         onReply={(text, anonymous) => {
           if (!text.trim()) return;
-          const anon = anonymous && story.allowAnonymousReplies !== false;
-          const next: StoryComment = {
-            id: `local-${Date.now()}`,
-            author: anon ? t('stories.anonymous_author') : 'You',
-            avatarUri: anon
-              ? 'https://api.dicebear.com/9.x/shapes/png?seed=anon-me&backgroundColor=374151&size=200'
-              : 'https://api.dicebear.com/9.x/avataaars/png?seed=you&backgroundColor=EEF2FF&size=200',
-            text: text.trim(),
-            postedAt: t('channel.just_now'),
-            isAnonymous: anon,
-          };
-          setLocalComments((prev) => ({
-            ...prev,
-            [story.id]: [next, ...(prev[story.id] ?? [])],
-          }));
+          postComment(text, anonymous, replyTo?.id);
+          setReplyTo(null);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }}
       />
@@ -614,14 +914,20 @@ function ProgressFill({ progress }: { progress: SharedValue<number> }) {
 function Metric({
   icon,
   label,
+  chevron = false,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  /** Signals the metric opens something, rather than just reporting. */
+  chevron?: boolean;
 }) {
   return (
     <View style={styles.metric}>
       <Ionicons name={icon} size={15} color="rgba(255,255,255,0.82)" />
       <Text style={styles.metricText}>{label}</Text>
+      {chevron ? (
+        <Ionicons name="chevron-forward" size={13} color="rgba(255,255,255,0.6)" />
+      ) : null}
     </View>
   );
 }
@@ -687,6 +993,9 @@ function CommentsSheet({
   bottomInset,
   onClose,
   onReply,
+  replyTo,
+  onReplyTo,
+  onCancelReplyTo,
 }: {
   visible: boolean;
   story: Story;
@@ -694,6 +1003,10 @@ function CommentsSheet({
   bottomInset: number;
   onClose: () => void;
   onReply: (text: string, anonymous: boolean) => void;
+  /** Set while composing a reply to a specific comment. */
+  replyTo: { id: number; author: string } | null;
+  onReplyTo: (id: number, author: string) => void;
+  onCancelReplyTo: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [anon, setAnon] = useState(false);
@@ -743,7 +1056,7 @@ function CommentsSheet({
                 <Text style={styles.commentEmpty}>{t('stories.no_comments')}</Text>
               </View>
             }
-            renderItem={({ item }) => <CommentRow comment={item} />}
+            renderItem={({ item }) => <CommentRow comment={item} onReplyTo={onReplyTo} />}
           />
 
           {story.allowComments !== false ? (
@@ -773,11 +1086,30 @@ function CommentsSheet({
                   <Text style={styles.anonToggleText}>{t('stories.reply_as_anonymous')}</Text>
                 </Pressable>
               ) : null}
+              {/* Who the reply is aimed at, with a way out. Without it the
+                  composer looks identical whether you are starting a thread
+                  or answering one, and the message lands in the wrong place
+                  with no warning. */}
+              {replyTo ? (
+                <View style={styles.replyBanner}>
+                  <Ionicons name="return-down-forward" size={14} color="rgba(255,255,255,0.7)" />
+                  <Text style={styles.replyBannerText} numberOfLines={1}>
+                    {t('stories.replying_to', { name: replyTo.author })}
+                  </Text>
+                  <Pressable onPress={onCancelReplyTo} hitSlop={8}>
+                    <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+                  </Pressable>
+                </View>
+              ) : null}
               <View style={styles.sheetInputRow}>
                 <TextInput
                   value={draft}
                   onChangeText={setDraft}
-                  placeholder={t('stories.comment_placeholder')}
+                  placeholder={
+                    replyTo
+                      ? t('stories.replying_to', { name: replyTo.author })
+                      : t('stories.comment_placeholder')
+                  }
                   placeholderTextColor="rgba(255,255,255,0.45)"
                   style={styles.sheetInput}
                   returnKeyType="send"
@@ -815,7 +1147,16 @@ function CommentsSheet({
   );
 }
 
-function CommentRow({ comment }: { comment: StoryComment }) {
+function CommentRow({
+  comment,
+  onReplyTo,
+}: {
+  comment: StoryComment;
+  onReplyTo: (id: number, author: string) => void;
+}) {
+  // Optimistic rows carry a `local-…` id the server has never seen; a reply
+  // to one would be orphaned, so it cannot be a reply target until it lands.
+  const numericId = /^\d+$/.test(comment.id) ? Number(comment.id) : null;
   return (
     <View style={styles.commentRow}>
       <Image source={{ uri: comment.avatarUri }} style={styles.commentAvatar} contentFit="cover" />
@@ -829,6 +1170,21 @@ function CommentRow({ comment }: { comment: StoryComment }) {
           </View>
           <Text style={styles.commentText}>{comment.text}</Text>
         </View>
+        {numericId != null ? (
+          <Pressable
+            onPress={() =>
+              onReplyTo(
+                numericId,
+                comment.isAnonymous ? t('stories.anonymous_author') : comment.author,
+              )
+            }
+            hitSlop={6}
+            style={styles.replyBtn}
+            accessibilityRole="button"
+          >
+            <Text style={styles.replyBtnText}>{t('stories.reply_to_comment')}</Text>
+          </Pressable>
+        ) : null}
         {comment.replies?.map((r) => (
           <View key={r.id} style={styles.nestedReply}>
             <Image source={{ uri: r.avatarUri }} style={styles.nestedAvatar} contentFit="cover" />
@@ -1224,6 +1580,16 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.sm,
   },
   nestedAvatar: { width: 24, height: 24, borderRadius: 12 },
+  replyBtn: { paddingVertical: 4, paddingLeft: 4 },
+  replyBtnText: { fontSize: 12, fontWeight: '600', color: 'rgba(255,255,255,0.6)' },
+  replyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  replyBannerText: { flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.7)' },
   sheetComposer: {
     gap: Spacing.sm,
     paddingTop: Spacing.sm,
@@ -1259,3 +1625,14 @@ const styles = StyleSheet.create({
   },
   sheetSendText: { ...Typography.caption, color: '#FFF', fontWeight: '700' },
 });
+
+/** Short relative time for a comment row. */
+function relativeCommentTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return t('channel.just_now');
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}

@@ -35,7 +35,7 @@ const TOGGLES: Toggle[] = [
 ];
 
 export default function PermissionsScreen() {
-  const { data, set } = useRegistration();
+  const { data, set, reset } = useRegistration();
   const [contacts, setContacts] = useState(data.contactsGranted);
   const [notifications, setNotifications] = useState(data.notificationsGranted);
   const { colors } = useTheme();
@@ -43,9 +43,9 @@ export default function PermissionsScreen() {
   const handleFinish = () => {
     set('contactsGranted', contacts);
     set('notificationsGranted', notifications);
-    // One more step — optional WhatsApp linking. We don't reset() yet so
-    // the next screen still has the country/phone to pre-fill from.
-    router.push('/auth/whatsapp');
+    // Last step of onboarding — clear the wizard state before entering the app.
+    reset();
+    router.replace('/(tabs)');
   };
 
   return (
@@ -54,7 +54,7 @@ export default function PermissionsScreen() {
 
       <StepHeader
         step={5}
-        total={6}
+        total={5}
         title={t('auth.permissions.title')}
         subtitle={t('auth.permissions.subtitle')}
       />

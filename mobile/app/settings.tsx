@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { clearSession } from '@/data/auth-store';
+import { resetAllStores } from '@/data/reset';
 
 import {
   getNotifPrefs,
@@ -127,6 +128,10 @@ export default function SettingsScreen() {
           clearSession().catch(() => {
             /* swallowed — local SecureStore wipe is best-effort */
           });
+          // Every in-memory store, the encrypted database and the media
+          // cache. Each one outlives the account that filled it, so the next
+          // person to sign in inherits the last one's data — see data/reset.
+          void resetAllStores();
           // replace, not push — the user shouldn't be able to swipe back
           // into a screen that still thinks it's authenticated.
           router.replace('/onboarding');

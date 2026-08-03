@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
+
+import { ChannelCover, ChannelLogo } from '@/components/ui/channel-art';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
@@ -96,17 +97,19 @@ export default function ChannelInfoScreen() {
       >
         {/* Cover + identity */}
         <View style={styles.heroWrap}>
-          <Image
-            source={{ uri: channel.coverUri }}
+          <ChannelCover
+                url={channel.coverUri}
+                handle={channel.handle}
             style={styles.cover}
-            contentFit="cover"
           />
           <View style={styles.coverScrim} />
           <View style={styles.identity}>
-            <Image
-              source={{ uri: channel.avatarUri }}
+            <ChannelLogo
+              url={channel.avatarUri}
+              name={channel.name}
+              handle={channel.handle}
+              size={56}
               style={[styles.avatar, { borderColor: colors.background }]}
-              contentFit="cover"
             />
             <View style={styles.identityNameRow}>
               <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
@@ -142,9 +145,16 @@ export default function ChannelInfoScreen() {
               onPress={handleFollow}
             />
           )}
-          <ActionButton icon="arrow-redo-outline" label={t('channel_info.forward')} />
-          <ActionButton icon="share-social-outline" label={t('channel_info.share')} />
-          <ActionButton icon="search" label={t('channel_info.search')} />
+          {/* Share is deliberately absent for now: external sharing and deep
+              links were dropped, and a button that does nothing is worse than
+              one that is not there. */}
+          <ActionButton
+            icon="search"
+            label={t('channel_info.search')}
+            onPress={() => {
+              if (id) router.push(`/channel/${id}?search=1`);
+            }}
+          />
         </View>
 
         {/* Permissions summary for owners / public badge for others */}
@@ -220,6 +230,24 @@ export default function ChannelInfoScreen() {
               {t('channel_info.created_on', { date: '26/09/23' })}
             </Text>
           </Pressable>
+        ) : null}
+
+        {/* Management team — only for those who are part of it.
+            The list is a channel's staff, not its audience, and the server
+            refuses anyone else. Showing the row to a follower would offer a
+            door that opens onto an error. */}
+        {manage ? (
+          <Section colors={colors}>
+            <Row
+              icon="shield-checkmark-outline"
+              label={t('channel_members.title')}
+              subtitle={t('channel_members.subtitle')}
+              colors={colors}
+              onPress={() => {
+                if (id) router.push(`/channel-members/${id}`);
+              }}
+            />
+          </Section>
         ) : null}
 
         {/* Files & links */}
@@ -354,16 +382,19 @@ function Row({
   subtitle,
   destructive,
   colors,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   subtitle?: string;
   destructive?: boolean;
   colors: Colors;
+  /** Rows without one stay flat: no chevron, no press feedback, no promise. */
+  onPress?: () => void;
 }) {
   const textColor = destructive ? colors.danger : colors.text;
-  return (
-    <View style={styles.row}>
+  const content = (
+    <>
       <Ionicons name={icon} size={20} color={textColor} />
       <View style={styles.rowText}>
         <Text style={[styles.rowLabel, { color: textColor }]}>{label}</Text>
@@ -373,7 +404,19 @@ function Row({
           </Text>
         ) : null}
       </View>
-    </View>
+      {onPress ? <Ionicons name="chevron-forward" size={18} color={colors.textMuted} /> : null}
+    </>
+  );
+
+  if (!onPress) return <View style={styles.row}>{content}</View>;
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surfaceMuted }]}
+      accessibilityRole="button"
+    >
+      {content}
+    </Pressable>
   );
 }
 

@@ -51,3 +51,19 @@ export const myKeyCount = () =>
 
 export const bundleForUsername = (username: string) =>
   api.get<PreKeyBundle>(`/api/users/by-username/${encodeURIComponent(username)}/keys`);
+
+export type PeerIdentity = {
+  user_id: string;
+  device_id: string;
+  identity_key: string;
+};
+
+/**
+ * The peer's current identity, without consuming a one-time pre-key.
+ *
+ * bundleForUsername pops an OTK as a side effect, so it cannot be used to
+ * check whether a peer is still who our session thinks they are — asking on
+ * every chat open would empty their reservoir.
+ */
+export const identityForUsername = (username: string) =>
+  api.get<PeerIdentity>(`/api/users/by-username/${encodeURIComponent(username)}/identity`);

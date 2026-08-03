@@ -27,17 +27,33 @@ export default function RootLayout() {
 
   useEffect(() => {
     let mounted = true;
-    bootstrapAuth().then((user) => {
-      if (!mounted) return;
-      if (user) {
-        router.replace('/(tabs)');
-        // Register Expo/FCM token once a session is restored.
-        registerPushWithServer().catch(() => {});
-        // Generate / publish Signal-style pre-key material for E2EE.
-        ensureKeysPublished().catch(() => {});
-      }
-      setBooted(true);
-    });
+    bootstrapAuth()
+      .then((user) => {
+        if (!mounted) return;
+        if (user) {
+          router.replace('/(tabs)');
+          // Register Expo/FCM token once a session is restored.
+          registerPushWithServer().catch(() => {});
+          // Generate / publish Signal-style pre-key material for E2EE.
+          ensureKeysPublished().catch(() => {});
+        } else {
+          // Send signed-out users to onboarding explicitly rather than
+          // relying on the anchor to resolve "/". A standalone build opens
+          // with no deep link, and an unresolved root renders nothing —
+          // which, under the splash backstop, is an indistinguishable
+          // blank screen.
+          router.replace('/onboarding');
+        }
+      })
+      .catch(() => {
+        // A rejected bootstrap (unreadable keychain, for instance) must not
+        // strand the app: without this the backstop below never lifts and
+        // the user stares at a blank screen forever. Treat it as signed out.
+        if (mounted) router.replace('/onboarding');
+      })
+      .finally(() => {
+        if (mounted) setBooted(true);
+      });
     return () => {
       mounted = false;
     };
@@ -94,7 +110,11 @@ export default function RootLayout() {
             <Stack.Screen name="search" options={{ headerShown: false, presentation: 'modal' }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
+            <Stack.Screen name="stickers/index" options={{ headerShown: false }} />
             <Stack.Screen name="calls" options={{ headerShown: false }} />
+            <Stack.Screen name="archived" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-media/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="channel-members/[id]" options={{ headerShown: false }} />
             <Stack.Screen
               name="story/[id]"
               options={{

@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Dimensions,
   FlatList,
   Modal,
@@ -29,7 +29,21 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { formatCount } from '@/components/ui/follow-button';
 import { ReactionTray } from '@/components/ui/reaction-tray';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { mediaFileURL, uploadMedia } from '@/data/api/media';
+import { CachedImage } from '@/components/ui/cached-image';
+import { TextPrompt } from '@/components/ui/dialog';
+import { deleteChannelPost, editChannelPost } from '@/data/api/channels';
+import { ForwardPicker } from '@/components/chat/forward-picker';
+import { sendMessage as apiSendMessage } from '@/data/api/messages';
+import { refreshChats, useChats } from '@/data/chat-store';
+import { encryptForPeer, ensureKeysPublished } from '@/data/crypto';
+import { MediaViewer, type ViewerItem } from '@/components/chat/media-viewer';
+import { ChannelCover, ChannelLogo } from '@/components/ui/channel-art';
+import {
+  encodeMediaContent,
+  mediaFileURL,
+  mediaPathFromURL,
+  uploadMedia,
+} from '@/data/api/media';
 import {
   addChannelPost,
   addCommentToPost,
@@ -42,7 +56,9 @@ import {
   useChannel,
   useIsFollowing,
 } from '@/data/channel-store';
-import { CURRENT_USER, type ChannelComment, type ChannelPost } from '@/data/mock';
+import { type ChannelComment, type ChannelPost } from '@/data/mock';
+import { getCurrentUser } from '@/data/auth-store';
+import { useProfile } from '@/data/profile-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import * as ImagePicker from 'expo-image-picker';
@@ -59,7 +75,18 @@ const countComments = (list: ChannelComment[]) =>
   list.reduce((n, c) => n + 1 + (c.replies?.length ?? 0), 0);
 
 export default function ChannelScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // The signed-in user, not the bundled fixture. CURRENT_USER is a made-up
+  // profile, so the comment composer showed someone else's name and initial
+  // to every account that opened a channel.
+  const profile = useProfile();
+  const meId = getCurrentUser()?.id;
+  const { chats: storeChats } = useChats();
+  const myName = profile.name || t('chat.you');
+  const { id, post: focusPostId, search: openSearch } = useLocalSearchParams<{
+    id: string;
+    post?: string;
+    search?: string;
+  }>();
   const channel = useChannel(id);
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
@@ -69,6 +96,7 @@ export default function ChannelScreen() {
   const publishOk = canPublish(channel);
   const manageOk = canManage(channel);
   const [posts, setPosts] = useState<ChannelPost[]>([]);
+  const [editingPost, setEditingPost] = useState<ChannelPost | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [postDraft, setPostDraft] = useState('');
   const [postKind, setPostKind] = useState<
@@ -133,6 +161,162 @@ export default function ChannelScreen() {
   );
   const comments = commentPost?.comments ?? [];
   const mediaCount = useMemo(() => posts.filter((p) => !!p.mediaUri).length, [posts]);
+
+  // The store and the API both work newest-first; only the view is
+  // chronological, so nothing else has to care about the direction.
+  const orderedPosts = useMemo(() => [...posts].reverse(), [posts]);
+  const listRef = useRef<FlatList<ChannelPost>>(null);
+
+  // The whole channel's media, so the viewer swipes across it rather than
+  // trapping you on the one post you tapped.
+  const viewerItems = useMemo<ViewerItem[]>(
+    () =>
+      orderedPosts
+        .filter((p) => p.mediaUri && (p.type ?? 'image') !== 'text')
+        .map((p) => ({
+          id: p.id,
+          uri: mediaFileURL(p.mediaUri!),
+          type: p.type === 'video' ? 'video' : 'image',
+          timestamp: p.timestamp,
+        })),
+    [orderedPosts],
+  );
+  const [viewerAt, setViewerAt] = useState<number | null>(null);
+  /**
+   * Whether the signed-in user may edit or delete a given post.
+   *
+   * Mirrors the server rule — the author, or someone who manages the channel
+   * — and lives in one place so the button and the request cannot disagree.
+   * Offering an action the server will refuse is worse than not offering it.
+   */
+  const canMutatePost = (post: ChannelPost) =>
+    (!!meId && post.authorId === meId) || manageOk;
+
+  const mutationFailed = () =>
+    Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+
+  const confirmDeletePost = (post: ChannelPost) =>
+    Alert.alert(t('channel.delete_post'), t('channel.delete_post_confirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('channel.delete_post'),
+        style: 'destructive',
+        onPress: () => {
+          setPosts((prev) => prev.filter((p) => p.id !== post.id));
+          deleteChannelPost(post.id).catch(() => {
+            mutationFailed();
+            // Put it back by refetching rather than re-inserting locally: the
+            // feed may have moved on, and guessing the position would put the
+            // post somewhere it never was.
+            if (channel) void refreshChannel(channel.id);
+          });
+        },
+      },
+    ]);
+
+  const openPostMenu = (post: ChannelPost) => {
+    if (!canMutatePost(post)) return;
+    setEditingPost(post);
+  };
+
+  /**
+   * Forward a channel post into a chat, a group or your story.
+   *
+   * The message carries where it came from, so the bubble on the other side
+   * can offer a way back to this exact post — a forward you cannot trace is
+   * a claim with no source.
+   */
+  const [forwardPost, setForwardPost] = useState<ChannelPost | null>(null);
+
+  /**
+   * Search within the channel.
+   *
+   * Filters what is already loaded rather than asking the server: there is
+   * no search endpoint for posts, and pretending otherwise would return a
+   * confident empty result for anything older than the current page. The
+   * hint says so instead of letting people conclude their post is gone.
+   */
+  const [searchOpen, setSearchOpen] = useState(openSearch === '1');
+  const [postQuery, setPostQuery] = useState('');
+  const visiblePosts = useMemo(() => {
+    const q = postQuery.trim().toLowerCase();
+    if (!q) return orderedPosts;
+    return orderedPosts.filter((p) => (p.text ?? '').toLowerCase().includes(q));
+  }, [orderedPosts, postQuery]);
+
+  const forwardToChat = async (destChatId: string) => {
+    const post = forwardPost;
+    setForwardPost(null);
+    if (!post || !channel) return;
+
+    const dest = storeChats.find((c) => c.id === destChatId);
+
+    // A media post has to travel as media, not as its caption. Sending
+    // post.text meant a photo arrived as an empty text bubble — or as
+    // nothing at all when there was no caption.
+    //
+    // The stored media_url is reused as-is: the bytes already live on the
+    // server, so re-uploading a copy per forward would multiply storage for
+    // nothing. Channel media is unencrypted, hence no key in the envelope.
+    const isMedia = !!post.mediaUri && (post.type === 'image' || post.type === 'video');
+    const mediaPath = post.mediaUri ? mediaPathFromURL(post.mediaUri) : null;
+    const wireType = isMedia && mediaPath ? (post.type === 'video' ? 'video' : 'image') : 'text';
+    const body =
+      wireType === 'text'
+        ? post.text || ''
+        : encodeMediaContent(mediaPath!, post.text ?? '', null);
+
+    try {
+      let payload = body;
+      if (dest && dest.type !== 'group' && dest.peer_user_id) {
+        try {
+          await ensureKeysPublished();
+          payload = await encryptForPeer(dest.peer_user_id, body, {
+            peerUsername: dest.peer_username,
+          });
+        } catch {
+          payload = body; // peer has no bundle yet
+        }
+      }
+      await apiSendMessage(destChatId, payload, wireType, undefined, null, {
+        // A channel post is first-hand where it stands, so it carries zero
+        // hops; the server adds the one this forward represents.
+        forwardCount: 0,
+        sourceChannelId: channel.id,
+        sourcePostId: post.id,
+      });
+      await refreshChats();
+      Alert.alert(t('chat.forward_sent', { name: dest?.title ?? '' }));
+    } catch {
+      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
+  };
+
+  const forwardPostToStory = () => {
+    const post = forwardPost;
+    setForwardPost(null);
+    if (!post) return;
+    const params = new URLSearchParams();
+    if (post.mediaUri) {
+      params.set('forwardMedia', post.mediaUri);
+      params.set('forwardKind', post.type === 'video' ? 'video' : 'image');
+      if (post.text) params.set('forwardText', post.text);
+    } else {
+      params.set('forwardText', post.text ?? '');
+    }
+    router.push(`/story/create?${params.toString()}`);
+  };
+
+  const openMediaViewer = (post: ChannelPost) => {
+    const i = viewerItems.findIndex((v) => v.id === post.id);
+    if (i >= 0) setViewerAt(i);
+  };
+  // Jump to the newest post once, on first paint. Doing it on every content
+  // change would yank the view out from under someone reading history.
+  const didLandRef = useRef(false);
+  useEffect(() => {
+    didLandRef.current = false;
+  }, [id, focusPostId]);
   const commentCount = useMemo(
     () => posts.reduce((sum, p) => sum + countComments(p.comments ?? []), 0),
     [posts],
@@ -237,7 +421,7 @@ export default function ChannelScreen() {
         text,
         timestamp: t('channel.just_now'),
         anonymous: commentAnonymous,
-        authorName: commentAnonymous ? undefined : CURRENT_USER.name,
+        authorName: commentAnonymous ? undefined : myName,
         pending: true,
         likes: 0,
       };
@@ -257,7 +441,7 @@ export default function ChannelScreen() {
         commentPostId,
         text,
         commentAnonymous,
-        CURRENT_USER.name,
+        myName,
       );
       if (comment) {
         updatePost(commentPostId, (post) => ({
@@ -338,10 +522,12 @@ export default function ChannelScreen() {
           accessibilityLabel={t('channel.info_title')}
         >
           <View style={[styles.headerAvatarRing, { borderColor: colors.primary }]}>
-            <Image
-              source={{ uri: channel.avatarUri }}
+            <ChannelLogo
+              url={channel.avatarUri}
+              name={channel.name}
+              handle={channel.handle}
+              size={56}
               style={[styles.headerAvatar, { backgroundColor: colors.surfaceMuted }]}
-              contentFit="cover"
             />
           </View>
           <View style={styles.headerText}>
@@ -409,35 +595,95 @@ export default function ChannelScreen() {
 
       {/* Feed */}
       <FlatList
-        data={posts}
+        ref={listRef}
+        // Oldest first, newest at the bottom — a channel reads like a
+        // conversation, not a feed. The list is not `inverted` because that
+        // would put the channel header at the bottom of the screen; the data
+        // is reversed instead and the view starts at the end.
+        data={visiblePosts}
         keyExtractor={(item) => item.id}
+        onContentSizeChange={() => {
+          // Landing is about arrival, not about a filtered view.
+          if (didLandRef.current || postQuery.trim() || orderedPosts.length === 0) return;
+          didLandRef.current = true;
+
+          // Coming from a forwarded post: land on it, not at the bottom.
+          // Jumping to the newest here would answer a question nobody asked
+          // and lose the one thing the person tapped to see.
+          if (focusPostId) {
+            const at = orderedPosts.findIndex((p) => p.id === focusPostId);
+            if (at >= 0) {
+              listRef.current?.scrollToIndex({ index: at, animated: false, viewPosition: 0.4 });
+              return;
+            }
+            // Not in the loaded page — fall through to the newest rather
+            // than leaving the view at the top with no explanation.
+          }
+          listRef.current?.scrollToEnd({ animated: false });
+        }}
+        // scrollToIndex on a list of variable-height rows needs a fallback,
+        // or a miss throws instead of scrolling.
+        onScrollToIndexFailed={() => {
+          listRef.current?.scrollToEnd({ animated: false });
+        }}
         renderItem={({ item }) => (
           <Post
             post={item}
             channelId={channel.id}
             onLongPress={(event) => openActionBar(item.id, event)}
             onOpenComments={() => openCommentSheet(item.id)}
+            onOpenMedia={openMediaViewer}
+            onManage={canMutatePost(item) ? () => openPostMenu(item) : undefined}
           />
         )}
         ListHeaderComponent={
           <View style={styles.listHeader}>
+            {searchOpen ? (
+              <View style={[styles.postSearch, { backgroundColor: colors.surfaceMuted }]}>
+                <Ionicons name="search" size={16} color={colors.textMuted} />
+                <TextInput
+                  value={postQuery}
+                  onChangeText={setPostQuery}
+                  autoFocus
+                  placeholder={t('channel.search_posts')}
+                  placeholderTextColor={colors.textMuted}
+                  style={[styles.postSearchInput, { color: colors.text }]}
+                />
+                <Pressable
+                  onPress={() => {
+                    setPostQuery('');
+                    setSearchOpen(false);
+                  }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close" size={18} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            ) : null}
+            {searchOpen && postQuery.trim() ? (
+              <Text style={[styles.postSearchHint, { color: colors.textMuted }]}>
+                {t('channel.search_scope')}
+              </Text>
+            ) : null}
             {/* Cinematic channel hero */}
             <Pressable
               onPress={() => router.push(`/channel-info/${channel.id}`)}
               style={styles.hero}
             >
-              <Image
-                source={{ uri: channel.coverUri }}
+              <ChannelCover
+                url={channel.coverUri}
+                handle={channel.handle}
                 style={StyleSheet.absoluteFill}
-                contentFit="cover"
               />
               <View style={styles.heroScrim} />
               <View style={styles.heroBottom}>
-                <Image
-                  source={{ uri: channel.avatarUri }}
-                  style={styles.heroAvatar}
-                  contentFit="cover"
-                />
+                <ChannelLogo
+              url={channel.avatarUri}
+              name={channel.name}
+              handle={channel.handle}
+              size={56}
+              style={styles.heroAvatar}
+            />
                 <View style={styles.heroMeta}>
                   <View style={styles.nameRow}>
                     <Text style={styles.heroName} numberOfLines={1}>
@@ -794,8 +1040,14 @@ export default function ChannelScreen() {
         anchor={actionBarPosition ? { ...actionBarStyle, width: actionBarWidth } : null}
         onSelect={handleReaction}
         onComment={() => actionPostId && openCommentSheet(actionPostId)}
+        onForward={() => {
+          const post = actionPost;
+          closeActionBar();
+          if (post) setForwardPost(post);
+        }}
         onClose={closeActionBar}
         commentLabel={t('channel.comment')}
+        forwardLabel={t('chat.forward')}
       />
 
       {/* ── Comment sheet ───────────────────────────────────────────────── */}
@@ -992,7 +1244,7 @@ export default function ChannelScreen() {
                     >
                       <View style={[styles.identityDot, { backgroundColor: colors.primary }]}>
                         <Text style={styles.identityDotText}>
-                          {CURRENT_USER.name.charAt(0).toUpperCase()}
+                          {myName.charAt(0).toUpperCase()}
                         </Text>
                       </View>
                       <Text
@@ -1001,7 +1253,7 @@ export default function ChannelScreen() {
                           { color: !commentAnonymous ? colors.primary : colors.textSecondary },
                         ]}
                       >
-                        {CURRENT_USER.name.split(' ')[0]}
+                        {myName.split(' ')[0]}
                       </Text>
                     </Pressable>
                     <Pressable
@@ -1050,7 +1302,7 @@ export default function ChannelScreen() {
                       <Ionicons name="eye-off" size={15} color={colors.textMuted} />
                     ) : (
                       <Text style={[styles.composerAvatarText, { color: colors.primary }]}>
-                        {CURRENT_USER.name.charAt(0).toUpperCase()}
+                        {myName.charAt(0).toUpperCase()}
                       </Text>
                     )}
                   </Pressable>
@@ -1192,11 +1444,13 @@ export default function ChannelScreen() {
               </Pressable>
             </View>
             <View style={styles.infoProfile}>
-              <Image
-                source={{ uri: channel.avatarUri }}
-                style={[styles.infoAvatar, { backgroundColor: colors.surfaceMuted }]}
-                contentFit="cover"
-              />
+              <ChannelLogo
+              url={channel.avatarUri}
+              name={channel.name}
+              handle={channel.handle}
+              size={56}
+              style={[styles.infoAvatar, { backgroundColor: colors.surfaceMuted }]}
+            />
               <View style={styles.infoMeta}>
                 <View style={styles.infoNameRow}>
                   <Text style={[styles.infoName, { color: colors.text }]} numberOfLines={1}>
@@ -1238,6 +1492,66 @@ export default function ChannelScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Alert.prompt is iOS-only, so editing goes through the in-app dialog
+          — which also lets the field start with the existing text instead of
+          making someone retype a paragraph to fix one word. */}
+      <TextPrompt
+        visible={!!editingPost}
+        title={t('channel.edit_post')}
+        initialValue={editingPost?.text ?? ''}
+        confirmLabel={t('common.save')}
+        secondaryLabel={t('channel.delete_post')}
+        onSecondary={() => {
+          const target = editingPost;
+          setEditingPost(null);
+          if (target) confirmDeletePost(target);
+        }}
+        onCancel={() => setEditingPost(null)}
+        onSubmit={async (text) => {
+          const target = editingPost;
+          if (!target) return true;
+          const next = text.trim();
+          if (!next || next === target.text) {
+            setEditingPost(null);
+            return true;
+          }
+          setEditingPost(null);
+          const before = target.text;
+          updatePost(target.id, (p) => ({ ...p, text: next }));
+          try {
+            await editChannelPost(target.id, next);
+          } catch {
+            updatePost(target.id, (p) => ({ ...p, text: before }));
+            mutationFailed();
+          }
+          return true;
+        }}
+      />
+
+      <ForwardPicker
+        count={forwardPost ? 1 : 0}
+        onClose={() => setForwardPost(null)}
+        onPick={forwardToChat}
+        onPickStory={forwardPostToStory}
+      />
+
+      {viewerAt != null ? (
+        <MediaViewer
+          items={viewerItems}
+          startIndex={viewerAt}
+          onClose={() => setViewerAt(null)}
+          // Reply and forward live in the chat composer, which a channel
+          // does not have. Closing is the honest action for both here until
+          // sharing lands.
+          onReply={() => setViewerAt(null)}
+          onForward={(postId) => {
+            const post = orderedPosts.find((p) => p.id === postId);
+            setViewerAt(null);
+            if (post) setForwardPost(post);
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1248,11 +1562,16 @@ function Post({
   channelId,
   onLongPress,
   onOpenComments,
+  onOpenMedia,
+  onManage,
 }: {
   post: ChannelPost;
   channelId: string;
   onLongPress: (event: GestureResponderEvent) => void;
   onOpenComments: () => void;
+  onOpenMedia?: (post: ChannelPost) => void;
+  /** Absent when the viewer may not edit or delete this post. */
+  onManage?: () => void;
 }) {
   const { colors } = useTheme();
   const reactions = post.reactions ?? [];
@@ -1274,19 +1593,39 @@ function Post({
         pressed && { opacity: 0.94, transform: [{ scale: 0.995 }] },
       ]}
     >
+      {/* Only for those who may act on it. A button that opens a menu of
+          things the server refuses is worse than no button. */}
+      {onManage ? (
+        <Pressable onPress={onManage} hitSlop={8} style={styles.postManage}>
+          <Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted} />
+        </Pressable>
+      ) : null}
+
       {mediaUri && (kind === 'image' || kind === 'video') ? (
-        <View style={styles.postMediaWrap}>
-          <Image
-            source={{ uri: mediaUri }}
+        <Pressable
+          style={styles.postMediaWrap}
+          onPress={() => onOpenMedia?.(post)}
+          accessibilityRole="imagebutton"
+          accessibilityLabel={t('chat_media.open_item')}
+        >
+          {/* Through the cache: /api/media/:id/file is authenticated and
+              expo-image cannot attach the header, so every post image came
+              back 401 and rendered as an empty box. */}
+          <CachedImage
+            url={mediaUri}
             style={[styles.postMedia, { backgroundColor: colors.surfaceMuted }]}
             contentFit="cover"
           />
+          {/* A video showed its cover and a badge and nothing happened on
+              tap — the badge promised a player there was none of. It opens
+              the same viewer the chat uses, which already handles streaming
+              and the authenticated fetch. */}
           {kind === 'video' ? (
             <View style={styles.mediaBadge}>
               <Ionicons name="play" size={14} color="#FFF" />
             </View>
           ) : null}
-        </View>
+        </Pressable>
       ) : null}
 
       {kind === 'game' ? (
@@ -1741,6 +2080,19 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
+  postManage: { position: 'absolute', top: 10, right: 10, zIndex: 2, padding: 4 },
+  postSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    height: 42,
+    borderRadius: Radii.pill,
+  },
+  postSearchInput: { flex: 1, ...Typography.body, fontSize: 15, padding: 0 },
+  postSearchHint: { ...Typography.caption, marginHorizontal: Spacing.lg, marginBottom: Spacing.sm },
   postMediaWrap: { width: '100%', height: 200 },
   postMedia: { width: '100%', height: '100%' },
   mediaBadge: {

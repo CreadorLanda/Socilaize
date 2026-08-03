@@ -1,7 +1,21 @@
 import { decodeMediaContent, mediaFileURL } from '@/data/api/media';
 import type { MessageDTO, ReactionDTO } from '@/data/api/messages';
 import { decryptFromPeer, isEnvelope } from '@/data/crypto';
-import type { MediaAttachment, Message } from '@/data/mock';
+import type { MediaAttachment, Message, MessageAttachment } from '@/data/mock';
+
+/**
+ * On-screen size of a sticker bubble, shared by send and reload paths.
+ * Roughly matches what other messengers use — 160 read as oversized.
+ */
+export const STICKER_BUBBLE_SIZE = 124;
+
+/** Best-guess container for a message type, used for cache file naming. */
+function mimeForType(mt: string): string {
+  if (mt === 'image') return 'image/jpeg';
+  if (mt === 'video') return 'video/mp4';
+  if (mt === 'audio') return 'audio/mp4';
+  return 'application/octet-stream';
+}
 
 /** Map API message → UI Message used by the chat screen. */
 export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
@@ -16,7 +30,9 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     edited: !!m.edited_at,
     deletedAt: m.deleted_at,
     status: m.read_by && m.read_by > 0 ? 'read' : m.delivered_to && m.delivered_to > 0 ? 'delivered' : 'sent',
-    source: 'native',
+    forwardCount: m.forward_count ?? 0,
+    sourceChannelId: m.source_channel_id,
+    sourcePostId: m.source_post_id,
   };
   if (deleted) return base;
 
@@ -27,15 +43,84 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
       const media: MediaAttachment = {
         type: mt as 'image' | 'video' | 'audio',
         uri: mediaFileURL(decoded.url),
-        durationSec:
-          mt === 'audio' || mt === 'video'
-            ? undefined
-            : undefined,
+        // Present only for encrypted blobs; older messages have none.
+        key: decoded.key && decoded.nonce ? { key: decoded.key, nonce: decoded.nonce } : null,
+        // The wire type is opaque for encrypted blobs, so the cache needs
+        // the real one to pick a file extension the players understand.
+        mime: mimeForType(mt),
       };
       return {
         ...base,
         text: decoded.caption,
         media,
+      };
+    }
+  }
+
+  // Stickers and documents also carry encoded media content. Without these
+  // the JSON envelope fell through to `text` and rendered as raw
+  // {"url":…,"caption":…} once the message came back from the server.
+  if (mt === 'sticker') {
+    const decoded = decodeMediaContent(m.content);
+    if (decoded) {
+      return {
+        ...base,
+        text: '',
+        attachment: {
+          kind: 'sticker',
+          uri: mediaFileURL(decoded.url),
+          width: STICKER_BUBBLE_SIZE,
+          height: STICKER_BUBBLE_SIZE,
+        },
+      };
+    }
+  }
+
+  // Rich attachments round-trip as JSON in the body.
+  if (mt === 'location' || mt === 'contact' || mt === 'poll' || mt === 'event') {
+    try {
+      const parsed = JSON.parse(m.content) as MessageAttachment;
+      if (parsed?.kind === 'poll' && m.poll_votes) {
+        // Counts live in their own table, not in the body — the body is
+        // end-to-end encrypted, so it could never carry a shared tally.
+        // Whatever numbers the author happened to serialise are stale.
+        const tally = m.poll_votes;
+        return {
+          ...base,
+          text: '',
+          attachment: {
+            ...parsed,
+            options: parsed.options.map((o) => ({
+              ...o,
+              votes: tally.counts[o.id] ?? 0,
+              voted: tally.mine.includes(o.id),
+            })),
+          },
+        };
+      }
+      if (parsed?.kind) return { ...base, text: '', attachment: parsed };
+    } catch {
+      /* fall through to plain text */
+    }
+  }
+
+  if (mt === 'document') {
+    const decoded = decodeMediaContent(m.content);
+    if (decoded) {
+      const name = decoded.caption || 'file';
+      const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : '';
+      return {
+        ...base,
+        text: '',
+        attachment: {
+          kind: 'document',
+          name,
+          ext,
+          sizeLabel: '',
+          // Carried so the row can fetch and decrypt on demand.
+          url: mediaFileURL(decoded.url),
+          key: decoded.key && decoded.nonce ? { key: decoded.key, nonce: decoded.nonce } : null,
+        },
       };
     }
   }

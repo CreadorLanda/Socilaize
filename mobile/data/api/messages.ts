@@ -14,6 +14,8 @@ export interface ChatDTO {
   created_at: string;
   last_message?: {
     content: string;
+    /** Lets the list label non-text messages instead of showing the payload. */
+    message_type?: string;
     sender_id: string;
     created_at: string;
   };
@@ -21,10 +23,30 @@ export interface ChatDTO {
   /** Direct chat peer — used for client-side E2EE. */
   peer_user_id?: string;
   peer_username?: string;
+  /** Per-user settings. Present only when set; two participants can differ. */
+  pinned_at?: string;
+  muted_until?: string;
+  archived_at?: string;
+}
+
+export interface ChatSettings {
+  pinned?: boolean;
+  muted?: boolean;
+  archived?: boolean;
+}
+
+export interface ListChatsParams {
+  limit?: number;
+  offset?: number;
+  archived?: boolean;
 }
 
 export interface MessageDTO {
   id: number;
+  /** Set when the sender limited how many times it may be opened. */
+  view_limit?: number;
+  /** Opens the current user has left; only meaningful with view_limit. */
+  views_left?: number;
   chat_id: string;
   sender_id: string;
   content: string;
@@ -37,6 +59,13 @@ export interface MessageDTO {
   sender_avatar?: string;
   delivered_to?: number;
   read_by?: number;
+  /** 0 when written here; 1+ once it has been passed along. */
+  forward_count?: number;
+  /** Set when a channel post was forwarded here, so we can link back. */
+  source_channel_id?: string;
+  source_post_id?: string;
+  /** Present on poll messages; the body itself stays end-to-end encrypted. */
+  poll_votes?: PollTally;
 }
 
 export interface SessionInitResponse {
@@ -75,22 +104,91 @@ export function createChat(peerUserId: string) {
   });
 }
 
-/** List all chats for the current user */
-export function listChats() {
-  return api.get<ChatDTO[]>('/api/chats');
+/** List one page of chats for the current user, newest-active first. */
+export function listChats(params: ListChatsParams = {}) {
+  const q = new URLSearchParams();
+  if (params.limit != null) q.set('limit', String(params.limit));
+  if (params.offset != null) q.set('offset', String(params.offset));
+  if (params.archived) q.set('archived', 'true');
+  const qs = q.toString();
+  return api.get<ChatDTO[]>(`/api/chats${qs ? `?${qs}` : ''}`);
+}
+
+/** Toggle pin / mute / archive for the caller only. Omitted fields are untouched. */
+export function updateChatSettings(chatId: string, settings: ChatSettings) {
+  return api.patch<ChatDTO>(`/api/chats/${chatId}/settings`, settings);
+}
+
+/** Hide existing messages for the caller only; the peer keeps their copy. */
+export function clearChatHistory(chatId: string) {
+  return api.post<void>(`/api/chats/${chatId}/clear`, {});
+}
+
+/** Remove the chat from the caller's list. It returns if the peer writes again. */
+export function deleteChat(chatId: string) {
+  return api.del<void>(`/api/chats/${chatId}`);
 }
 
 /** Send a message in a chat */
+export type MessageOrigin = {
+  /**
+   * The count carried by the content being forwarded. The server stores one
+   * more than this, so it cannot be used to reset a long chain.
+   */
+  forwardCount?: number;
+  sourceChannelId?: string;
+  sourcePostId?: string;
+};
+
 export function sendMessage(
   chatId: string,
   content: string,
   messageType?: string,
   replyToId?: number,
+  viewLimit?: number | null,
+  origin?: MessageOrigin,
 ) {
   return api.post<MessageDTO>(`/api/chats/${chatId}/messages`, {
     content,
     message_type: messageType ?? 'text',
     reply_to_id: replyToId,
+    view_limit: viewLimit ?? undefined,
+    forward_count: origin?.forwardCount,
+    source_channel_id: origin?.sourceChannelId,
+    source_post_id: origin?.sourcePostId,
+  });
+}
+
+/**
+ * Consume one view of a limited-view message.
+ *
+ * Deliberately separate from listing: scrolling past a message must never
+ * burn a view. Throws with code `views_exhausted` (HTTP 410) once used up.
+ */
+export function openLimitedMessage(chatId: string, messageId: number) {
+  return api.post<{ view_limit: number | null; views_left: number | null }>(
+    `/api/chats/${chatId}/messages/${messageId}/open`,
+    {},
+  );
+}
+
+export interface PollTally {
+  /** Vote count per opaque client-chosen option id. */
+  counts: Record<string, number>;
+  /** Option ids the current user selected. */
+  mine: string[];
+}
+
+/**
+ * Record this user's poll selections.
+ *
+ * Separate from editMessage on purpose: editing belongs to the message's
+ * author, so voting on someone else's poll used to come back 403. Pass an
+ * empty array to withdraw a vote.
+ */
+export function votePoll(chatId: string, messageId: number, optionIds: string[]) {
+  return api.post<PollTally>(`/api/chats/${chatId}/messages/${messageId}/vote`, {
+    option_ids: optionIds,
   });
 }
 
@@ -140,9 +238,43 @@ export function removeReaction(chatId: string, messageId: number, emoji: string)
   );
 }
 
+export interface ReceiptDetail {
+  user_id: string;
+  display_name: string;
+  username: string;
+  status: ReceiptStatus;
+  updated_at: string;
+}
+
+/** Per-recipient delivery detail. Only the sender may read this. */
+export function messageInfo(chatId: string, messageId: number) {
+  return api.get<ReceiptDetail[]>(`/api/chats/${chatId}/messages/${messageId}/info`);
+}
+
 /** Accept a pending friend request chat */
 export function acceptChat(chatId: string) {
   return api.post<ChatDTO>(`/api/chats/${chatId}/accept`);
+}
+
+export type ReportReason = 'spam' | 'abuse' | 'scam' | 'other';
+
+/**
+ * File a moderation report against a chat.
+ *
+ * `block` in the same call because reporting someone and still hearing from
+ * them afterwards is the outcome nobody wants; two separate taps means some
+ * people only manage the first.
+ */
+export function reportChat(
+  chatId: string,
+  reason: ReportReason,
+  opts: { note?: string; block?: boolean } = {},
+) {
+  return api.post<void>(`/api/chats/${chatId}/report`, {
+    reason,
+    note: opts.note ?? '',
+    block: opts.block ?? false,
+  });
 }
 
 /** Block/decline a chat */

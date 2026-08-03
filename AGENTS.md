@@ -1,33 +1,37 @@
 # Repository Guidelines
 
-Socialize is currently a **documentation-only** repository for a planned open-source messaging platform. No application source code lives here yet — only Markdown specs, roadmaps, and contributor guides that describe the future product (Go backend, React Native client, etc.).
-
 ## Project Structure & Module Organization
 
-Root holds top-level guides: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`. Everything else lives under `docs/`, which is split into two **mirrored language trees**: `docs/` (English, default) and `docs/pt/` (Portuguese). Each tree carries the same six sub-areas:
+Two deployables: `mobile/` (Expo/React Native client) and `server/` (Go API, one binary). The `apps/` + `packages/` tree drawn in root `README.md` is aspirational — ignore it.
 
-- `central/` — onboarding (`getting-started.md`, `faq.md`)
-- `features/` — product feature specs (`messaging`, `privacy`, `ai`, `social`, `customization`, `fun`, `innovations`)
-- `tech/` — `architecture.md`, `api.md`, `database.md`, `backend-go.md`, `mobile-rn.md`, `infrastructure.md`
-- `security/` — `encryption.md`, `privacy-policy.md`, `best-practices.md`, `audit.md`
-- `roadmap/` — `roadmap.md` plus per-version files (`v1.0.0.md` … `v3.0.0.md`)
-- `contrib/` — `setup.md`, `style-guide.md`, `testing.md`
+`server/internal/modules/<name>/` is MVC: `model.go`, `repository.go` (hand-written SQL on `pgx`, no ORM), `service.go`, `controller.go`, `routes.go`. Modules must not import another module's `service`/`repository`. Shared infrastructure lives in `internal/platform/{postgres,redis,realtime,tokens}` — `realtime` is the WebSocket hub, `tokens` the JWT pair. Schema changes are numbered up/down pairs in `server/migrations/` (golang-migrate).
 
-When adding or renaming a page in one tree, make the parallel change in the other and update both `docs/README.md` and `docs/pt/README.md` indexes. GitHub assets live under `.github/ISSUE_TEMPLATE/` and `.github/PULL_REQUEST_TEMPLATE/standard.md`.
+`mobile/app/` is `expo-router` file-based routing. `data/api/*.ts` wrap `data/api/client.ts`, which injects the bearer token and replays a single shared refresh on 401. State lives in `data/*-store.ts` as plain modules over `useSyncExternalStore` — no Redux or Zustand; follow that pattern. All visual values come from semantic tokens in `constants/theme.ts` (spec: `docs/tech/design-system.md`); never use raw palette values.
+
+`docs/` and `docs/pt/` are mirrored language trees — change a page in one, change its twin.
 
 ## Build, Test, and Development Commands
 
-There is **no build system** in this repo. Commands referenced inside `docs/contrib/setup.md` and `docs/contrib/testing.md` (`npm install`, `npm run dev`, `npm run test`, `go test ./...`) describe the planned product and do not run here — don't introduce them at the root. Preview Markdown locally with your editor or a tool like `grip`.
+Use `bun`, never npm.
+
+```bash
+cd mobile && bun install && bun run dev   # detects LAN IP, writes .env, boots server + Metro
+bun run android | ios | web | lint
+cd server && make docker-up && make migrate-up && make dev
+make test | fmt | vet | tidy | build
+go test ./internal/platform/tokens -run TestSignParseRoundTrip   # single test
+```
+
+Copy `server/.env.example` to `.env` first.
 
 ## Coding Style & Naming Conventions
 
-- Markdown only; no linter or formatter is configured.
-- File and directory names are lowercase-hyphenated (`getting-started.md`, `privacy-policy.md`); versioned files use `vMAJOR.MINOR.PATCH.md`.
-- Keep section headings aligned between `docs/` and `docs/pt/` so cross-links and the indexes match.
-- Dates use ISO 8601 (`YYYY-MM-DD`) per `CHANGELOG.md`.
+TypeScript is `strict` with the `@/*` path alias, linted by `eslint-config-expo`. Go is formatted with `gofmt -s`. Wrap errors (`fmt.Errorf("...: %w", err)`) and expose package sentinels (`ErrInvalidCode`) that controllers map to HTTP. Every service and repository method takes `context.Context` first. JSON is `snake_case`, Go identifiers `CamelCase`, times UTC/RFC 3339.
+
+## Testing Guidelines
+
+Go tests are `*_test.go` beside the code, mostly `service_test.go` per module. The three integration tests in `internal/modules/messages` self-skip unless `TEST_POSTGRES_URL` is exported — run `make docker-up-local` and set it, or a green `make test` is hiding them. Mobile has no test runner configured.
 
 ## Commit & Pull Request Guidelines
 
-Use **Conventional Commits** as documented in `CONTRIBUTING.md`: `feat:`, `fix:`, `docs:`, `style:`, `refactor:`, `test:`, `chore:`. Recent history is dominated by `docs:` with short imperative subjects (e.g. `Expand documentation with detailed content`).
-
-PRs must follow `.github/PULL_REQUEST_TEMPLATE/standard.md` — fill in Description, Related Issues, Checklist (tests, docs, style guide, changelog), Tests run, Screenshots, and change type. Add a matching entry to `CHANGELOG.md` for any user-visible documentation change.
+Conventional Commits with a scope: `feat(stories): background publish with toast status`. Work on `backend/<feature>` branches. Fill in `.github/PULL_REQUEST_TEMPLATE/standard.md` and add a `CHANGELOG.md` entry for user-visible changes.

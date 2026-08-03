@@ -122,3 +122,10 @@ export function useGroup(id: string | undefined): GroupInfo | undefined {
 export function getGroupLocal(id: string): GroupInfo | undefined {
   return groups[id];
 }
+
+/** Drop cached groups on sign-out — they belong to the account, not the device. */
+export function resetGroupStore(): void {
+  groups = { ...GROUPS };
+  booted = false;
+  emit();
+}

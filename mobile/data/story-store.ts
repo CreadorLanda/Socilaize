@@ -47,6 +47,10 @@ export type StoryPublishInput = {
   visibility?: StoryVisibility;
   isAnonymous?: boolean;
   durationSec?: number;
+  /** Hours before it expires. Server clamps to 1..72; omit for 24. */
+  ttlHours?: number;
+  allowComments?: boolean;
+  allowAnonymousReplies?: boolean;
   /** Display fields for optimistic card. */
   authorName?: string;
   authorUsername?: string;
@@ -244,6 +248,9 @@ async function runPublish(localId: string, input: StoryPublishInput): Promise<vo
       visibility: input.visibility,
       is_anonymous: input.isAnonymous,
       duration_sec: input.durationSec,
+      ttl_hours: input.ttlHours,
+      allow_comments: input.allowComments,
+      allow_anonymous_replies: input.allowAnonymousReplies,
     });
 
     const mapped = mapStoryDTO(dto);
@@ -274,4 +281,21 @@ async function runPublish(localId: string, input: StoryPublishInput): Promise<vo
       4200,
     );
   }
+}
+
+/**
+ * Drop everything on sign-out.
+ *
+ * The feed is a module-level array, so it outlived the account that fetched
+ * it: signing in as someone else showed the previous user's stories, and
+ * `isOwn` came back true on every one of them because the flag was computed
+ * for whoever was signed in when they were fetched.
+ */
+export function resetStoryStore(): void {
+  feed = [];
+  booted = false;
+  loading = false;
+  lastError = null;
+  failedJobs.clear();
+  emit();
 }

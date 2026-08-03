@@ -15,8 +15,9 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Dimensions,
   FlatList,
   Modal,
@@ -47,15 +48,29 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AttachmentBubble } from '@/components/chat/attachment-bubbles';
+import { MediaEditor, type EditorAsset, type EditorResult } from '@/components/chat/media-editor';
+import { ApiError } from '@/data/api/client';
+import { CachedImage } from '@/components/ui/cached-image';
+import { ForwardPicker } from '@/components/chat/forward-picker';
+import { MediaViewer, type ViewerItem } from '@/components/chat/media-viewer';
+import { MessageInfoSheet } from '@/components/chat/message-info';
+import { formatSpeed, nextSpeed } from '@/components/chat/speed-control';
+import { StickerPicker } from '@/components/chat/sticker-picker';
 import { AttachmentComposer } from '@/components/chat/attachment-composer';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { dandaraReply, dandaraSuggestions } from '@/data/dandara';
+import { markChatRead, refreshChats, useChats } from '@/data/chat-store';
+import type { StickerDTO } from '@/data/api/stickers';
+import { noteStickerUsed, refreshStickerPacks, useStickerPacks } from '@/data/sticker-store';
+import { removeSticker, saveSticker } from '@/data/api/stickers';
+import { showToast } from '@/data/toast-store';
 import { refreshGroup, useGroup } from '@/data/group-store';
 import {
   encodeMediaContent,
   mediaFileURL,
+  uploadEncryptedMedia,
   uploadMedia,
 } from '@/data/api/media';
 import {
@@ -65,8 +80,9 @@ import {
   connectRealtime,
   deleteMessage as apiDeleteMessage,
   editMessage as apiEditMessage,
-  listChats,
   listMessages,
+  votePoll,
+  type PollTally,
   markRead,
   postReceipts,
   removeReaction,
@@ -75,17 +91,13 @@ import {
   type ChatDTO,
   type MessageDTO,
   type RealtimeEvent,
+  type ReactionDTO,
 } from '@/data/api/messages';
-import {
-  mapWaMedia,
-  parseWaChatId,
-  waListMessages,
-  waSendMessage,
-} from '@/data/api/whatsapp';
 import {
   CHATS,
   DANDARA,
   MESSAGES,
+  type ChatPreview,
   type MediaAttachment,
   type Message,
   type MessageAttachment,
@@ -94,9 +106,20 @@ import {
   collapseReactions,
   decryptMessageContent,
   mapApiMessage,
+  STICKER_BUBBLE_SIZE,
   serverMessageId,
 } from '@/data/message-map';
-import { encryptForPeer, ensureKeysPublished } from '@/data/crypto';
+import { ensureLocal, mediaIdFromURL, useCacheState } from '@/data/media-cache';
+import {
+  loadCachedMessages,
+  saveCachedMessages,
+  trimCachedChat,
+} from '@/data/db/messages';
+import {
+  encryptForPeer,
+  ensureKeysPublished,
+  ensurePeerIdentityCurrent,
+} from '@/data/crypto';
 import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
@@ -111,9 +134,25 @@ const LOCK_THRESHOLD = 78;
 const CANCEL_THRESHOLD = 96;
 const VOICE_BARS = 26;
 
+/**
+ * Message type sent for each rich attachment. The schema has accepted
+ * these since the first messages migration; nothing was ever sending them.
+ */
+const ATTACHMENT_WIRE_TYPE: Record<string, string | undefined> = {
+  location: 'location',
+  contact: 'contact',
+  poll: 'poll',
+  event: 'event',
+  sticker: 'sticker',
+  game: undefined, // no schema type yet
+};
+
 const ATTACH_ITEMS: { key: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
   { key: 'document', icon: 'document-text', color: '#8B5CF6' },
   { key: 'gallery', icon: 'images', color: '#EC4899' },
+  { key: 'camera', icon: 'camera', color: '#F43F5E' },
+  { key: 'audio', icon: 'musical-notes', color: '#14B8A6' },
+  { key: 'make_sticker', icon: 'happy', color: '#F59E0B' },
   { key: 'games', icon: 'game-controller', color: '#0EA5E9' },
   { key: 'dandara', icon: 'sparkles', color: '#A855F7' },
   { key: 'location', icon: 'location', color: '#22C55E' },
@@ -121,6 +160,18 @@ const ATTACH_ITEMS: { key: string; icon: keyof typeof Ionicons.glyphMap; color: 
   { key: 'poll', icon: 'stats-chart', color: '#F59E0B' },
   { key: 'event', icon: 'calendar', color: '#EF4444' },
 ];
+
+/**
+ * Turn whatever was thrown into something reportable.
+ *
+ * Media sends were failing before any network call and the catch blocks
+ * discarded the reason, so the only symptom was a bubble that disappeared.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof ApiError) return `${err.code}${err.message ? ` — ${err.message}` : ''}`;
+  if (err instanceof Error) return err.message;
+  return t('chats.action_failed_body');
+}
 
 function formatDuration(totalSec: number): string {
   const safe = Math.max(0, Math.floor(totalSec));
@@ -163,12 +214,54 @@ function nowTime(): string {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
+/**
+ * Hops after which a message reads as "forwarded many times".
+ *
+ * Matches the threshold people already know from other messengers. The exact
+ * number is arbitrary; what matters is that there is a point where the label
+ * stops being neutral and starts being a warning.
+ */
+const FORWARD_MANY = 5;
+
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const chat = useMemo(() => CHATS.find((c) => c.id === id), [id]);
-  const mockMessages = useMemo<Message[]>(() => MESSAGES[id ?? ''] ?? [], [id]);
-  const [messages, setMessages] = useState<Message[]>(mockMessages);
-  const [apiChatInfo, setApiChatInfo] = useState<ChatDTO | null>(null);
+  const { chats: storeChats } = useChats();
+  const apiChatInfo: ChatDTO | null = useMemo(
+    () => storeChats.find((c) => c.id === id) ?? null,
+    [storeChats, id],
+  );
+  // Undefined while the chat is still unknown — the distinction the load
+  // effect depends on. A group has no single peer and must not wait for one
+  // that never arrives.
+  const chatType = apiChatInfo?.type;
+
+  // Dandara is a local assistant surface, not a server chat — it is the one
+  // entry that legitimately comes from the bundled fixtures.
+  const isAIChat = id === DANDARA.id;
+  const chat = useMemo<ChatPreview | undefined>(() => {
+    if (isAIChat) return CHATS.find((c) => c.id === DANDARA.id);
+    if (!apiChatInfo) return undefined;
+    return {
+      id: apiChatInfo.id,
+      name: apiChatInfo.title ?? 'Chat',
+      username: apiChatInfo.peer_username
+        ? `@${apiChatInfo.peer_username.replace(/^@/, '')}`
+        : '',
+      avatarUri: apiChatInfo.avatar_url ?? '',
+      lastMessage: '',
+      timestamp: '',
+      unreadCount: apiChatInfo.unread_count,
+      online: false,
+      isGroup: apiChatInfo.type === 'group',
+      isPending: apiChatInfo.status === 'pending',
+      pinned: !!apiChatInfo.pinned_at,
+      muted: !!apiChatInfo.muted_until,
+    };
+  }, [isAIChat, apiChatInfo]);
+  // Only the assistant thread seeds from fixtures; real chats load from the API.
+  const [messages, setMessages] = useState<Message[]>(() =>
+    id === DANDARA.id ? MESSAGES[DANDARA.id] ?? [] : [],
+  );
   const [draft, setDraft] = useState('');
   const [searchMode, setSearchMode] = useState(false);
   const [query, setQuery] = useState('');
@@ -176,6 +269,34 @@ export default function ChatScreen() {
   const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [showAttach, setShowAttach] = useState(false);
+  const [showStickers, setShowStickers] = useState(false);
+  const { packs: stickerPacks } = useStickerPacks();
+  const [viewerStart, setViewerStart] = useState<number | null>(null);
+  const [infoMessageId, setInfoMessageId] = useState<number | null>(null);
+
+  /**
+   * Every photo and video in the thread, so the viewer can page through
+   * them instead of showing only the one that was tapped.
+   */
+  const galleryItems = useMemo<ViewerItem[]>(
+    () =>
+      messages
+        .filter((m) => m.media && m.media.type !== 'audio' && !m.deletedAt)
+        .map((m) => ({
+          id: m.id,
+          uri: m.media!.uri,
+          type: m.media!.type === 'video' ? 'video' : 'image',
+          senderName: m.fromMe ? t('chat.you') : m.senderName || chat?.name,
+          timestamp: m.timestamp,
+          mediaKey: m.media!.key,
+          mime: m.media!.mime,
+        })),
+    [messages, chat?.name],
+  );
+  const [editorAsset, setEditorAsset] = useState<EditorAsset | null>(null);
+  const [editorMode, setEditorMode] = useState<'send' | 'sticker'>('send');
+  /** Kept so the edited file can reuse the original asset's metadata. */
+  const [pendingAsset, setPendingAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [composeKind, setComposeKind] = useState<string | null>(null);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<Message[]>([]);
@@ -232,62 +353,48 @@ export default function ChatScreen() {
     };
   }, []);
 
-  const waJid = id ? parseWaChatId(id) : null;
+  // Paint from disk. Separate from the network effect and keyed only on the
+  // chat, so it runs once: cached bodies are already decrypted and need
+  // nothing the peer would provide.
+  useEffect(() => {
+    if (!id || !meId) return;
+    let cancelled = false;
+    loadCachedMessages(id, 50)
+      .then((cached) => {
+        // Seed only — the network result replaces this wholesale, and
+        // overwriting live messages with stale rows would be a regression.
+        if (cancelled || cached.length === 0) return;
+        setMessages(cached.map((m) => mapApiMessage(m, meId)));
+      })
+      .catch((err) => {
+        // Loud on purpose. Swallowing this is how a completely dead local
+        // database looks exactly like a working one that happens to be
+        // empty — every read falls through to the network and the only
+        // symptom is that nothing is ever faster.
+        console.warn('[db] local cache read failed:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, meId]);
 
-  // Load real chat messages (native API or WhatsApp bridge).
+  // Reconcile with the API.
   useEffect(() => {
     if (!id || !meId) return;
     let cancelled = false;
 
-    if (waJid) {
-      waListMessages(waJid)
-        .then((list) => {
-          if (cancelled || !list?.length) return;
-          const ordered = [...list].reverse();
-          const mapped: Message[] = ordered.map((m) => {
-            const isFromMe =
-              m.wa_message_id.startsWith('out_') ||
-              m.sender_jid === 'me@s.whatsapp.net' ||
-              m.sender_jid.startsWith('me');
-            const rich = mapWaMedia(m, mediaFileURL);
-            return {
-              id: String(m.id || m.wa_message_id),
-              text: rich.text,
-              fromMe: isFromMe,
-              timestamp: m.created_at
-                ? new Date(m.created_at).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
-                : '',
-              senderName: isFromMe ? undefined : m.sender_jid.split('@')[0],
-              source: 'whatsapp' as const,
-              status: 'delivered' as const,
-              media: rich.media,
-              attachment: rich.attachment,
-            };
-          });
-          // Fix fromMe for 1:1: inbound sender_jid === chat_jid (peer).
-          setMessages(
-            mapped.map((msg, i) => {
-              const raw = ordered[i];
-              const peerIsChat = !raw.chat_jid.endsWith('@g.us');
-              if (peerIsChat) {
-                return {
-                  ...msg,
-                  fromMe:
-                    raw.sender_jid !== raw.chat_jid ||
-                    raw.wa_message_id.startsWith('out_'),
-                };
-              }
-              return msg;
-            }),
-          );
-        })
-        .catch(() => {});
-      return () => {
-        cancelled = true;
-      };
+    // Wait until the chat is known at all, not merely until it is known to
+    // be direct. `isDirect` is false while apiChatInfo is still null, so
+    // guarding on it alone let the first run through anyway — the exact
+    // fetch-without-a-peer this is meant to prevent.
+    //
+    // Without the peer, our own outbound messages decrypt to nothing and
+    // that gets written into the cache; the re-run once it lands refetches
+    // and repaints the whole thread, which is the reload being complained
+    // about.
+    if (!isAIChat) {
+      if (!chatType) return;
+      if (chatType === 'direct' && !apiChatInfo?.peer_user_id) return;
     }
 
     listMessages(id, 50)
@@ -296,18 +403,40 @@ export default function ChatScreen() {
         // API returns newest-first; UI expects chronological (oldest first).
         const ordered = [...apiMsgs].reverse();
         const peerId = apiChatInfo?.peer_user_id;
-        const mapped = await Promise.all(
-          ordered.map(async (m) => {
-            const base = mapApiMessage(m, meId);
-            if (base.text === '🔒 …' || (m.content && m.content.startsWith('soc1.'))) {
-              const plain = await decryptMessageContent(m, meId, peerId);
-              return { ...base, text: plain };
-            }
-            return base;
-          }),
-        );
+        // Sequential, not Promise.all. Decryption is not independent per
+        // message: the first envelope carrying a handshake is what creates
+        // the session the rest need. Run in parallel, every message races
+        // that one and loses, so an entire thread comes back undecryptable
+        // even though the material to read it was right there.
+        const decrypted: { dto: MessageDTO; body: string; msg: Message }[] = [];
+        for (const m of ordered) {
+          const base = mapApiMessage(m, meId);
+          if (base.text === '🔒 …' || (m.content && m.content.startsWith('soc1.'))) {
+            const plain = await decryptMessageContent(m, meId, peerId);
+            // Re-map from the decrypted body rather than patching `text`.
+            // The cache replays mapApiMessage over exactly this plaintext,
+            // so mapping it any other way here would make a reloaded
+            // thread render differently from a freshly fetched one — and
+            // an encrypted media envelope would surface as raw JSON.
+            const plainDTO = { ...m, content: plain };
+            decrypted.push({ dto: plainDTO, body: plain, msg: mapApiMessage(plainDTO, meId) });
+          } else {
+            decrypted.push({ dto: m, body: m.content, msg: base });
+          }
+        }
         if (cancelled) return;
+        const mapped = decrypted.map((d) => d.msg);
         setMessages(mapped);
+
+        // Write through in the background: the screen is already correct, so
+        // a slow disk must not hold it up, and a failure here costs only the
+        // next open's speed.
+        saveCachedMessages(
+          id,
+          decrypted.map(({ dto, body }) => ({ dto, body })),
+        )
+          .then(() => trimCachedChat(id))
+          .catch(() => {});
 
         // Ack delivery for inbound, then mark the latest as read.
         const inboundIds = ordered
@@ -326,19 +455,33 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id, meId, waJid, apiChatInfo?.peer_user_id]);
+  }, [id, meId, apiChatInfo?.peer_user_id, chatType, isAIChat]);
 
   // Load chat info from the API + ensure E2EE keys are ready.
   useEffect(() => {
     if (!id) return;
-    ensureKeysPublished().catch(() => {});
-    listChats()
-      .then((chats) => {
-        const found = chats.find((c) => c.id === id);
-        if (found) setApiChatInfo(found);
-      })
-      .catch(() => {});
+    // Swallowing this hid a total failure: no PRNG meant no keys were ever
+    // published and every message silently fell back to plaintext.
+    ensureKeysPublished().catch((err) => {
+      console.warn('[crypto] key publication failed:', err);
+    });
+    // The store owns the chat list; opening a chat also clears its badge.
+    void refreshChats();
+    markChatRead(id);
   }, [id]);
+
+  // Re-key when the peer's identity has changed under us.
+  //
+  // Encryption against a stale session keeps succeeding locally, so nothing
+  // here fails — the peer just sees "missing keys" on every message while
+  // this side looks healthy. Checking costs one request and consumes no
+  // one-time key, and dropping the session makes the next send re-establish.
+  useEffect(() => {
+    const peerId = apiChatInfo?.peer_user_id;
+    const peerName = apiChatInfo?.peer_username;
+    if (!peerId || !peerName) return;
+    ensurePeerIdentityCurrent(peerId, peerName).catch(() => {});
+  }, [apiChatInfo?.peer_user_id, apiChatInfo?.peer_username]);
 
   // Realtime WebSocket — message / typing / receipt / reaction fan-out.
   useEffect(() => {
@@ -400,6 +543,33 @@ export default function ChatScreen() {
               : m,
           ),
         );
+        return;
+      }
+
+      // Delivery ticks used to need a reopen — the server published these
+      // all along, the chat just never listened.
+      if (ev.type === 'receipt' && payload) {
+        const r = payload as { message_id?: number; status?: string };
+        if (r.message_id && r.status) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === String(r.message_id)
+                ? { ...m, status: r.status === 'read' ? 'read' : 'delivered' }
+                : m,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (ev.type === 'message.reaction' && payload) {
+        const r = payload as { message_id?: number; reactions?: ReactionDTO[] };
+        if (r.message_id) {
+          setReactionsMap((prev) => ({
+            ...prev,
+            [String(r.message_id)]: collapseReactions(r.reactions ?? [], meId),
+          }));
+        }
         return;
       }
 
@@ -475,12 +645,9 @@ export default function ChatScreen() {
   }, [messages.length, dandaraTyping, peerTyping, searchMode]);
 
   const isGroup = !!chat?.isGroup || apiChatInfo?.type === 'group';
-  const isAIChat = !!chat?.isAI;
-
   useEffect(() => {
     if (isGroup && id) refreshGroup(id).catch(() => {});
   }, [isGroup, id]);
-  const isWAChat = chat?.source === 'whatsapp';
   const isPending = apiChatInfo?.status === 'pending';
   const isBlocked = apiChatInfo?.status === 'blocked';
   const iSentRequest = isPending && apiChatInfo?.created_by === currentUser?.id;
@@ -647,13 +814,13 @@ export default function ChatScreen() {
         });
         if (id && !isAIChat) {
           try {
-            const uploaded = await uploadMedia({
+            const { object: uploaded, key: voiceKey } = await uploadEncryptedMedia({
               uri,
               name: `voice-${Date.now()}.m4a`,
               mimeType: 'audio/mp4',
               durationMs: duration * 1000,
             });
-            const body = encodeMediaContent(uploaded.url, '');
+            const body = encodeMediaContent(uploaded.url, '', voiceKey);
             const dto = await apiSendMessage(id, body, 'audio');
             const mapped = mapApiMessage(dto, meId);
             setMessages((prev) => {
@@ -662,8 +829,10 @@ export default function ChatScreen() {
               }
               return prev.map((m) => (m.id === tempId ? mapped : m));
             });
-          } catch {
-            /* keep local */
+          } catch (err) {
+            // Silently keeping the bubble made a failed send look like a
+            // successful one that vanished on reload. Say what broke.
+            Alert.alert(t('chats.action_failed_title'), describeError(err));
           }
         }
       }
@@ -824,6 +993,72 @@ export default function ChatScreen() {
     setDraft('');
   };
 
+  /**
+   * A sticker in the thread is identified by its media URL, which is what
+   * the saved pack stores too — so this works for stickers I sent and for
+   * ones I received.
+   */
+  const savedStickerFor = (msg: Message) => {
+    const uri = msg.attachment?.kind === 'sticker' ? msg.attachment.uri : null;
+    if (!uri) return null;
+    for (const pack of stickerPacks) {
+      const hit = pack.stickers?.find((s) => mediaFileURL(s.url) === uri);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  const isStickerSaved = (msg: Message) => !!savedStickerFor(msg);
+
+  const toggleSavedSticker = async () => {
+    const msg = menuTarget?.msg;
+    closeMenu();
+    if (!msg || msg.attachment?.kind !== 'sticker') return;
+    const existing = savedStickerFor(msg);
+    try {
+      if (existing) {
+        await removeSticker(existing.id);
+        showToast(t('stickers.removed'));
+      } else {
+        // The message carries a media URL; recover the id from it.
+        const mediaId = msg.attachment.uri.match(/media\/([0-9a-f-]{36})\/file/i)?.[1];
+        if (!mediaId) return;
+        await saveSticker({ media_id: mediaId });
+        showToast(t('stickers.saved'));
+      }
+      await refreshStickerPacks();
+    } catch {
+      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
+  };
+
+  /** Open the gallery positioned on the tapped item. */
+  const openViewer = useCallback(
+    (msg: Message) => {
+      const i = galleryItems.findIndex((g) => g.id === msg.id);
+      if (i >= 0) setViewerStart(i);
+    },
+    [galleryItems],
+  );
+
+  const replyFromViewer = useCallback(
+    (msgId: string) => {
+      const msg = messages.find((m) => m.id === msgId);
+      setViewerStart(null);
+      if (msg) setReplyTarget(msg);
+    },
+    [messages],
+  );
+
+  const forwardFromViewer = useCallback(
+    (msgId: string) => {
+      const msg = messages.find((m) => m.id === msgId);
+      setViewerStart(null);
+      if (msg) setForwardTargets([msg]);
+    },
+    [messages],
+  );
+
   // ── Multi-select ─────────────────────────────────────────────────────────
   const startSelection = (msg: Message) => {
     setSelectedIds(new Set([msg.id]));
@@ -909,32 +1144,83 @@ export default function ChatScreen() {
     clearSelection();
   };
 
-  // Append the forwarded messages to another chat's mock store.
-  // Real implementation would call POST /messages for each.
-  const forwardTo = (destChatId: string) => {
+  // Forward for real: one POST per message into the destination chat,
+  // encrypted for that chat's peer (not this one's). This used to append
+  // to the in-memory MESSAGES fixture, so forwards vanished on reload.
+  /**
+   * Send one message on to your story.
+   *
+   * Opens the normal composer prefilled rather than publishing straight
+   * away: a story carries a caption, a duration and an audience, and
+   * publishing on a single tap would decide all three for you.
+   *
+   * One at a time — a story is a single frame, so a multi-select forward has
+   * no meaning here and the option is hidden for it.
+   */
+  const forwardToStory = () => {
+    const msg = forwardTargets[0];
+    if (!msg) return;
+    setForwardTargets([]);
+    clearSelection();
+
+    const media = msg.media;
+    const params = new URLSearchParams();
+    if (media?.uri) {
+      params.set('forwardMedia', media.uri);
+      params.set('forwardKind', media.type === 'video' ? 'video' : 'image');
+      if (msg.text) params.set('forwardText', msg.text);
+    } else {
+      params.set('forwardText', msg.text);
+    }
+    router.push(`/story/create?${params.toString()}`);
+  };
+
+  const forwardTo = async (destChatId: string) => {
     if (forwardTargets.length === 0) return;
-    const arr = MESSAGES[destChatId] ?? [];
-    const base = Date.now();
-    const forwarded: Message[] = forwardTargets.map((msg, i) => ({
-      id: `m${base}${i}`,
-      text: msg.text,
-      media: msg.media,
-      attachment: msg.attachment,
-      fromMe: true,
-      timestamp: nowTime(),
-      status: 'sent',
-      forwarded: true,
-    }));
-    MESSAGES[destChatId] = [...arr, ...forwarded];
+    const dest = storeChats.find((c) => c.id === destChatId);
+    const toSend = [...forwardTargets];
+
     Haptics.selectionAsync().catch(() => {});
     setForwardTargets([]);
     clearSelection();
+
+    try {
+      for (const msg of toSend) {
+        let payload = msg.text;
+        if (dest && dest.type !== 'group' && dest.peer_user_id) {
+          try {
+            await ensureKeysPublished();
+            payload = await encryptForPeer(dest.peer_user_id, msg.text, {
+              peerUsername: dest.peer_username,
+            });
+          } catch {
+            payload = msg.text; // peer has no bundle yet
+          }
+        }
+        // Carry the hop count and, for a forwarded channel post, the way
+        // back to it. Without this the label never appears, because the
+        // server only ever saw a first-hand message.
+        await apiSendMessage(destChatId, payload, 'text', undefined, null, {
+          // The count this message already carried; the server adds the hop.
+          forwardCount: msg.forwardCount ?? 0,
+          sourceChannelId: msg.sourceChannelId,
+          sourcePostId: msg.sourcePostId,
+        });
+      }
+      await refreshChats();
+    } catch {
+      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
   };
 
   const replyFromSwipe = (msg: Message) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setReplyTarget(msg);
   };
+
+  /** Absolute media URL back to the stored server path. */
+  const stripApiBase = (uri: string) =>
+    uri.startsWith('http') ? uri.replace(/^https?:\/\/[^/]+/, '') : uri;
 
   const submitText = (text: string) => {
     if (!text) return;
@@ -947,9 +1233,25 @@ export default function ChatScreen() {
       setEditingMsgId(null);
       const mid = serverMessageId(editId);
       if (id && mid != null) {
-        apiEditMessage(id, mid, text)
+        // A media message stores its payload (url, key, caption) in the
+        // body. Sending bare text would overwrite it and lose the file for
+        // good, so edit the caption inside the payload instead.
+        const target = messages.find((m) => m.id === editId);
+        const isMedia = !!target?.media;
+        const body = isMedia
+          ? encodeMediaContent(
+              stripApiBase(target!.media!.uri),
+              text,
+              target!.media!.key ?? null,
+            )
+          : text;
+
+        apiEditMessage(id, mid, body)
           .then((dto) => {
             const mapped = mapApiMessage(dto, meId);
+            // Keep the resolved media we already have; the round-trip only
+            // needs to confirm the edit.
+            if (isMedia && target?.media) mapped.media = { ...target.media };
             setMessages((prev) => prev.map((m) => (m.id === editId ? mapped : m)));
           })
           .catch(() => {
@@ -977,26 +1279,6 @@ export default function ChatScreen() {
     if (isAIChat || /@dandara/i.test(text)) triggerDandara(text);
 
     if (id && !isAIChat) {
-      if (waJid) {
-        waSendMessage(waJid, text)
-          .then((m) => {
-            const mapped: Message = {
-              id: String(m.id || m.wa_message_id),
-              text: m.content,
-              fromMe: true,
-              timestamp: nowTime(),
-              status: 'sent',
-              source: 'whatsapp',
-            };
-            setMessages((prev) => {
-              const without = prev.filter((x) => x.id !== tempId);
-              if (without.some((x) => x.id === mapped.id)) return without;
-              return [...without, mapped];
-            });
-          })
-          .catch(() => {});
-        return;
-      }
       const replyTo = reply ? serverMessageId(reply.id) ?? undefined : undefined;
       (async () => {
         let payload = text;
@@ -1045,9 +1327,55 @@ export default function ChatScreen() {
     if (id && !isAIChat) apiSetTyping(id, false).catch(() => {});
   };
 
-  const addAsset = async (asset: ImagePicker.ImagePickerAsset) => {
+  /**
+   * Send a sticker. It goes as message_type 'sticker' carrying the media
+   * URL, so it is not E2EE-wrapped like text — the bytes already live on
+   * the server as a media object either way.
+   */
+  const sendSticker = async (sticker: StickerDTO) => {
+    if (!canCompose || !id) return;
+    setShowStickers(false);
+    noteStickerUsed(sticker);
+
+    const tempId = `tmp-${Date.now()}`;
+    const uri = mediaFileURL(sticker.url);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text: '',
+        fromMe: true,
+        timestamp: nowTime(),
+        status: 'sent',
+        attachment: { kind: 'sticker', uri, width: STICKER_BUBBLE_SIZE, height: STICKER_BUBBLE_SIZE },
+      },
+    ]);
+
+    try {
+      const dto = await apiSendMessage(id, encodeMediaContent(sticker.url), 'sticker');
+      setMessages((prev) => {
+        const mapped = mapApiMessage(dto, meId);
+        mapped.attachment = { kind: 'sticker', uri, width: STICKER_BUBBLE_SIZE, height: STICKER_BUBBLE_SIZE };
+        const without = prev.filter((m) => m.id !== tempId);
+        return without.some((m) => m.id === mapped.id) ? without : [...without, mapped];
+      });
+      await refreshChats();
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
+  };
+
+  const addAsset = async (
+    asset: ImagePicker.ImagePickerAsset,
+    captionOverride?: string,
+    viewLimit?: number | null,
+  ) => {
     if (!canCompose) return;
-    const caption = draft.trim();
+    // The editor hands its caption in directly. Reading `draft` here would
+    // see the value from before setDraft landed — React state is async, so
+    // the caption was always empty on the first send.
+    const caption = (captionOverride ?? draft).trim();
     const kind = asset.type === 'video' ? 'video' : 'image';
     const localUri = asset.uri;
     const media: MediaAttachment = {
@@ -1069,9 +1397,10 @@ export default function ChatScreen() {
     if (!id || isAIChat) return;
 
     try {
-      const uploaded = await uploadMedia({
+      const mime = asset.mimeType ?? (kind === 'video' ? 'video/mp4' : 'image/jpeg');
+      const { object: uploaded, key: mediaKey } = await uploadEncryptedMedia({
         uri: localUri,
-        mimeType: asset.mimeType ?? (kind === 'video' ? 'video/mp4' : 'image/jpeg'),
+        mimeType: mime,
         width: asset.width,
         height: asset.height,
         durationMs: asset.duration ? Math.round(asset.duration) : undefined,
@@ -1081,34 +1410,14 @@ export default function ChatScreen() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === tempId && m.media
-            ? { ...m, media: { ...m.media, uri: remoteUri } }
+            ? { ...m, media: { ...m.media, uri: remoteUri, key: mediaKey, mime, sizeBytes: uploaded.size_bytes } }
             : m,
         ),
       );
-      if (waJid) {
-        const m = await waSendMessage(waJid, caption, {
-          type: kind,
-          media_url: uploaded.url,
-        });
-        const rich = mapWaMedia(m, mediaFileURL);
-        const mapped: Message = {
-          id: String(m.id || m.wa_message_id),
-          text: rich.text,
-          fromMe: true,
-          timestamp: nowTime(),
-          status: 'sent',
-          source: 'whatsapp',
-          media: rich.media ?? { type: kind, uri: remoteUri },
-        };
-        setMessages((prev) => {
-          const without = prev.filter((x) => x.id !== tempId);
-          if (without.some((x) => x.id === mapped.id)) return without;
-          return [...without, mapped];
-        });
-        return;
-      }
-      const body = encodeMediaContent(uploaded.url, caption);
-      const dto = await apiSendMessage(id, body, kind);
+      // The key travels inside the message body, which is itself E2E
+      // encrypted for the peer below.
+      const body = encodeMediaContent(uploaded.url, caption, mediaKey);
+      const dto = await apiSendMessage(id, body, kind, undefined, viewLimit);
       const mapped = mapApiMessage(dto, meId);
       setMessages((prev) => {
         if (prev.some((m) => m.id === mapped.id)) {
@@ -1116,7 +1425,8 @@ export default function ChatScreen() {
         }
         return prev.map((m) => (m.id === tempId ? mapped : m));
       });
-    } catch {
+    } catch (err) {
+      Alert.alert(t('chats.action_failed_title'), describeError(err));
       // Keep local optimistic bubble if upload/send fails.
     }
   };
@@ -1124,8 +1434,8 @@ export default function ChatScreen() {
   const handleAcceptRequest = async () => {
     if (!id) return;
     try {
-      const updated = await acceptChat(id);
-      setApiChatInfo(updated);
+      await acceptChat(id);
+      await refreshChats();
     } catch {
       // stay pending; user can retry
     }
@@ -1135,7 +1445,7 @@ export default function ChatScreen() {
     if (!id) return;
     try {
       await blockChat(id);
-      setApiChatInfo((prev) => (prev ? { ...prev, status: 'blocked' } : prev));
+      await refreshChats();
     } catch {
       // stay pending
     }
@@ -1146,7 +1456,7 @@ export default function ChatScreen() {
       mediaTypes: ['images', 'videos'],
       quality: 0.8,
     });
-    if (!result.canceled && result.assets[0]) addAsset(result.assets[0]);
+    if (!result.canceled && result.assets[0]) openEditor(result.assets[0]);
   };
 
   const openCamera = async () => {
@@ -1157,7 +1467,95 @@ export default function ChatScreen() {
       quality: 0.8,
       videoMaxDuration: 60,
     });
-    if (!result.canceled && result.assets[0]) addAsset(result.assets[0]);
+    if (!result.canceled && result.assets[0]) openEditor(result.assets[0]);
+  };
+
+  /**
+   * Every image and video goes through the editor before sending, so crop,
+   * draw, text and stickers are always one step away.
+   */
+  const openEditor = (asset: ImagePicker.ImagePickerAsset) => {
+    setPendingAsset(asset);
+    setEditorAsset({ uri: asset.uri, type: asset.type === 'video' ? 'video' : 'image' });
+    setEditorMode('send');
+  };
+
+  /** Pick a photo or video and open the editor in sticker mode. */
+  const pickForSticker = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 1,
+    });
+    if (!result.canceled && result.assets[0]) makeSticker(result.assets[0]);
+  };
+
+  /** Turn the picked media into a sticker instead of sending it. */
+  const makeSticker = (asset: ImagePicker.ImagePickerAsset) => {
+    setPendingAsset(asset);
+    setEditorAsset({ uri: asset.uri, type: asset.type === 'video' ? 'video' : 'image' });
+    setEditorMode('sticker');
+  };
+
+  const handleEditorDone = async (res: EditorResult) => {
+    const original = pendingAsset;
+    setEditorAsset(null);
+    setPendingAsset(null);
+
+    if (editorMode === 'sticker') {
+      try {
+        const ext = res.mime === 'image/webp' ? 'webp' : 'png';
+        const media = await uploadMedia({
+          uri: res.uri,
+          name: `sticker-${Date.now()}.${ext}`,
+          mimeType: res.mime,
+        });
+        await saveSticker({ media_id: media.id });
+        await refreshStickerPacks();
+        showToast(t('stickers.saved'));
+      } catch {
+        Alert.alert(t('stickers.import_failed_title'), t('stickers.import_failed_body'));
+      }
+      return;
+    }
+
+    // Reuse the existing upload+send path, with the edited file swapped in.
+    if (original) {
+      addAsset(
+        { ...original, uri: res.uri, type: res.type === 'video' ? 'video' : 'image' },
+        res.caption,
+        res.viewLimit,
+      );
+    }
+  };
+
+  /**
+   * Send an audio file from storage. Voice notes are recorded with the mic
+   * button; this is for music or a clip the user already has.
+   */
+  const pickAudio = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: 'audio/*',
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    if (!id || isAIChat) return;
+    try {
+      const { object: uploaded, key: audioKey } = await uploadEncryptedMedia({
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType ?? 'audio/mpeg',
+      });
+      const dto = await apiSendMessage(
+        id,
+        encodeMediaContent(uploaded.url, asset.name, audioKey),
+        'audio',
+      );
+      setMessages((prev) => [...prev, mapApiMessage(dto, meId)]);
+      await refreshChats();
+    } catch (err) {
+      Alert.alert(t('chats.action_failed_title'), describeError(err));
+    }
   };
 
   // One-line preview for a quoted/replied message.
@@ -1200,16 +1598,41 @@ export default function ChatScreen() {
     return undefined;
   };
 
-  const sendAttachment = (attachment: MessageAttachment) => {
+  /**
+   * Send a rich attachment (location, contact, poll, event…).
+   *
+   * This used to only append locally, so nothing ever left the device —
+   * the bubble vanished on reload. The payload is JSON in the message
+   * body, using the message_type the schema already allowed.
+   */
+  const sendAttachment = async (attachment: MessageAttachment) => {
+    const reply = replyTarget;
     appendMessage({
       text: '',
       attachment,
-      replyTo: replyTarget
-        ? { id: replyTarget.id, text: replySnippet(replyTarget), fromMe: replyTarget.fromMe, senderName: replyTarget.senderName, icon: replyIcon(replyTarget) }
+      replyTo: reply
+        ? { id: reply.id, text: replySnippet(reply), fromMe: reply.fromMe, senderName: reply.senderName, icon: replyIcon(reply) }
         : undefined,
     });
     setReplyTarget(null);
     setComposeKind(null);
+
+    // Documents upload their bytes separately and are sent there.
+    if (!id || isAIChat || attachment.kind === 'document') return;
+
+    const wireType = ATTACHMENT_WIRE_TYPE[attachment.kind];
+    if (!wireType) return;
+    try {
+      await apiSendMessage(
+        id,
+        JSON.stringify(attachment),
+        wireType,
+        reply ? serverMessageId(reply.id) ?? undefined : undefined,
+      );
+      await refreshChats();
+    } catch {
+      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
   };
 
   const pickDocument = async () => {
@@ -1225,26 +1648,20 @@ export default function ChatScreen() {
         : bytes > 0
           ? `${Math.max(1, Math.round(bytes / 1024))} KB`
           : '—';
+    // url/key are filled in after the upload below.
     sendAttachment({ kind: 'document', name: asset.name, ext, sizeLabel });
     // Also upload + send as document message when online.
     if (id && !isAIChat && asset.uri) {
       try {
-        const uploaded = await uploadMedia({
+        const { object: uploaded, key: docKey } = await uploadEncryptedMedia({
           uri: asset.uri,
           name: asset.name,
           mimeType: asset.mimeType ?? 'application/octet-stream',
         });
-        if (waJid) {
-          await waSendMessage(waJid, asset.name, {
-            type: 'document',
-            media_url: uploaded.url,
-          });
-          return;
-        }
-        const body = encodeMediaContent(uploaded.url, asset.name);
+        const body = encodeMediaContent(uploaded.url, asset.name, docKey);
         await apiSendMessage(id, body, 'document');
-      } catch {
-        /* attachment still shows locally */
+      } catch (err) {
+        Alert.alert(t('chats.action_failed_title'), describeError(err));
       }
     }
   };
@@ -1254,6 +1671,12 @@ export default function ChatScreen() {
     // Let the menu finish dismissing before the next surface appears.
     if (key === 'gallery') {
       setTimeout(pickFromLibrary, 300);
+    } else if (key === 'camera') {
+      setTimeout(openCamera, 300);
+    } else if (key === 'audio') {
+      setTimeout(pickAudio, 300);
+    } else if (key === 'make_sticker') {
+      setTimeout(pickForSticker, 300);
     } else if (key === 'document') {
       setTimeout(pickDocument, 300);
     } else if (key === 'dandara') {
@@ -1265,6 +1688,7 @@ export default function ChatScreen() {
   };
 
   const handleVote = (msgId: string, optionId: string) => {
+    let updated: MessageAttachment | null = null;
     setMessages((prev) =>
       prev.map((m) => {
         const att = m.attachment;
@@ -1278,7 +1702,48 @@ export default function ChatScreen() {
           }
           return o;
         });
-        return { ...m, attachment: { ...att, options } };
+        updated = { ...att, options };
+        return { ...m, attachment: updated };
+      }),
+    );
+
+    // Votes are their own record on the server, not an edit of the message.
+    // Editing is the author's alone, so persisting a vote that way returned
+    // 403 on every poll the user did not create themselves.
+    const mid = serverMessageId(msgId);
+    if (id && mid != null && updated) {
+      const chosen = (updated as Extract<MessageAttachment, { kind: 'poll' }>).options
+        .filter((o) => o.voted)
+        .map((o) => o.id);
+      votePoll(id, mid, chosen)
+        .then((tally) => applyPollTally(msgId, tally))
+        .catch(() => {
+          Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+        });
+    }
+  };
+
+  /**
+   * Replace a poll's counts with the server's, which is the only place they
+   * are authoritative — the optimistic update above only knows about this
+   * user's own click.
+   */
+  const applyPollTally = (msgId: string, tally: PollTally) => {
+    setMessages((prev) =>
+      prev.map((m) => {
+        const att = m.attachment;
+        if (m.id !== msgId || !att || att.kind !== 'poll') return m;
+        return {
+          ...m,
+          attachment: {
+            ...att,
+            options: att.options.map((o) => ({
+              ...o,
+              votes: tally.counts[o.id] ?? 0,
+              voted: tally.mine.includes(o.id),
+            })),
+          },
+        };
       }),
     );
   };
@@ -1413,19 +1878,14 @@ export default function ChatScreen() {
                 {chat?.name || apiChatInfo?.title || 'Chat'}
               </Text>
               <View style={styles.peerStatusRow}>
-                {isWAChat ? <Ionicons name="logo-whatsapp" size={11} color="#25D366" /> : null}
                 <Text style={[styles.peerStatus, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {isWAChat
-                    ? isGroup
-                      ? t('chat.wa_group_subtitle', { count: memberCount })
-                      : t('chat.wa_subtitle')
-                    : isAIChat
-                      ? t('chat.ai_subtitle')
-                      : isGroup
-                        ? t('group.members_count', { count: memberCount })
-                        : chat?.online
-                          ? t('chats.online')
-                          : t('chats.last_seen')}
+                  {isAIChat
+                    ? t('chat.ai_subtitle')
+                    : isGroup
+                      ? t('group.members_count', { count: memberCount })
+                      : chat?.online
+                        ? t('chats.online')
+                        : t('chats.last_seen')}
                 </Text>
               </View>
             </View>
@@ -1523,6 +1983,7 @@ export default function ChatScreen() {
                   isGroup={isGroup}
                   query={searching ? trimmedQuery : ''}
                   reactions={reactionsMap[item.id] ?? []}
+                  onOpenMedia={openViewer}
                   selectionMode={selectionMode}
                   selected={selectedIds.has(item.id)}
                   onToggleSelect={toggleSelect}
@@ -1564,16 +2025,12 @@ export default function ChatScreen() {
                   )}
                   <View style={[styles.e2eNotice, { backgroundColor: colors.surface }]}>
                     <Ionicons
-                      name={isAIChat ? 'sparkles' : isWAChat ? 'logo-whatsapp' : 'lock-closed'}
+                      name={isAIChat ? 'sparkles' : 'lock-closed'}
                       size={11}
-                      color={isWAChat ? '#25D366' : colors.textSecondary}
+                      color={colors.textSecondary}
                     />
                     <Text style={[styles.e2eNoticeText, { color: colors.textSecondary }]}>
-                      {isAIChat
-                        ? t('chat.ai_disclaimer')
-                        : isWAChat
-                          ? t('chat.wa_bridge_notice')
-                          : t('chat.encrypted_notice')}
+                      {isAIChat ? t('chat.ai_disclaimer') : t('chat.encrypted_notice')}
                     </Text>
                   </View>
                 </View>
@@ -1727,8 +2184,22 @@ export default function ChatScreen() {
             <View style={styles.composerRow}>
               {recordPhase === 'idle' ? (
                 <View style={[styles.composer, { backgroundColor: colors.surface }]}>
-                  <Pressable hitSlop={8} style={styles.composerLeft}>
-                    <Ionicons name="happy-outline" size={22} color={canCompose ? colors.textSecondary : colors.textMuted} />
+                  <Pressable
+                    hitSlop={8}
+                    style={styles.composerLeft}
+                    disabled={!canCompose}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      setShowStickers((v) => !v);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('stickers.title')}
+                  >
+                    <Ionicons
+                      name={showStickers ? 'close-outline' : 'happy-outline'}
+                      size={22}
+                      color={canCompose ? colors.textSecondary : colors.textMuted}
+                    />
                   </Pressable>
                   <TextInput
                     ref={composerInputRef}
@@ -1826,6 +2297,24 @@ export default function ChatScreen() {
                 )
               ) : null}
             </View>
+
+            {/* Full-screen editor for any picked photo or video */}
+            <MediaEditor
+              asset={editorAsset}
+              mode={editorMode}
+              onCancel={() => {
+                setEditorAsset(null);
+                setPendingAsset(null);
+              }}
+              onDone={handleEditorDone}
+            />
+
+            {/* Sticker tray, docked under the composer like the keyboard */}
+            <StickerPicker
+              visible={showStickers && canCompose}
+              onPick={sendSticker}
+              height={320}
+            />
           </View>
         )}
       </KeyboardAvoidingView>
@@ -1843,7 +2332,34 @@ export default function ChatScreen() {
           onEdit={editFromMenu}
           onDelete={deleteFromMenu}
           onSelect={selectFromMenu}
+          onSaveSticker={toggleSavedSticker}
+          stickerSaved={isStickerSaved(menuTarget.msg)}
+          onInfo={() => {
+            const mid = serverMessageId(menuTarget.msg.id);
+            closeMenu();
+            if (mid) setInfoMessageId(mid);
+          }}
           onClose={closeMenu}
+        />
+      ) : null}
+
+      {/* Fullscreen photo / video */}
+      {viewerStart !== null ? (
+        <MediaViewer
+          items={galleryItems}
+          startIndex={viewerStart}
+          onClose={() => setViewerStart(null)}
+          onReply={replyFromViewer}
+          onForward={forwardFromViewer}
+        />
+      ) : null}
+
+      {/* Who received and read this message */}
+      {id ? (
+        <MessageInfoSheet
+          chatId={id}
+          messageId={infoMessageId}
+          onClose={() => setInfoMessageId(null)}
         />
       ) : null}
 
@@ -1855,11 +2371,12 @@ export default function ChatScreen() {
       />
 
       {/* Forward to another chat */}
-      <ForwardChatPicker
-        targets={forwardTargets}
-        currentChatId={id!}
+      <ForwardPicker
+        count={forwardTargets.length}
+        excludeChatId={id}
         onClose={() => setForwardTargets([])}
         onPick={forwardTo}
+        onPickStory={forwardTargets.length === 1 ? forwardToStory : undefined}
       />
 
       {/* Attachment menu */}
@@ -2065,12 +2582,31 @@ function MetaRow({ msg, onMedia }: { msg: GroupedMessage; onMedia?: boolean }) {
   );
 }
 
-function MediaContent({ media }: { media: MediaAttachment }) {
+function MediaContent({
+  media,
+  onOpen,
+  onLongPress,
+}: {
+  media: MediaAttachment;
+  onOpen?: () => void;
+  /**
+   * The bubble's long-press. A child Pressable swallows the gesture, so
+   * without forwarding it the context menu never opened on media.
+   */
+  onLongPress?: () => void;
+}) {
   const { colors } = useTheme();
   if (media.type === 'video') {
     return (
-      <View style={[styles.media, { backgroundColor: colors.surfaceMuted }]}>
-        <Image source={{ uri: media.uri }} style={styles.mediaImage} contentFit="cover" />
+      <Pressable
+        onPress={onOpen}
+        onLongPress={onLongPress}
+        delayLongPress={260}
+        style={[styles.media, { backgroundColor: colors.surfaceMuted }]}
+      >
+        {/* Video posters would mean downloading the clip, which defeats
+            tap-to-download; show a dark plate with the size instead. */}
+        <View style={[styles.mediaImage, { backgroundColor: colors.surfaceMuted }]} />
         <View style={styles.videoScrim}>
           <View style={styles.playButton}>
             <Ionicons name="play" size={26} color={colors.text} />
@@ -2084,21 +2620,67 @@ function MediaContent({ media }: { media: MediaAttachment }) {
               : t('chat.video')}
           </Text>
         </View>
-      </View>
+      </Pressable>
     );
   }
   return (
-    <View style={[styles.media, { backgroundColor: colors.surfaceMuted }]}>
-      <Image source={{ uri: media.uri }} style={styles.mediaImage} contentFit="cover" />
-    </View>
+    <Pressable
+      onPress={onOpen}
+      onLongPress={onLongPress}
+      delayLongPress={260}
+      style={[styles.media, { backgroundColor: colors.surfaceMuted }]}
+    >
+      <CachedImage
+        url={media.uri}
+        mediaKey={media.key}
+        mime={media.mime}
+        sizeBytes={media.sizeBytes}
+        style={styles.mediaImage}
+        contentFit="cover"
+        onLongPress={onLongPress}
+      />
+    </Pressable>
   );
 }
 
 // Voice message bubble — play/pause, waveform progress, duration.
-function VoiceMessage({ uri, durationSec, mine }: { uri: string; durationSec: number; mine: boolean }) {
+function VoiceMessage({
+  uri,
+  mediaKey,
+  mime,
+  durationSec,
+  mine,
+}: {
+  uri: string;
+  mediaKey?: MediaAttachment['key'];
+  mime?: string;
+  durationSec: number;
+  mine: boolean;
+}) {
   const { colors } = useTheme();
-  const player = useAudioPlayer(uri);
+
+  // Audio has to go through the cache like every other attachment.
+  //
+  // Handing the remote URL straight to the player looks like it works — the
+  // player accepts any string — but /api/media/:id/file needs an
+  // Authorization header the player never sends, and the bytes behind it are
+  // ciphertext. Locally recorded notes are already a file:// path and play
+  // as they are; only fetched ones need resolving.
+  const remoteId = uri.startsWith('file://') ? null : mediaIdFromURL(uri);
+  const cached = useCacheState(remoteId ?? undefined);
+  useEffect(() => {
+    if (remoteId) void ensureLocal(remoteId, { key: mediaKey, mime: mime ?? 'audio/mp4' });
+  }, [remoteId, mediaKey, mime]);
+
+  const source = remoteId ? (cached.status === 'ready' ? cached.uri : null) : uri;
+  const player = useAudioPlayer(source);
   const status = useAudioPlayerStatus(player);
+
+  // Playback rate persists across pause/resume for this bubble.
+  const [rate, setRate] = useState(1);
+  useEffect(() => {
+    player.setPlaybackRate(rate);
+  }, [rate, player]);
 
   const total = status.duration && status.duration > 0 ? status.duration : durationSec || 1;
   const elapsed = status.currentTime;
@@ -2153,6 +2735,26 @@ function VoiceMessage({ uri, durationSec, mine }: { uri: string; durationSec: nu
       <Text style={[styles.voiceTime, { color: mine ? 'rgba(255,255,255,0.8)' : colors.textSecondary }]}>
         {formatDuration(shownTime)}
       </Text>
+      {/* Tap cycles the rate; long-press drops straight back to 1x. */}
+      <Pressable
+        onPress={() => setRate((r) => nextSpeed(r))}
+        onLongPress={() => setRate(1)}
+        hitSlop={8}
+        style={[
+          styles.speedPill,
+          { backgroundColor: mine ? 'rgba(255,255,255,0.22)' : colors.surfaceMuted },
+        ]}
+        accessibilityLabel={t('viewer.faster')}
+      >
+        <Text
+          style={[
+            styles.speedPillText,
+            { color: mine ? '#fff' : colors.textSecondary },
+          ]}
+        >
+          {formatSpeed(rate)}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -2357,6 +2959,8 @@ function BubbleBody({
   query,
   onVote,
   onViewOnce,
+  onOpenMedia,
+  onLongPressMedia,
 }: {
   msg: GroupedMessage;
   mine: boolean;
@@ -2364,6 +2968,8 @@ function BubbleBody({
   query: string;
   onVote?: (optionId: string) => void;
   onViewOnce?: (msgId: string) => void;
+  onOpenMedia?: (msg: Message) => void;
+  onLongPressMedia?: () => void;
 }) {
   const { colors, chat, metrics, layout } = useTheme();
   const isAudio = msg.media?.type === 'audio';
@@ -2451,6 +3057,57 @@ function BubbleBody({
         </View>
       ) : null}
 
+      {/* Forwarded marker.
+          Above the sender name, because it qualifies everything below it:
+          what follows is not this person's words. "Many times" is a separate
+          label rather than a count — the number is not actionable, the fact
+          that it has been round the block is. */}
+      {msg.forwardCount && msg.forwardCount > 0 ? (
+        <View style={styles.forwardedRow}>
+          <Ionicons
+            name="arrow-redo-outline"
+            size={12}
+            color={msg.forwardCount >= FORWARD_MANY ? colors.warning : (mine ? chat.metaMine || 'rgba(255,255,255,0.7)' : colors.textMuted)}
+          />
+          <Text
+            style={[
+              styles.forwardedText,
+              {
+                color:
+                  msg.forwardCount >= FORWARD_MANY
+                    ? colors.warning
+                    : mine
+                      ? chat.metaMine || 'rgba(255,255,255,0.7)'
+                      : colors.textMuted,
+              },
+            ]}
+          >
+            {msg.forwardCount >= FORWARD_MANY
+              ? t('chat.forwarded_many')
+              : t('chat.forwarded')}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* A forwarded channel post keeps a way back to where it came from.
+          Without it, "forwarded" is a dead end: you can see something was
+          passed along and have no way to check the source. */}
+      {msg.sourceChannelId && msg.sourcePostId ? (
+        <Pressable
+          onPress={() =>
+            router.push(`/channel/${msg.sourceChannelId}?post=${msg.sourcePostId}`)
+          }
+          hitSlop={6}
+          style={styles.forwardedRow}
+          accessibilityRole="link"
+        >
+          <Ionicons name="megaphone-outline" size={12} color={colors.primary} />
+          <Text style={[styles.forwardedText, { color: colors.primary }]}>
+            {t('chat.open_source_post')}
+          </Text>
+        </Pressable>
+      ) : null}
+
       {showSender ? (
         <View style={styles.senderRow}>
           {msg.isAI ? <Ionicons name="sparkles" size={11} color={colors.primary} /> : null}
@@ -2471,14 +3128,31 @@ function BubbleBody({
         </View>
       ) : null}
 
-      {isVisualMedia ? <MediaContent media={msg.media!} /> : null}
+      {isVisualMedia ? (
+        <MediaContent
+          media={msg.media!}
+          onOpen={() => onOpenMedia?.(msg)}
+          onLongPress={onLongPressMedia}
+        />
+      ) : null}
 
       {isAudio ? (
-        <VoiceMessage uri={msg.media!.uri} durationSec={msg.media!.durationSec ?? 0} mine={mine} />
+        <VoiceMessage
+          uri={msg.media!.uri}
+          mediaKey={msg.media!.key}
+          mime={msg.media!.mime}
+          durationSec={msg.media!.durationSec ?? 0}
+          mine={mine}
+        />
       ) : null}
 
       {msg.attachment ? (
-        <AttachmentBubble attachment={msg.attachment} mine={mine} onVote={onVote} />
+        <AttachmentBubble
+          attachment={msg.attachment}
+          mine={mine}
+          onVote={onVote}
+          onLongPress={onLongPressMedia}
+        />
       ) : null}
 
       {hasText ? (
@@ -2524,6 +3198,7 @@ function Bubble({
   onReply,
   onVote,
   onViewOnce,
+  onOpenMedia,
 }: {
   msg: GroupedMessage;
   isGroup: boolean;
@@ -2537,6 +3212,7 @@ function Bubble({
   onReply: (msg: GroupedMessage) => void;
   onVote: (msgId: string, optionId: string) => void;
   onViewOnce: (msgId: string) => void;
+  onOpenMedia: (msg: Message) => void;
 }) {
   const { colors, chat: chrome, layout, metrics } = useTheme();
   const mine = msg.fromMe;
@@ -2550,9 +3226,14 @@ function Bubble({
   // Mine aligns to myBubbleSide; theirs to the opposite.
   const alignEnd = mine ? mineEnd : !mineEnd;
   const radii = bubbleRadii(layout, mine, !!msg.isLastInGroup, layout.myBubbleSide);
-  const bubbleBg = mine
-    ? chrome.bubbleMine || colors.primary
-    : chrome.bubbleTheirs || colors.surface;
+  // Stickers float on the thread with no bubble behind them — the shape of
+  // the sticker is the message, and a background would box in the alpha.
+  const isSticker = msg.attachment?.kind === 'sticker';
+  const bubbleBg = isSticker
+    ? 'transparent'
+    : mine
+      ? chrome.bubbleMine || colors.primary
+      : chrome.bubbleTheirs || colors.surface;
   const checkOnLeft = layout.selectionCheckSide === 'left';
 
   // Swipe right to reply — drag the bubble, release past the threshold.
@@ -2652,16 +3333,24 @@ function Bubble({
           <Pressable
             ref={bubbleRef}
             onLongPress={selectionMode ? undefined : handleLongPress}
-            onPress={selectionMode ? () => onToggleSelect(msg.id) : undefined}
+            onPress={
+              selectionMode
+                ? () => onToggleSelect(msg.id)
+                : // A sticker has no text to select, so a plain tap opens its
+                  // actions (save / remove) rather than doing nothing.
+                  isSticker
+                  ? handleLongPress
+                  : undefined
+            }
             delayLongPress={260}
             style={[
               styles.bubble,
               {
                 backgroundColor: bubbleBg,
                 ...radii,
-                paddingHorizontal: metrics.bubblePaddingH,
-                paddingTop: metrics.bubblePaddingV,
-                paddingBottom: metrics.bubblePaddingV - 1,
+                paddingHorizontal: isSticker ? 0 : metrics.bubblePaddingH,
+                paddingTop: isSticker ? 0 : metrics.bubblePaddingV,
+                paddingBottom: isSticker ? 0 : metrics.bubblePaddingV - 1,
                 opacity: !mine && layout.dimIncoming ? 0.88 : 1,
                 ...(layout.bubbleShadow
                   ? {
@@ -2683,6 +3372,8 @@ function Bubble({
               query={query}
               onVote={(optId) => onVote(msg.id, optId)}
               onViewOnce={onViewOnce}
+              onOpenMedia={onOpenMedia}
+              onLongPressMedia={handleLongPress}
             />
           </Pressable>
 
@@ -2731,6 +3422,9 @@ function ReactionMenu({
   onEdit,
   onDelete,
   onSelect,
+  onSaveSticker,
+  stickerSaved,
+  onInfo,
   onClose,
 }: {
   target: MenuTarget;
@@ -2743,6 +3437,9 @@ function ReactionMenu({
   onEdit: () => void;
   onDelete: () => void;
   onSelect: () => void;
+  onSaveSticker: () => void;
+  stickerSaved: boolean;
+  onInfo: () => void;
   onClose: () => void;
 }) {
   const { colors, isDark } = useTheme();
@@ -2773,12 +3470,18 @@ function ReactionMenu({
   const showEdit = mine && hasText && !msg.forwarded;
   const showSelect = true;
   const showDelete = true;
+  // Saving works both ways: a sticker someone sent me, and one I sent.
+  const showSticker = msg.attachment?.kind === 'sticker';
+  // Only the sender can see who read a message, so only offer it there.
+  const showInfo = mine && !msg.deletedAt && /^\d+$/.test(msg.id);
   const menuItems =
     Number(showReply) +
     Number(showForward) +
     Number(showCopy) +
     Number(showEdit) +
     Number(showSelect) +
+    Number(showSticker) +
+    Number(showInfo) +
     Number(showDelete);
   const menuH = menuItems * MENU_ITEM_HEIGHT;
   const menuW = 230;
@@ -2901,6 +3604,20 @@ function ReactionMenu({
             { show: showCopy, label: t('chat.copy'), icon: 'copy-outline', onPress: onCopy, destructive: false },
             { show: showEdit, label: t('chat.edit'), icon: 'create-outline', onPress: onEdit, destructive: false },
             { show: showSelect, label: t('chat.select'), icon: 'checkmark-circle-outline', onPress: onSelect, destructive: false },
+            {
+              show: showSticker,
+              label: stickerSaved ? t('stickers.remove_sticker') : t('stickers.save_sticker'),
+              icon: stickerSaved ? 'heart-dislike-outline' : 'heart-outline',
+              onPress: onSaveSticker,
+              destructive: false,
+            },
+            {
+              show: showInfo,
+              label: t('chat.message_info'),
+              icon: 'information-circle-outline',
+              onPress: onInfo,
+              destructive: false,
+            },
             { show: showDelete, label: t('chat.delete'), icon: 'trash-outline', onPress: onDelete, destructive: true },
           ] as const
         )
@@ -3011,105 +3728,6 @@ function DeleteMessageModal({
 }
 
 // Sheet to pick a destination chat for one or more forwarded messages.
-function ForwardChatPicker({
-  targets,
-  currentChatId,
-  onClose,
-  onPick,
-}: {
-  targets: Message[];
-  currentChatId: string;
-  onClose: () => void;
-  onPick: (chatId: string) => void;
-}) {
-  const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
-  const [query, setQuery] = useState('');
-  const count = targets.length;
-  useEffect(() => {
-    if (count === 0) setQuery('');
-  }, [count]);
-
-  const list = CHATS.filter(
-    (c) =>
-      c.id !== currentChatId &&
-      !c.isAI &&
-      c.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
-
-  return (
-    <Modal transparent animationType="slide" visible={count > 0} onRequestClose={onClose}>
-      <View style={styles.sheetOverlayDark}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <KeyboardAvoidingView behavior="padding">
-          <View style={[styles.forwardSheet, { backgroundColor: colors.surfaceElevated }]}>
-            <View style={styles.dragHandle}>
-              <View style={[styles.dragBar, { backgroundColor: colors.border }]} />
-            </View>
-            <View style={styles.forwardHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.forwardTitle, { color: colors.text }]}>
-                  {t('chat.forward_title')}
-                </Text>
-                {count > 1 ? (
-                  <Text style={[styles.forwardHint, { color: colors.textSecondary, marginTop: 2 }]}>
-                    {t('chat.selected_count', { count })}
-                  </Text>
-                ) : null}
-              </View>
-              <Pressable onPress={onClose} hitSlop={12}>
-                <Ionicons name="close" size={22} color={colors.text} />
-              </Pressable>
-            </View>
-            <View style={[styles.forwardSearch, { backgroundColor: colors.surfaceMuted }]}>
-              <Ionicons name="search" size={16} color={colors.textMuted} />
-              <TextInput
-                value={query}
-                onChangeText={setQuery}
-                placeholder={t('chat.forward_search')}
-                placeholderTextColor={colors.textMuted}
-                style={[styles.forwardSearchInput, { color: colors.text }]}
-              />
-            </View>
-            <ScrollView
-              style={styles.forwardList}
-              contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, Spacing.md) }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {list.map((c) => (
-                <Pressable
-                  key={c.id}
-                  onPress={() => onPick(c.id)}
-                  style={({ pressed }) => [
-                    styles.forwardRow,
-                    pressed && { backgroundColor: colors.surfaceMuted },
-                  ]}
-                >
-                  <Image
-                    source={{ uri: c.avatarUri }}
-                    style={[styles.forwardAvatar, { backgroundColor: colors.surfaceMuted }]}
-                    contentFit="cover"
-                  />
-                  <View style={styles.forwardText}>
-                    <Text style={[styles.forwardName, { color: colors.text }]} numberOfLines={1}>
-                      {c.name}
-                    </Text>
-                    <Text style={[styles.forwardHint, { color: colors.textSecondary }]} numberOfLines={1}>
-                      {c.isGroup ? t('group.members_count', { count: c.memberCount ?? 0 }) : c.username}
-                    </Text>
-                  </View>
-                  {c.source === 'whatsapp' ? (
-                    <Ionicons name="logo-whatsapp" size={16} color="#25D366" />
-                  ) : null}
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </View>
-    </Modal>
-  );
-}
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
@@ -3610,6 +4228,13 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: Radii.pill,
   },
+  speedPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: Radii.pill,
+    marginLeft: 6,
+  },
+  speedPillText: { ...Typography.micro, fontWeight: '700' },
   voiceTime: {
     ...Typography.micro,
     fontVariant: ['tabular-nums'],
@@ -3799,50 +4424,6 @@ const styles = StyleSheet.create({
   },
   deleteBtnText: { ...Typography.caption, fontWeight: '700' },
 
-  // ── Forward picker sheet ────────────────────────────────────────────────────
-  sheetOverlayDark: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  forwardSheet: {
-    borderTopLeftRadius: Radii.xl,
-    borderTopRightRadius: Radii.xl,
-    paddingHorizontal: Spacing.lg,
-    maxHeight: '82%',
-  },
-  dragHandle: { alignItems: 'center', paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
-  dragBar: { width: 36, height: 4, borderRadius: Radii.pill },
-  forwardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.sm,
-  },
-  forwardTitle: { ...Typography.h3 },
-  forwardSearch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    borderRadius: Radii.pill,
-    paddingHorizontal: Spacing.md,
-    height: 42,
-    marginBottom: Spacing.sm,
-  },
-  forwardSearchInput: { flex: 1, ...Typography.body, fontSize: 15, padding: 0 },
-  forwardList: { marginTop: Spacing.xs },
-  forwardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingVertical: Spacing.sm + 2,
-    paddingHorizontal: Spacing.xs,
-    borderRadius: Radii.md,
-  },
-  forwardAvatar: { width: 44, height: 44, borderRadius: Radii.pill },
-  forwardText: { flex: 1, gap: 2 },
-  forwardName: { ...Typography.body, fontSize: 15, fontWeight: '600' },
-  forwardHint: { ...Typography.caption },
 
   // ── Selection mode ──────────────────────────────────────────────────────────
   bubbleRowSelectable: { paddingLeft: 4, paddingRight: 4, borderRadius: Radii.md },

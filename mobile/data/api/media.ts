@@ -1,6 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
 
 import { ACCESS_KEY, ApiError, BASE_URL } from './client';
+import {
+  encryptMediaBytes,
+  generateMediaKey,
+  type MediaKey,
+} from '../crypto/media-crypto';
+import { readFileBytes, writeTempFile } from '../file-bytes';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'other';
 
@@ -31,7 +37,23 @@ export function mediaFileURL(pathOrId: string): string {
   return `${BASE_URL}/api/media/${pathOrId}/file`;
 }
 
+/**
+ * Inverse of mediaFileURL: recover the stored path from a resolved URL.
+ *
+ * Forwarding reuses the media already on the server rather than uploading a
+ * copy, so the destination message needs the path the API stores — not the
+ * absolute URL the UI renders from. Returns null for anything that is not
+ * one of ours, so a local file or a foreign image is never passed off as
+ * server media.
+ */
+export function mediaPathFromURL(url: string): string | null {
+  const id = url.match(/media\/([0-9a-f-]{36})\/file/i)?.[1];
+  return id ? `/api/media/${id}/file` : null;
+}
+
 export type UploadOpts = {
+  /** True media type, kept for the client; the wire type stays opaque. */
+  originalMime?: string;
   uri: string;
   name?: string;
   mimeType?: string;
@@ -43,6 +65,30 @@ export type UploadOpts = {
 /**
  * Multipart upload. RN FormData needs { uri, name, type } as the file value.
  */
+/**
+ * Encrypt a local file and upload the ciphertext.
+ *
+ * Returns the stored object plus the key the caller must put in the
+ * message. Losing the key means the bytes are unrecoverable — that is the
+ * point.
+ */
+export async function uploadEncryptedMedia(
+  opts: UploadOpts,
+): Promise<{ object: MediaObject; key: MediaKey }> {
+  const key = generateMediaKey();
+  const plain = await readFileBytes(opts.uri);
+  const cipher = encryptMediaBytes(plain, key);
+  const tmp = await writeTempFile(`enc-${Date.now()}.bin`, cipher);
+  const object = await uploadMedia({
+    ...opts,
+    uri: tmp,
+    // The server must not infer a type from opaque bytes.
+    mimeType: 'application/octet-stream',
+    originalMime: opts.mimeType,
+  });
+  return { object, key };
+}
+
 export async function uploadMedia(opts: UploadOpts): Promise<MediaObject> {
   const name = opts.name ?? guessName(opts.uri, opts.mimeType);
   const type = opts.mimeType ?? guessMime(name);
@@ -117,17 +163,32 @@ function guessMime(name: string): string {
 }
 
 /** Encode media message content (JSON) for the messages API. */
-export function encodeMediaContent(url: string, caption?: string): string {
-  return JSON.stringify({ url, caption: caption ?? '' });
+export function encodeMediaContent(
+  url: string,
+  caption?: string,
+  key?: { key: string; nonce: string } | null,
+): string {
+  // The key rides inside the message body, which is itself E2E-encrypted
+  // for the peer. The server sees only ciphertext bytes and a UUID.
+  return JSON.stringify({ url, caption: caption ?? '', ...(key ?? {}) });
 }
 
 /** Decode media message content; falls back to plain URL / text. */
-export function decodeMediaContent(content: string): { url: string; caption: string } | null {
+export function decodeMediaContent(
+  content: string,
+): { url: string; caption: string; key?: string; nonce?: string } | null {
   const trimmed = content.trim();
   if (trimmed.startsWith('{')) {
     try {
-      const o = JSON.parse(trimmed) as { url?: string; caption?: string };
-      if (o.url) return { url: o.url, caption: o.caption ?? '' };
+      const o = JSON.parse(trimmed) as {
+        url?: string;
+        caption?: string;
+        key?: string;
+        nonce?: string;
+      };
+      // Older messages have no key — they predate encrypted media and are
+      // still readable, so absence means "plaintext blob", not an error.
+      if (o.url) return { url: o.url, caption: o.caption ?? '', key: o.key, nonce: o.nonce };
     } catch {
       /* fall through */
     }

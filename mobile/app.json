@@ -1,15 +1,16 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "Yo",
+    "slug": "yo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "yo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "app.yo.messenger"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +20,12 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "app.yo.messenger",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -43,8 +49,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Socialize accesses your photos so you can share them in chats.",
-          "cameraPermission": "Socialize accesses your camera so you can take and record photos and videos to share."
+          "photosPermission": "Yo accesses your photos so you can share them in chats.",
+          "cameraPermission": "Yo accesses your camera so you can take and record photos and videos to share."
         }
       ],
       "expo-audio",
@@ -56,11 +62,20 @@
           "color": "#25D366",
           "defaultChannel": "default"
         }
-      ]
+      ],
+      "expo-video",
+      "expo-dev-client"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "5e47a526-6fb4-469a-b5a8-5549755dc991"
+      }
+    },
+    "owner": "alexandrelanda"
   }
 }

@@ -14,14 +14,12 @@ export type ChatPreview = {
   unreadCount: number;
   online: boolean;
   pinned?: boolean;
+  /** Per-user mute — notifications suppressed for this chat. */
+  muted?: boolean;
   isGroup?: boolean;
   memberCount?: number;
   /** True for the Dandara AI assistant chat. */
   isAI?: boolean;
-  /** Where this chat lives — 'whatsapp' for bridged chats. */
-  source?: 'native' | 'whatsapp';
-  /** WhatsApp JID for bridged chats (only meaningful when source='whatsapp'). */
-  bridgeJid?: string;
   /** Pending friend request chat */
   isPending?: boolean;
 };
@@ -129,44 +127,32 @@ export const CHATS: ChatPreview[] = [
     isGroup: true,
     memberCount: 6,
   },
-  // ── WhatsApp bridge examples (source='whatsapp') ─────────────────────────
-  {
-    id: 'wa1',
-    name: 'Maria Costa',
-    username: '+351 912 000 111',
-    avatarUri: dicebear('avataaars', 'Maria Costa', '25D366'),
-    lastMessage: 'Já estou a caminho 🚗',
-    timestamp: '11:24',
-    unreadCount: 2,
-    online: true,
-    source: 'whatsapp',
-    bridgeJid: '351912000111@s.whatsapp.net',
-  },
-  {
-    id: 'wag1',
-    name: 'Família',
-    username: 'WhatsApp Group',
-    avatarUri: dicebear('initials', 'Família', '25D366'),
-    lastMessage: '@alex anda cá ver isto',
-    timestamp: '10:51',
-    unreadCount: 5,
-    online: false,
-    isGroup: true,
-    memberCount: 8,
-    source: 'whatsapp',
-    bridgeJid: '120363025@g.us',
-  },
 ];
 
 export type MediaAttachment = {
   type: 'image' | 'video' | 'audio';
   uri: string;
   durationSec?: number;
+  /** Per-file key when the blob is end-to-end encrypted. */
+  key?: { key: string; nonce: string } | null;
+  /** True media type; the wire type is opaque for encrypted blobs. */
+  mime?: string;
+  /** Shown on the placeholder so the user knows before downloading. */
+  sizeBytes?: number;
 };
 
 /** Rich attachments composed from the chat attachment menu. */
 export type MessageAttachment =
-  | { kind: 'document'; name: string; ext: string; sizeLabel: string }
+  | {
+      kind: 'document';
+      name: string;
+      ext: string;
+      sizeLabel: string;
+      /** Server path, so the row can fetch it on demand. */
+      url?: string;
+      key?: { key: string; nonce: string } | null;
+      mime?: string;
+    }
   | {
       kind: 'location';
       place: string;
@@ -202,6 +188,11 @@ export type MessageAttachment =
   | { kind: 'game'; name: string; tagline: string; color: string; icon: string };
 
 export type Message = {
+  /** 0 when written here; 1+ once passed along. Drives the forwarded label. */
+  forwardCount?: number;
+  /** A forwarded channel post keeps a way back to where it came from. */
+  sourceChannelId?: string;
+  sourcePostId?: string;
   id: string;
   text: string;
   fromMe: boolean;
@@ -223,7 +214,7 @@ export type Message = {
   edited?: boolean;
   /** When set, the message is rendered as a "this message was deleted" placeholder. */
   deletedAt?: string;
-  /** When true, the message content is consumed on first view (WhatsApp view-once). */
+  /** When true, the message content is consumed on first view. */
   viewOnce?: boolean;
   /** True once a view-once message has been opened locally. */
   viewed?: boolean;
@@ -231,8 +222,6 @@ export type Message = {
   expiresAt?: string;
   /** Usernames mentioned in the text (without @). Used for inline highlighting. */
   mentions?: string[];
-  /** Origin of the message — 'whatsapp' for messages received via the bridge. */
-  source?: 'native' | 'whatsapp';
   /** True for messages that were forwarded from somewhere else. */
   forwarded?: boolean;
 };
@@ -317,149 +306,6 @@ export const MESSAGES: Record<string, Message[]> = {
     { id: 'm13', text: 'You joined the group', fromMe: false, timestamp: '08:54', system: true },
     { id: 'm14', text: 'Welcome aboard — scroll up to catch the thread.', fromMe: false, timestamp: '08:55', senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
   ],
-
-  // ── WhatsApp 1:1 (bridged) ─────────────────────────────────────────────
-  wa1: [
-    {
-      id: 'wm1',
-      text: 'Olá! Estamos a marcar para sábado?',
-      fromMe: false,
-      timestamp: '10:30',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-    },
-    {
-      id: 'wm2',
-      text: 'Sim, combinado! Onde nos encontramos?',
-      fromMe: true,
-      timestamp: '10:32',
-      status: 'read',
-      source: 'whatsapp',
-      edited: true,
-    },
-    {
-      id: 'wm3',
-      text: '',
-      fromMe: false,
-      timestamp: '10:35',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-      attachment: {
-        kind: 'sticker',
-        uri: dicebear('shapes', 'sticker-wave', 'transparent'),
-        width: 160,
-        height: 160,
-      },
-    },
-    {
-      id: 'wm4',
-      text: 'Mensagem apagada',
-      fromMe: false,
-      timestamp: '10:40',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-      deletedAt: '2026-05-24T10:42:00Z',
-    },
-    {
-      id: 'wm5',
-      text: 'Vê esta foto, só por um instante',
-      fromMe: false,
-      timestamp: '10:45',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-      viewOnce: true,
-      media: { type: 'image', uri: dicebear('shapes', 'view-once-photo', 'FF6F61') },
-    },
-    {
-      id: 'wm6',
-      text: 'Combinado, esta mensagem desaparece em 24h',
-      fromMe: true,
-      timestamp: '10:50',
-      status: 'read',
-      source: 'whatsapp',
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'wm7',
-      text: '',
-      fromMe: false,
-      timestamp: '11:20',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-      attachment: {
-        kind: 'location',
-        place: 'A minha localização',
-        address: 'Avenida da Liberdade, Lisboa',
-        live: true,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      },
-    },
-    {
-      id: 'wm8',
-      text: 'Já estou a caminho 🚗',
-      fromMe: false,
-      timestamp: '11:24',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-    },
-    {
-      id: 'wm9',
-      text: 'Olha o que o pai partilhou no grupo — vale a pena ler.',
-      fromMe: false,
-      timestamp: '11:26',
-      source: 'whatsapp',
-      senderName: 'Maria Costa',
-      forwarded: true,
-    },
-  ],
-
-  // ── WhatsApp group (bridged) ───────────────────────────────────────────
-  wag1: [
-    {
-      id: 'gm1',
-      text: 'Bom dia família ☀️',
-      fromMe: false,
-      timestamp: '08:14',
-      source: 'whatsapp',
-      senderName: 'Mãe',
-      senderAvatarUri: dicebear('avataaars', 'Mae', 'F472B6'),
-    },
-    {
-      id: 'gm2',
-      text: '@alex anda cá ver isto',
-      fromMe: false,
-      timestamp: '10:51',
-      source: 'whatsapp',
-      senderName: 'Tio Zé',
-      senderAvatarUri: dicebear('avataaars', 'Tio Ze', '60A5FA'),
-      mentions: ['alex'],
-    },
-    {
-      id: 'gm3',
-      text: '',
-      fromMe: false,
-      timestamp: '10:52',
-      source: 'whatsapp',
-      senderName: 'Tio Zé',
-      senderAvatarUri: dicebear('avataaars', 'Tio Ze', '60A5FA'),
-      attachment: {
-        kind: 'sticker',
-        uri: dicebear('shapes', 'sticker-thumbsup', 'transparent'),
-        width: 160,
-        height: 160,
-      },
-    },
-    {
-      id: 'gm4',
-      text: 'Aviso do condomínio: amanhã há corte de água das 9h às 12h.',
-      fromMe: false,
-      timestamp: '10:55',
-      source: 'whatsapp',
-      senderName: 'Mãe',
-      senderAvatarUri: dicebear('avataaars', 'Mae', 'F472B6'),
-      forwarded: true,
-    },
-  ],
 };
 
 export const GROUPS: Record<string, GroupInfo> = {
@@ -528,7 +374,7 @@ export type Story = {
   isLive?: boolean;
   liveViewers?: number;
   /**
-   * Client-only upload lifecycle for background publish (WhatsApp-style).
+   * Client-only upload lifecycle for background publish.
    * Absent / undefined once the server has accepted the story.
    */
   uploadStatus?: 'uploading' | 'failed';
@@ -602,6 +448,8 @@ export type ChannelGameKind = 'trivia' | 'dice' | 'would_you_rather' | 'quick_dr
 
 export type ChannelPost = {
   id: string;
+  /** Who wrote it — drives the edit/delete affordance. */
+  authorId?: string;
   text: string;
   mediaUri?: string;
   timestamp: string;
@@ -648,188 +496,3 @@ export type Channel = {
   posts: ChannelPost[];
 };
 
-export const CHANNELS: Channel[] = [
-  {
-    id: 'ch1',
-    name: 'Socialize',
-    handle: '@socialize',
-    avatarUri: dicebear('shapes', 'Socialize HQ', '2D5BFF'),
-    coverUri: cover('socialize-cover'),
-    description: 'Official updates, releases, and announcements from the Socialize team.',
-    category: 'news',
-    members: 48200,
-    verified: true,
-    posts: [
-      {
-        id: 'p1',
-        text: 'Group chat history is now live — new members can catch up on past messages. Admins control how far back it goes.',
-        timestamp: '2h',
-        views: 41200,
-        reactions: [
-          { emoji: '❤️', count: 1200 },
-          { emoji: '🔥', count: 430 },
-          { emoji: '👏', count: 260 },
-        ],
-        myReaction: '❤️',
-        comments: [
-          {
-            id: 'c1',
-            text: 'Finally, this makes onboarding so much better.',
-            timestamp: '1h',
-            anonymous: false,
-            authorName: 'Maya',
-            likes: 12,
-            replies: [
-              {
-                id: 'c1r1',
-                text: 'Agreed — the new flow feels so much smoother.',
-                timestamp: '48m',
-                anonymous: false,
-                authorName: 'Leo',
-                likes: 3,
-              },
-              {
-                id: 'c1r2',
-                text: 'Took me 30 seconds to get set up.',
-                timestamp: '20m',
-                anonymous: true,
-                likes: 1,
-              },
-            ],
-          },
-          {
-            id: 'c2',
-            text: 'Huge improvement for community groups.',
-            timestamp: '52m',
-            anonymous: true,
-            likes: 5,
-          },
-        ],
-      },
-      {
-        id: 'p2',
-        text: 'Dark mode got a full refresh: calmer charcoal surfaces, the royal blue finally pops.',
-        mediaUri: cover('ch1-dark'),
-        timestamp: 'Yesterday',
-        views: 38800,
-        reactions: [
-          { emoji: '😍', count: 980 },
-          { emoji: '✨', count: 420 },
-        ],
-      },
-      { id: 'p3', text: 'Stories now slide between users instead of reloading. Smoother, faster, no flash.', timestamp: 'Mon', views: 35100 },
-    ],
-  },
-  {
-    id: 'ch2',
-    name: 'Web3 Daily',
-    handle: '@web3daily',
-    avatarUri: dicebear('icons', 'Web3 Daily', '6F8BFF'),
-    coverUri: cover('web3daily-cover'),
-    description: 'Markets, protocols, and the onchain economy — one concise briefing a day.',
-    category: 'crypto',
-    members: 31100,
-    verified: true,
-    posts: [
-      { id: 'p1', text: 'Gas is back under 12 gwei. Good window if you have been sitting on transactions.', timestamp: '40m', views: 21400 },
-      { id: 'p2', text: 'Weekly briefing: L2 volume hit a new high, stablecoin supply flat, three notable governance votes closing Friday.', timestamp: '6h', views: 27900 },
-      { id: 'p3', text: 'Reminder: never sign a transaction you cannot read. Bookmark the official site.', timestamp: 'Yesterday', views: 30200 },
-    ],
-  },
-  {
-    id: 'ch3',
-    name: 'NFT Radar',
-    handle: '@nftradar',
-    avatarUri: dicebear('icons', 'NFT Radar', 'FF6FB5'),
-    coverUri: cover('nftradar-cover'),
-    description: 'Mints, drops, and floor moves worth your attention. Curated, not hyped.',
-    category: 'nft',
-    members: 22400,
-    verified: true,
-    posts: [
-      { id: 'p1', text: 'Mango_Apes floor up 18% this week. Volume is real, not wash.', mediaUri: cover('ch3-apes'), timestamp: '1h', views: 18600 },
-      { id: 'p2', text: 'Mint calendar for the week is pinned. Three drops we are actually watching.', timestamp: 'Yesterday', views: 16100 },
-      { id: 'p3', text: 'Generative art is having a moment again. More on that tomorrow.', timestamp: 'Mon', views: 14800 },
-    ],
-  },
-  {
-    id: 'ch4',
-    name: 'Dev Corner',
-    handle: '@devcorner',
-    avatarUri: dicebear('icons', 'Dev Corner', '22D3EE'),
-    coverUri: cover('devcorner-cover'),
-    description: 'Engineering notes, tooling, and shipping culture for builders.',
-    category: 'tech',
-    members: 15800,
-    verified: false,
-    posts: [
-      { id: 'p1', text: 'A layout effect runs before paint. That single fact fixes most "flash of wrong content" bugs.', timestamp: '3h', views: 9400 },
-      { id: 'p2', text: 'Prefetch the next thing while the user looks at the current thing. Cheap, huge perceived speed win.', timestamp: 'Yesterday', views: 11200 },
-      { id: 'p3', text: 'Reminder: a fade from opacity 0 always has a blank frame. Slide instead.', timestamp: 'Tue', views: 12750 },
-    ],
-  },
-  {
-    id: 'ch5',
-    name: 'Pixel Arena',
-    handle: '@pixelarena',
-    avatarUri: dicebear('icons', 'Pixel Arena', '4ADE80'),
-    coverUri: cover('pixelarena-cover'),
-    description: 'Indie games, onchain gaming, and the occasional late-night speedrun.',
-    category: 'gaming',
-    members: 19600,
-    verified: false,
-    posts: [
-      { id: 'p1', text: 'New indie roguelike dropped and it is dangerously good. Review thread soon.', mediaUri: cover('ch5-game'), timestamp: '5h', views: 13300 },
-      { id: 'p2', text: 'Community tournament this weekend. Bracket sign-ups are open.', timestamp: 'Yesterday', views: 10900 },
-      { id: 'p3', text: 'Hot take: input latency matters more than resolution. Fight me in the replies.', timestamp: 'Mon', views: 15400 },
-    ],
-  },
-  {
-    id: 'ch6',
-    name: 'Builder Mindset',
-    handle: '@buildermindset',
-    avatarUri: dicebear('icons', 'Builder Mindset', 'A78BFA'),
-    coverUri: cover('buildermindset-cover'),
-    description: 'Short essays on focus, craft, and shipping in public.',
-    category: 'tech',
-    members: 27300,
-    verified: true,
-    posts: [
-      { id: 'p1', text: 'The work that compounds is rarely the work that feels urgent. Protect the quiet hours.', timestamp: '2h', views: 22100 },
-      { id: 'p2', text: 'Ship the smallest version that is honest. Then listen.', timestamp: 'Yesterday', views: 24500 },
-      { id: 'p3', text: 'You do not need more ideas. You need to finish one.', timestamp: 'Sun', views: 28900 },
-    ],
-  },
-  {
-    id: 'ch7',
-    name: 'Onchain Alpha',
-    handle: '@onchainalpha',
-    avatarUri: dicebear('icons', 'Onchain Alpha', 'FFD93D'),
-    coverUri: cover('onchainalpha-cover'),
-    description: 'Research threads and early signals. Not financial advice.',
-    category: 'crypto',
-    members: 12900,
-    verified: false,
-    posts: [
-      { id: 'p1', text: 'Wallet clustering suggests early accumulation in a few infra tokens. Thread below.', timestamp: '90m', views: 8700 },
-      { id: 'p2', text: 'Do your own research. This channel is a starting point, not a destination.', timestamp: 'Yesterday', views: 9900 },
-      { id: 'p3', text: 'Three protocols quietly shipped major upgrades this week. Most people missed it.', timestamp: 'Tue', views: 11300 },
-    ],
-  },
-  {
-    id: 'ch8',
-    name: 'Frame & Form',
-    handle: '@frameandform',
-    avatarUri: dicebear('icons', 'Frame and Form', 'EEF2FF'),
-    coverUri: cover('frameandform-cover'),
-    description: 'Generative art, design systems, and the craft behind the pixels.',
-    category: 'nft',
-    members: 8700,
-    verified: false,
-    posts: [
-      { id: 'p1', text: 'A design system is a memory. It remembers the right decision so you do not redo it.', timestamp: '4h', views: 6100 },
-      { id: 'p2', text: 'New generative series explores low-chroma palettes. Preview attached.', mediaUri: cover('ch8-series'), timestamp: 'Yesterday', views: 7400 },
-      { id: 'p3', text: 'Constraint is not the enemy of creativity. It is the shape of it.', timestamp: 'Mon', views: 8050 },
-    ],
-  },
-];

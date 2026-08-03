@@ -8,7 +8,7 @@ import {
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -56,22 +56,43 @@ const ACCENTS = ['#2D5BFF', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#A78BFA
 /** All creatable modes — live is listed but blocked until hangout ships. */
 const CAPTURE_MODES: CaptureMode[] = ['type', 'normal', 'boomerang', 'handsfree', 'audio', 'live'];
 
+/**
+ * How long a story stays up. Must stay inside the server's 1..72 bound —
+ * see StoryTTLMinHours / StoryTTLMaxHours in the stories module.
+ */
+const TTL_CHOICES = [1, 3, 6, 12, 24, 36, 48, 72] as const;
+
 export default function CreateStoryScreen() {
+  // Prefill from a forward. The composer is the same screen either way — a
+  // second one for "forwarded to story" would be a copy that drifts.
+  const params = useLocalSearchParams<{
+    forwardText?: string;
+    forwardMedia?: string;
+    forwardKind?: string;
+  }>();
   const profile = useProfile();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  const [phase, setPhase] = useState<Phase>('capture');
+  // A forward arrives with its content already chosen, so it starts in the
+  // editor. Opening the camera would ask for something the person just
+  // handed over, and there is no way back to it from there.
+  const forwarded = !!(params.forwardMedia || params.forwardText);
+  const [phase, setPhase] = useState<Phase>(forwarded ? 'edit' : 'capture');
   const [captureMode, setCaptureMode] = useState<CaptureMode>('normal');
-  const [mediaUri, setMediaUri] = useState<string | null>(null);
-  const [isVideo, setIsVideo] = useState(false);
+  const [mediaUri, setMediaUri] = useState<string | null>(params.forwardMedia ?? null);
+  const [isVideo, setIsVideo] = useState(params.forwardKind === 'video');
   const [isAudio, setIsAudio] = useState(false);
   const [audioSec, setAudioSec] = useState(0);
-  const [textOnly, setTextOnly] = useState(false);
-  const [caption, setCaption] = useState('');
+  const [textOnly, setTextOnly] = useState(!!params.forwardText && !params.forwardMedia);
+  const [caption, setCaption] = useState(params.forwardText ?? '');
   const [accent, setAccent] = useState(ACCENTS[0]);
   const [audience, setAudience] = useState<StoryVisibility>('contacts');
+  // Mirrors the server bound (StoryTTLMinHours..StoryTTLMaxHours). Offering
+  // a value the server would clamp means telling the author a story lasts
+  // longer than it will.
+  const [ttlHours, setTtlHours] = useState(24);
   const [postAnonymous, setPostAnonymous] = useState(false);
   const [allowComments, setAllowComments] = useState(true);
   const [allowAnonReplies, setAllowAnonReplies] = useState(true);
@@ -329,7 +350,12 @@ export default function CreateStoryScreen() {
       audioDurationMs: kind === 'audio' ? audioSec * 1000 : undefined,
       accent,
       visibility: audience,
+      ttlHours,
       isAnonymous: postAnonymous,
+      // Both toggles have been on this screen from the start and neither
+      // reached the server, so the choice was discarded on publish.
+      allowComments,
+      allowAnonymousReplies: allowComments && allowAnonReplies,
       durationSec: resolveDurationSec(kind),
       authorName: profile.name || 'You',
       authorUsername: profile.username,
@@ -705,6 +731,38 @@ export default function CreateStoryScreen() {
             accent="#10B981"
             onPress={() => setAudience('close')}
           />
+        </View>
+
+        <Text style={styles.audienceHeading}>{t('stories.duration_label')}</Text>
+        <View style={styles.ttlRow}>
+          {TTL_CHOICES.map((h) => (
+            <Pressable
+              key={h}
+              onPress={() => setTtlHours(h)}
+              style={[
+                styles.ttlChip,
+                {
+                  borderColor: ttlHours === h ? colors.primary : 'rgba(255,255,255,0.18)',
+                  backgroundColor: ttlHours === h ? colors.primary : 'transparent',
+                },
+              ]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: ttlHours === h }}
+            >
+              <Text
+                style={[
+                  styles.ttlChipText,
+                  { color: ttlHours === h ? colors.onPrimary : 'rgba(255,255,255,0.75)' },
+                ]}
+              >
+                {h === 1
+                  ? t('stories.duration_1h')
+                  : h === 72
+                    ? t('stories.duration_max')
+                    : t('stories.duration_hours', { count: h })}
+              </Text>
+            </Pressable>
+          ))}
         </View>
 
         <View style={styles.toggleCard}>
@@ -1300,6 +1358,14 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
+  ttlRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  ttlChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  ttlChipText: { fontSize: 13, fontWeight: '600' },
   audienceRow: { flexDirection: 'row', gap: Spacing.xs },
   audienceChip: {
     flex: 1,

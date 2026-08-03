@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+
+import { CachedImage } from '@/components/ui/cached-image';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useEffect, useMemo } from 'react';
@@ -338,7 +340,7 @@ function RailCard({ story }: { story: Story }) {
             )}
           </View>
         ) : (
-          <Image source={{ uri: story.coverUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+          <CachedImage url={story.coverUri} style={StyleSheet.absoluteFill} contentFit="cover" />
         )}
         <View style={styles.railScrim} />
         {story.isLive ? (
@@ -445,7 +447,7 @@ function PortraitCard({ story, tall }: { story: Story; tall?: boolean }) {
             </View>
           </View>
         ) : (
-          <Image source={{ uri: story.coverUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+          <CachedImage url={story.coverUri} style={StyleSheet.absoluteFill} contentFit="cover" />
         )}
 
         <View style={styles.portraitTopFade} />
@@ -546,8 +548,8 @@ function SeenRow({ story }: { story: Story }) {
           {story.postedAt} · {t('stories.viewed')}
         </Text>
       </View>
-      <Image
-        source={{ uri: story.coverUri }}
+      <CachedImage
+        url={story.coverUri}
         style={[styles.seenThumb, { backgroundColor: colors.surfaceMuted }]}
         contentFit="cover"
       />

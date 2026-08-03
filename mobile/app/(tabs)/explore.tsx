@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
+
+import { ChannelCover, ChannelLogo } from '@/components/ui/channel-art';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -265,7 +266,7 @@ function FeaturedCard({ channel }: { channel: Channel }) {
       accessibilityRole="button"
       accessibilityLabel={t('discover.open_channel', { name: channel.name })}
     >
-      <Image source={{ uri: channel.coverUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+      <ChannelCover url={channel.coverUri} handle={channel.handle} style={StyleSheet.absoluteFill} />
       <View style={styles.featuredScrim} />
       <View style={styles.featuredTop}>
         <View style={styles.livePill}>
@@ -280,10 +281,12 @@ function FeaturedCard({ channel }: { channel: Channel }) {
         ) : null}
       </View>
       <View style={styles.featuredBottom}>
-        <Image
-          source={{ uri: channel.avatarUri }}
+        <ChannelLogo
+          url={channel.avatarUri}
+          name={channel.name}
+          handle={channel.handle}
+          size={40}
           style={styles.featuredAvatar}
-          contentFit="cover"
         />
         <View style={styles.featuredMeta}>
           <Text style={styles.featuredName} numberOfLines={1}>
@@ -315,7 +318,7 @@ function TrendCard({ channel }: { channel: Channel }) {
       accessibilityRole="button"
       accessibilityLabel={t('discover.open_channel', { name: channel.name })}
     >
-      <Image source={{ uri: channel.coverUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+      <ChannelCover url={channel.coverUri} handle={channel.handle} style={StyleSheet.absoluteFill} />
       <View style={styles.trendScrim} />
       <View style={styles.trendTop}>
         <View style={[styles.catMini, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
@@ -326,7 +329,13 @@ function TrendCard({ channel }: { channel: Channel }) {
         ) : null}
       </View>
       <View style={styles.trendBottom}>
-        <Image source={{ uri: channel.avatarUri }} style={styles.trendAvatar} contentFit="cover" />
+        <ChannelLogo
+          url={channel.avatarUri}
+          name={channel.name}
+          handle={channel.handle}
+          size={40}
+          style={styles.trendAvatar}
+        />
         <Text style={styles.trendName} numberOfLines={1}>
           {channel.name}
         </Text>
@@ -355,15 +364,17 @@ function ChannelRow({ channel }: { channel: Channel }) {
       accessibilityLabel={t('discover.open_channel', { name: channel.name })}
     >
       <View style={styles.rowMedia}>
-        <Image
-          source={{ uri: channel.coverUri }}
+        <ChannelCover
+          url={channel.coverUri}
+          handle={channel.handle}
           style={[styles.rowCover, { backgroundColor: colors.surfaceMuted }]}
-          contentFit="cover"
         />
-        <Image
-          source={{ uri: channel.avatarUri }}
+        <ChannelLogo
+          url={channel.avatarUri}
+          name={channel.name}
+          handle={channel.handle}
+          size={40}
           style={[styles.rowAvatar, { borderColor: isDark ? colors.surface : colors.surface }]}
-          contentFit="cover"
         />
       </View>
       <View style={styles.rowBody}>

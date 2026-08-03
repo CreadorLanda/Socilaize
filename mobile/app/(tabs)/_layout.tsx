@@ -68,7 +68,7 @@ export default function TabLayout() {
               contentFit="cover"
             />
           </Pressable>
-          <Text style={[styles.brand, { color: headerFg }]}>Socialize</Text>
+          <Text style={[styles.brand, { color: headerFg }]}>Yo</Text>
         </View>
         <View style={styles.headerActions}>
           <Pressable hitSlop={8} style={styles.iconBtn} onPress={() => router.push('/search')} accessibilityLabel={t('common.search')}>
