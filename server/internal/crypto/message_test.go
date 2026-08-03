@@ -12,7 +12,7 @@ import (
 var testKey, _ = hex.DecodeString("a7228607d5120b804e13d6d76b9162d89b6bf407a11cc6389c5a31bd320ca5a6")
 
 func TestRoundTrip(t *testing.T) {
-	plaintext := "Hello, this is a secret WhatsApp message!"
+	plaintext := "Hello, this is a secret message!"
 	enc, err := crypto.Encrypt(plaintext, testKey)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)

@@ -23,6 +23,11 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 
 	// Receipts / read / typing
 	rg.POST("/chats/:id/receipts", c.PostReceipts)
+	rg.GET("/chats/:id/messages/:mid/info", c.GetMessageInfo)
+	rg.POST("/chats/:id/messages/:mid/open", c.PostMessageOpen)
+	// Voting is its own endpoint: any participant may vote, whereas editing
+	// the message that carries the poll is the author's alone.
+	rg.POST("/chats/:id/messages/:mid/vote", c.PostPollVote)
 	rg.POST("/chats/:id/read", c.PostRead)
 	rg.POST("/chats/:id/typing", c.PostTyping)
 
@@ -33,6 +38,12 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	// Chat actions
 	rg.POST("/chats/:id/accept", c.PostAcceptChat)
 	rg.POST("/chats/:id/block", c.PostBlockChat)
+	rg.POST("/chats/:id/report", c.PostReportChat)
+
+	// Per-user chat management (pin / mute / archive, clear, delete)
+	rg.PATCH("/chats/:id/settings", c.PatchChatSettings)
+	rg.POST("/chats/:id/clear", c.PostClearChat)
+	rg.DELETE("/chats/:id", c.DeleteChat)
 }
 
 // RegisterWS mounts GET /ws without JWT middleware (token parsed inside).

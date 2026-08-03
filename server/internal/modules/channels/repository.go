@@ -342,3 +342,27 @@ func scanChannels(rows pgx.Rows) ([]channelRow, error) {
 	}
 	return out, rows.Err()
 }
+
+func (r *Repository) UpdatePostText(ctx context.Context, postID uuid.UUID, text string) error {
+	tag, err := r.db.Exec(ctx,
+		`UPDATE channel_posts SET text = $2, edited_at = NOW() WHERE id = $1`,
+		postID, text)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+func (r *Repository) DeletePost(ctx context.Context, postID uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM channel_posts WHERE id = $1`, postID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}

@@ -20,11 +20,23 @@ var (
 )
 
 type Service struct {
-	repo *Repository
+	repo  *Repository
+	chats DirectChatOpener
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+// DirectChatOpener finds or creates the one-to-one chat between two people.
+//
+// An interface rather than the messages service itself: modules here do not
+// import each other, and this is the only thing stories needs from chats.
+type DirectChatOpener interface {
+	OpenDirectChat(ctx context.Context, a, b uuid.UUID) (uuid.UUID, error)
+}
+
+// NewService takes an optional chat opener. Nil means blind threads simply
+// never graduate, which is the right degradation for a build that has not
+// wired it: nothing breaks, the button just does not finish.
+func NewService(repo *Repository, chats DirectChatOpener) *Service {
+	return &Service{repo: repo, chats: chats}
 }
 
 func (s *Service) toStory(x row, me uuid.UUID) Story {
@@ -37,23 +49,25 @@ func (s *Service) toStory(x row, me uuid.UUID) Story {
 		name, user, avatar = "Anonymous", "", ""
 	}
 	return Story{
-		ID:           x.ID,
-		AuthorID:     x.AuthorID,
-		AuthorName:   name,
-		AuthorUser:   user,
-		AuthorAvatar: avatar,
-		Kind:         Kind(x.Kind),
-		Caption:      x.Caption,
-		MediaURL:     media,
-		Accent:       x.Accent,
-		Visibility:   Visibility(x.Visibility),
-		IsAnonymous:  x.IsAnonymous,
-		DurationSec:  x.DurationSec,
-		ExpiresAt:    x.ExpiresAt,
-		CreatedAt:    x.CreatedAt,
-		Viewers:      x.Viewers,
-		IsViewed:     x.IsViewed,
-		IsOwn:        x.AuthorID == me,
+		ID:                    x.ID,
+		AuthorID:              x.AuthorID,
+		AuthorName:            name,
+		AuthorUser:            user,
+		AuthorAvatar:          avatar,
+		Kind:                  Kind(x.Kind),
+		Caption:               x.Caption,
+		MediaURL:              media,
+		Accent:                x.Accent,
+		Visibility:            Visibility(x.Visibility),
+		IsAnonymous:           x.IsAnonymous,
+		AllowComments:         x.AllowComments,
+		AllowAnonymousReplies: x.AllowAnonymousReplies,
+		DurationSec:           x.DurationSec,
+		ExpiresAt:             x.ExpiresAt,
+		CreatedAt:             x.CreatedAt,
+		Viewers:               x.Viewers,
+		IsViewed:              x.IsViewed,
+		IsOwn:                 x.AuthorID == me,
 	}
 }
 
@@ -92,16 +106,31 @@ func (s *Service) Create(ctx context.Context, author uuid.UUID, req CreateReques
 	if dur > 30 {
 		dur = 30
 	}
+	// 1h to 72h, defaulting to a day.
+	//
+	// Clamped rather than rejected: the bound is a product decision, not
+	// something a caller can get wrong in a way worth failing a publish
+	// over. A story the author waited to upload should not be lost to a
+	// number being out of range.
 	ttl := req.TTLHours
 	if ttl <= 0 {
-		ttl = 24
+		ttl = StoryTTLDefaultHours
 	}
-	if ttl > 48 {
-		ttl = 48
+	if ttl < StoryTTLMinHours {
+		ttl = StoryTTLMinHours
+	}
+	if ttl > StoryTTLMaxHours {
+		ttl = StoryTTLMaxHours
 	}
 	expires := time.Now().UTC().Add(time.Duration(ttl) * time.Hour)
 
-	id, err := s.repo.Insert(ctx, author, kind, caption, strings.TrimSpace(req.MediaURL), accent, vis, req.IsAnonymous, dur, expires)
+	// Absent means "leave it on": a client that predates these fields must
+	// not silently publish every story with comments disabled.
+	allowComments := req.AllowComments == nil || *req.AllowComments
+	allowAnon := req.AllowAnonymousReplies == nil || *req.AllowAnonymousReplies
+
+	id, err := s.repo.Insert(ctx, author, kind, caption, strings.TrimSpace(req.MediaURL),
+		accent, vis, req.IsAnonymous, dur, expires, allowComments, allowAnon)
 	if err != nil {
 		return Story{}, err
 	}
@@ -160,4 +189,19 @@ func (s *Service) React(ctx context.Context, id, user uuid.UUID, emoji string) e
 		return ErrInvalidKind
 	}
 	return s.repo.React(ctx, id, user, emoji)
+}
+
+// Viewers returns who has seen a story. Author only.
+//
+// Anyone else asking would learn the audience of a story they merely
+// received, which is a different thing from being allowed to watch it.
+func (s *Service) Viewers(ctx context.Context, id, user uuid.UUID) ([]Viewer, error) {
+	story, err := s.Get(ctx, id, user)
+	if err != nil {
+		return nil, err
+	}
+	if story.AuthorID != user {
+		return nil, ErrNotAuthor
+	}
+	return s.repo.Viewers(ctx, id)
 }

@@ -72,3 +72,12 @@ func writeErr(ctx *gin.Context, err error) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 	}
 }
+
+func (c *Controller) GetIdentity(ctx *gin.Context) {
+	id, err := c.svc.IdentityByUsername(ctx.Request.Context(), ctx.Param("username"))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, id)
+}

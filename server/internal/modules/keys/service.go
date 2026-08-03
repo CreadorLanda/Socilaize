@@ -124,3 +124,40 @@ func decode(s string) ([]byte, error) {
 }
 
 func encode(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+// IdentityResponse is the cheap half of a bundle: who the peer currently is,
+// with no key consumed.
+type IdentityResponse struct {
+	UserID      string `json:"user_id"`
+	DeviceID    string `json:"device_id"`
+	IdentityKey string `json:"identity_key"`
+}
+
+// IdentityByUsername answers "what identity does this peer publish now?".
+//
+// A session is bound to the identity it was established against. When a peer
+// reinstalls or signs in fresh, that identity changes and every message
+// encrypted under the old session becomes undecryptable for them — with no
+// signal on the sending side that anything is wrong. This is what lets the
+// sender notice.
+func (s *Service) IdentityByUsername(ctx context.Context, username string) (*IdentityResponse, error) {
+	u, err := s.users.ByUsername(ctx, username)
+	if err != nil {
+		if users.IsNoRows(err) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	deviceID, identity, err := s.repo.FetchIdentity(ctx, u.ID)
+	if err != nil {
+		if IsNoRows(err) {
+			return nil, ErrNoBundle
+		}
+		return nil, fmt.Errorf("fetch identity: %w", err)
+	}
+	return &IdentityResponse{
+		UserID:      u.ID.String(),
+		DeviceID:    deviceID.String(),
+		IdentityKey: encode(identity),
+	}, nil
+}

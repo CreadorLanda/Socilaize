@@ -41,12 +41,53 @@ type Chat struct {
 	// Direct-chat peer (client E2EE session establishment).
 	PeerUserID   *uuid.UUID `json:"peer_user_id,omitempty"`
 	PeerUsername *string    `json:"peer_username,omitempty"`
+	// Per-user settings. Two participants can disagree on all three.
+	PinnedAt   *time.Time `json:"pinned_at,omitempty"`
+	MutedUntil *time.Time `json:"muted_until,omitempty"`
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+}
+
+// ListChatsOptions pages the chat list and selects the archived slice.
+type ListChatsOptions struct {
+	Limit    int
+	Offset   int
+	Archived bool
+}
+
+// DefaultChatPageSize caps an unbounded list request.
+const (
+	DefaultChatPageSize = 50
+	MaxChatPageSize     = 200
+)
+
+// Normalize clamps caller-supplied paging into a sane range.
+func (o *ListChatsOptions) Normalize() {
+	if o.Limit <= 0 {
+		o.Limit = DefaultChatPageSize
+	}
+	if o.Limit > MaxChatPageSize {
+		o.Limit = MaxChatPageSize
+	}
+	if o.Offset < 0 {
+		o.Offset = 0
+	}
+}
+
+// ChatSettingsRequest is a partial update — nil means "leave unchanged",
+// so a client can toggle one flag without reading the others first.
+type ChatSettingsRequest struct {
+	Pinned   *bool `json:"pinned,omitempty"`
+	Muted    *bool `json:"muted,omitempty"`
+	Archived *bool `json:"archived,omitempty"`
 }
 
 type MessagePreview struct {
-	Content   string    `json:"content"`
-	SenderID  uuid.UUID `json:"sender_id"`
-	CreatedAt time.Time `json:"created_at"`
+	Content string `json:"content"`
+	// MessageType lets the chat list label non-text messages ("Sticker",
+	// "Photo") instead of rendering their encoded payload.
+	MessageType MessageType `json:"message_type"`
+	SenderID    uuid.UUID   `json:"sender_id"`
+	CreatedAt   time.Time   `json:"created_at"`
 }
 
 // ── Message ─────────────────────────────────────────────────────────────────
@@ -81,8 +122,21 @@ type Message struct {
 	SenderName   string      `json:"sender_name,omitempty"`
 	SenderAvatar string      `json:"sender_avatar,omitempty"`
 	// Receipt summary for the requesting user / chat (optional enrichment).
-	DeliveredTo int `json:"delivered_to,omitempty"`
-	ReadBy      int `json:"read_by,omitempty"`
+	// PollVotes carries per-option tallies for poll messages. The body itself
+	// is end-to-end encrypted, so this is the only tally the server can serve.
+	PollVotes *PollTally `json:"poll_votes,omitempty"`
+	// 0 for anything written here; 1+ once it has been passed along.
+	ForwardCount    int     `json:"forward_count,omitempty"`
+	SourceChannelID *string `json:"source_channel_id,omitempty"`
+	SourcePostID    *string `json:"source_post_id,omitempty"`
+	DeliveredTo     int     `json:"delivered_to,omitempty"`
+	ReadBy          int     `json:"read_by,omitempty"`
+	// ViewLimit caps how many times each recipient may open the message.
+	// Nil means unlimited.
+	ViewLimit *int `json:"view_limit,omitempty"`
+	// ViewsLeft is how many opens the requesting user has remaining. Only
+	// meaningful when ViewLimit is set.
+	ViewsLeft *int `json:"views_left,omitempty"`
 }
 
 // ReceiptStatus is the delivery lifecycle of a message for one recipient.
@@ -92,6 +146,16 @@ const (
 	ReceiptDelivered ReceiptStatus = "delivered"
 	ReceiptRead      ReceiptStatus = "read"
 )
+
+// ReceiptDetail is one recipient's delivery state, for the message-info
+// screen. Only the sender may read this.
+type ReceiptDetail struct {
+	UserID      uuid.UUID     `json:"user_id"`
+	DisplayName string        `json:"display_name"`
+	Username    string        `json:"username"`
+	Status      ReceiptStatus `json:"status"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
 
 type Receipt struct {
 	MessageID int64         `json:"message_id"`
@@ -140,6 +204,15 @@ type SendMessageRequest struct {
 	Content     string      `json:"content" binding:"required"`
 	MessageType MessageType `json:"message_type"`
 	ReplyToID   *int64      `json:"reply_to_id,omitempty"`
+	// ViewLimit makes this a limited-view message. Nil = unlimited.
+	ViewLimit *int `json:"view_limit,omitempty"`
+	// ForwardCount is the count carried by the content being forwarded. The
+	// server stores one more than this, so a client cannot launder a
+	// heavily-forwarded message by claiming zero.
+	ForwardCount *int `json:"forward_count,omitempty"`
+	// Where a forwarded channel post came from, so the bubble can link back.
+	SourceChannelID *string `json:"source_channel_id,omitempty"`
+	SourcePostID    *string `json:"source_post_id,omitempty"`
 }
 
 type EditMessageRequest struct {
@@ -190,4 +263,11 @@ type sessionRow struct {
 	PeerID     uuid.UUID
 	SessionKey []byte // 32-byte AES-256 key
 	CreatedAt  time.Time
+}
+
+// PollTally is the vote state of one poll, as the server can see it: counts
+// keyed by the client's opaque option ids, and which of them the caller chose.
+type PollTally struct {
+	Counts map[string]int `json:"counts"`
+	Mine   []string       `json:"mine"`
 }

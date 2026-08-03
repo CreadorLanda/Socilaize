@@ -2,13 +2,13 @@ package media
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 
 	"github.com/CreadorLanda/Socilaize/server/internal/middleware"
 )
@@ -99,14 +99,29 @@ func (c *Controller) GetFile(ctx *gin.Context) {
 	}
 	defer f.Close()
 
+	// Record the download so retention can release the blob once everyone
+	// who needs it has it.
+	if uid := middleware.UserIDFrom(ctx); uid != uuid.Nil {
+		if err := c.svc.NoteFetched(ctx.Request.Context(), id, uid); err != nil {
+			log.Warn().Err(err).Msg("media: note fetch")
+		}
+	}
+
 	ctx.Header("Content-Type", obj.MimeType)
-	ctx.Header("Content-Length", strconv.FormatInt(obj.SizeBytes, 10))
 	ctx.Header("Cache-Control", "private, max-age=86400")
 	if obj.OriginalName != "" {
 		ctx.Header("Content-Disposition", `inline; filename="`+obj.OriginalName+`"`)
 	}
-	ctx.Status(http.StatusOK)
-	_, _ = io.Copy(ctx.Writer, f)
+
+	// ServeContent handles Range requests, conditional GETs and the
+	// Content-Length/Accept-Ranges headers. Streaming a copy of the whole
+	// file instead meant a video had to download fully before it could
+	// play, and seeking was impossible.
+	name := obj.OriginalName
+	if name == "" {
+		name = obj.ID.String()
+	}
+	http.ServeContent(ctx.Writer, ctx.Request, name, obj.CreatedAt, f)
 }
 
 // Delete — DELETE /media/:id

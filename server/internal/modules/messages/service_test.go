@@ -161,3 +161,277 @@ func TestNonParticipantCannotAccessChat(t *testing.T) {
 		t.Fatalf("ListMessages by non-participant: got %v", err)
 	}
 }
+
+// TestListMessagesCarriesReceiptCounts locks in the tick state the sender
+// sees after reopening a chat.
+//
+// The Message struct always had DeliveredTo/ReadBy fields, but no query ever
+// populated them: they were serialized as zero on every history load, so a
+// reloaded thread showed a single tick even for messages the peer had read.
+// Only the live WebSocket receipt event moved the ticks, and that is gone the
+// moment the screen unmounts.
+func TestListMessagesCarriesReceiptCounts(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "read this"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	untouched, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "ignore this"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	find := func(msgs []Message, id int64) Message {
+		t.Helper()
+		for _, m := range msgs {
+			if m.ID == id {
+				return m
+			}
+		}
+		t.Fatalf("message %d missing from history", id)
+		return Message{}
+	}
+
+	// Nothing acknowledged yet: both must read as merely sent.
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if m := find(msgs, sent.ID); m.DeliveredTo != 0 || m.ReadBy != 0 {
+		t.Fatalf("before any receipt: delivered=%d read=%d, want 0/0", m.DeliveredTo, m.ReadBy)
+	}
+
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptDelivered,
+	}); err != nil {
+		t.Fatalf("SetReceipts delivered: %v", err)
+	}
+
+	msgs, err = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages after delivered: %v", err)
+	}
+	if m := find(msgs, sent.ID); m.DeliveredTo != 1 || m.ReadBy != 0 {
+		t.Fatalf("after delivered: delivered=%d read=%d, want 1/0", m.DeliveredTo, m.ReadBy)
+	}
+
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts read: %v", err)
+	}
+
+	msgs, err = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages after read: %v", err)
+	}
+	// DeliveredTo must still count the row now that it says 'read'. The
+	// receipt is upserted in place, so a query that only matched the literal
+	// 'delivered' status would drop this back to zero and flicker the ticks.
+	if m := find(msgs, sent.ID); m.DeliveredTo != 1 || m.ReadBy != 1 {
+		t.Fatalf("after read: delivered=%d read=%d, want 1/1", m.DeliveredTo, m.ReadBy)
+	}
+	// The untouched message must not inherit its neighbour's receipts.
+	if m := find(msgs, untouched.ID); m.DeliveredTo != 0 || m.ReadBy != 0 {
+		t.Fatalf("untouched message: delivered=%d read=%d, want 0/0", m.DeliveredTo, m.ReadBy)
+	}
+}
+
+// TestVoteOnAnotherUsersPoll is the case that used to be impossible.
+//
+// Voting was implemented as an edit of the message carrying the poll, and
+// editing is restricted to its author — so every vote on someone else's poll
+// came back 403. Votes now live in their own table, which also keeps the
+// message body opaque to the server.
+func TestVoteOnAnotherUsersPoll(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	// Alice posts the poll; the body stays opaque to the server.
+	poll, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content:     `{"kind":"poll","question":"?","options":[{"id":"o0"},{"id":"o1"}]}`,
+		MessageType: MsgPoll,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(poll): %v", err)
+	}
+
+	// The regression: editing someone else's message must still be refused.
+	if _, err := svc.EditMessage(ctx, chat.ID, bob, poll.ID, "hijacked"); err == nil {
+		t.Fatal("bob was allowed to edit alice's message — the old vote path")
+	}
+
+	// But voting must succeed.
+	tally, err := svc.VotePoll(ctx, chat.ID, bob, poll.ID, []string{"o1"})
+	if err != nil {
+		t.Fatalf("bob voting on alice's poll: %v", err)
+	}
+	if tally.Counts["o1"] != 1 || len(tally.Mine) != 1 || tally.Mine[0] != "o1" {
+		t.Fatalf("after bob votes: counts=%v mine=%v", tally.Counts, tally.Mine)
+	}
+
+	// Alice votes for the same option; the tally is shared, hers is separate.
+	tally, err = svc.VotePoll(ctx, chat.ID, alice, poll.ID, []string{"o1"})
+	if err != nil {
+		t.Fatalf("alice voting: %v", err)
+	}
+	if tally.Counts["o1"] != 2 {
+		t.Fatalf("both voted o1: counts=%v, want 2", tally.Counts)
+	}
+
+	// Changing a single-choice vote must replace, not accumulate.
+	tally, err = svc.VotePoll(ctx, chat.ID, bob, poll.ID, []string{"o0"})
+	if err != nil {
+		t.Fatalf("bob changing vote: %v", err)
+	}
+	if tally.Counts["o0"] != 1 || tally.Counts["o1"] != 1 {
+		t.Fatalf("after bob switches: counts=%v, want o0=1 o1=1", tally.Counts)
+	}
+
+	// Withdrawing leaves nothing behind.
+	if _, err := svc.VotePoll(ctx, chat.ID, bob, poll.ID, nil); err != nil {
+		t.Fatalf("bob withdrawing: %v", err)
+	}
+
+	// A history load must carry the tally: nothing in the body holds it.
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	var seen *Message
+	for i := range msgs {
+		if msgs[i].ID == poll.ID {
+			seen = &msgs[i]
+		}
+	}
+	if seen == nil {
+		t.Fatal("poll missing from history")
+	}
+	if seen.PollVotes == nil {
+		t.Fatal("poll came back with no tally — a reload would show zero votes")
+	}
+	if seen.PollVotes.Counts["o1"] != 1 || seen.PollVotes.Counts["o0"] != 0 {
+		t.Fatalf("tally on reload: %v, want o1=1 and no o0", seen.PollVotes.Counts)
+	}
+	if len(seen.PollVotes.Mine) != 1 || seen.PollVotes.Mine[0] != "o1" {
+		t.Fatalf("alice's own selection on reload: %v", seen.PollVotes.Mine)
+	}
+
+	// Non-participants cannot vote.
+	eve := createTestUser(t, pool, "eve_"+uuid.NewString()[:8])
+	if _, err := svc.VotePoll(ctx, chat.ID, eve, poll.ID, []string{"o0"}); !errors.Is(err, ErrNotParticipant) {
+		t.Fatalf("outsider voting: got %v, want ErrNotParticipant", err)
+	}
+}
+
+// TestForwardCountCannotBeLaundered is the rule that makes the label mean
+// something.
+//
+// "Forwarded many times" is a warning, and a warning a sender can switch off
+// by claiming a lower number is not a warning. The server always stores one
+// more than the count it was handed.
+func TestForwardCountCannotBeLaundered(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	count := func(id int64) int {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for _, m := range msgs {
+			if m.ID == id {
+				return m.ForwardCount
+			}
+		}
+		t.Fatalf("message %d not found", id)
+		return -1
+	}
+
+	// Written here, not forwarded.
+	fresh, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "original"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if got := count(fresh.ID); got != 0 {
+		t.Fatalf("a new message reported %d hops, want 0", got)
+	}
+
+	// Forwarding something that had already made one hop makes two.
+	one := 1
+	fwd, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "passed along", ForwardCount: &one,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(forward): %v", err)
+	}
+	if got := count(fwd.ID); got != 2 {
+		t.Fatalf("forwarding a 1-hop message gave %d, want 2", got)
+	}
+
+	// Zero means "the thing I am forwarding had made no hops" — a channel
+	// post, say — so the result is one, not zero. Omitting the field is how
+	// a message says it was written here.
+	zero := 0
+	firstHop, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "from a channel", ForwardCount: &zero,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(zero): %v", err)
+	}
+	if got := count(firstHop.ID); got != 1 {
+		t.Fatalf("forwarding a 0-hop source gave %d, want 1", got)
+	}
+
+	// A high count survives and keeps climbing — this is what drives the
+	// "forwarded many times" label.
+	many := 6
+	heavy, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "chain letter", ForwardCount: &many,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(many): %v", err)
+	}
+	if got := count(heavy.ID); got != 7 {
+		t.Fatalf("forwarding a 6-hop message gave %d, want 7", got)
+	}
+}

@@ -95,4 +95,3 @@ func writeErr(ctx *gin.Context, err error) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 	}
 }
-

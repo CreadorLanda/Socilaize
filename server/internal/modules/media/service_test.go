@@ -49,7 +49,7 @@ func TestEnsureExt(t *testing.T) {
 // skipped; kept as documentation of intended flow.
 func TestUploadRequiresRepo(t *testing.T) {
 	dir := t.TempDir()
-	svc := NewService(nil, dir, 1024)
+	svc := NewService(nil, dir, 1024, 0)
 	// Calling Upload with nil repo panics/ fails — ensure classify works via public path.
 	_ = svc
 	_ = context.Background()

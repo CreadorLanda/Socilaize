@@ -26,8 +26,10 @@ var (
 	ErrCannotAcceptOwn  = errors.New("cannot_accept_own_request")
 	ErrChatNotPending   = errors.New("chat_not_pending")
 	ErrMessageNotFound  = errors.New("message_not_found")
+	ErrInvalidReport    = errors.New("invalid_report")
 	ErrNotSender        = errors.New("not_message_sender")
 	ErrInvalidReceipt   = errors.New("invalid_receipt_status")
+	ErrViewsExhausted   = errors.New("views_exhausted")
 )
 
 // Broadcaster is satisfied by *realtime.Hub. Kept as an interface so the
@@ -161,22 +163,98 @@ func (s *Service) BlockChat(ctx context.Context, chatID, userID uuid.UUID) error
 	return s.repo.UpdateChatStatus(ctx, chatID, ChatStatusBlocked)
 }
 
-func (s *Service) ListChats(ctx context.Context, userID uuid.UUID) ([]Chat, error) {
-	chats, err := s.repo.ListChats(ctx, userID)
-	if err != nil {
+// ListChats returns one page of the caller's chats. The preview, unread
+// count and peer are resolved inside the repository query — no per-chat
+// round trips.
+func (s *Service) ListChats(ctx context.Context, userID uuid.UUID, opts ListChatsOptions) ([]Chat, error) {
+	opts.Normalize()
+	return s.repo.ListChats(ctx, userID, opts)
+}
+
+// UpdateChatSettings toggles pin / mute / archive for the caller only.
+func (s *Service) UpdateChatSettings(ctx context.Context, chatID, userID uuid.UUID, req ChatSettingsRequest) (Chat, error) {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return Chat{}, err
+	}
+	if err := s.repo.UpdateChatSettings(ctx, chatID, userID, req); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Chat{}, ErrChatNotFound
+		}
+		return Chat{}, err
+	}
+	return s.loadChat(ctx, chatID, userID)
+}
+
+// ClearChatHistory hides existing messages from the caller only.
+func (s *Service) ClearChatHistory(ctx context.Context, chatID, userID uuid.UUID) error {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return err
+	}
+	if err := s.repo.ClearHistory(ctx, chatID, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrChatNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// DeleteChat removes the chat from the caller's list and clears their copy
+// of the history. The peer is unaffected, and the chat returns if they write.
+func (s *Service) DeleteChat(ctx context.Context, chatID, userID uuid.UUID) error {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return err
+	}
+	if err := s.repo.HideChat(ctx, chatID, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrChatNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// MessageInfo returns per-recipient delivery detail. Restricted to the
+// sender: who read your message is yours to see, not the whole chat's.
+func (s *Service) MessageInfo(ctx context.Context, chatID uuid.UUID, messageID int64, caller uuid.UUID) ([]ReceiptDetail, error) {
+	if err := s.requireParticipant(ctx, chatID, caller); err != nil {
 		return nil, err
 	}
-	for i, c := range chats {
-		preview, err := s.repo.LastMessage(ctx, c.ID)
-		if err == nil && preview != nil {
-			chats[i].LastMessage = preview
+	sender, owningChat, err := s.repo.MessageSender(ctx, messageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrMessageNotFound
 		}
-		if n, err := s.repo.UnreadCount(ctx, c.ID, userID); err == nil {
-			chats[i].UnreadCount = n
-		}
-		s.enrichDirectPeer(ctx, &chats[i], userID)
+		return nil, err
 	}
-	return chats, nil
+	if owningChat != chatID {
+		return nil, ErrMessageNotFound
+	}
+	if sender != caller {
+		return nil, ErrNotSender
+	}
+	return s.repo.MessageReceipts(ctx, messageID)
+}
+
+// OpenLimitedMessage consumes one view of a limited-view message and
+// reports what is left. Returns ErrViewsExhausted once the recipient has
+// used them all, so the client can render the burnt state instead of the
+// content.
+func (s *Service) OpenLimitedMessage(ctx context.Context, chatID uuid.UUID, messageID int64, viewer uuid.UUID) (*int, *int, error) {
+	if err := s.requireParticipant(ctx, chatID, viewer); err != nil {
+		return nil, nil, err
+	}
+	limit, left, err := s.repo.RegisterView(ctx, messageID, viewer)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, ErrMessageNotFound
+		}
+		return nil, nil, err
+	}
+	if limit != nil && left != nil && *left <= 0 {
+		return limit, left, ErrViewsExhausted
+	}
+	return limit, left, nil
 }
 
 // ── Messages ────────────────────────────────────────────────────────────────
@@ -209,7 +287,22 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 			return Message{}, ErrPendingChatLimit
 		}
 	}
-	id, err := s.repo.InsertMessage(ctx, chatID, senderID, req.Content, msgType, req.ReplyToID)
+	// One more hop than the client claims, and never fewer than zero. Taking
+	// the number at face value would let a client reset a chain that has been
+	// round the block ten times back to "written just for you".
+	// The field being present is what marks this as a forward; its value is
+	// the count the source carried. Gating on "> 0" instead meant a channel
+	// post — which carries zero, being first-hand where it stands — could
+	// never reach one hop, and a chat message at one hop jumped to two.
+	origin := Origin{}
+	if req.ForwardCount != nil {
+		origin.ForwardCount = *req.ForwardCount + 1
+	}
+	origin.ChannelID = req.SourceChannelID
+	origin.PostID = req.SourcePostID
+
+	id, err := s.repo.InsertMessage(ctx, chatID, senderID, req.Content, msgType,
+		req.ReplyToID, req.ViewLimit, origin)
 	if err != nil {
 		return Message{}, err
 	}
@@ -226,7 +319,12 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListMessages(ctx, chatID, limit, before)
+	msgs, err := s.repo.ListMessages(ctx, chatID, limit, before)
+	if err != nil {
+		return nil, err
+	}
+	s.attachPollTallies(ctx, userID, msgs)
+	return msgs, nil
 }
 
 // EditMessage updates content (sender only) and fans out over WS.
@@ -405,19 +503,14 @@ func (s *Service) enrichDirectPeer(ctx context.Context, c *Chat, forUser uuid.UU
 }
 
 func (s *Service) loadChat(ctx context.Context, chatID uuid.UUID, forUser uuid.UUID) (Chat, error) {
-	chats, err := s.repo.ListChats(ctx, forUser)
+	c, err := s.repo.ChatForUser(ctx, chatID, forUser)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Chat{}, ErrChatNotFound
+		}
 		return Chat{}, err
 	}
-	for _, c := range chats {
-		if c.ID == chatID {
-			preview, _ := s.repo.LastMessage(ctx, chatID)
-			c.LastMessage = preview
-			s.enrichDirectPeer(ctx, &c, forUser)
-			return c, nil
-		}
-	}
-	return Chat{}, ErrChatNotFound
+	return *c, nil
 }
 
 func (s *Service) getMessage(ctx context.Context, chatID uuid.UUID, msgID int64) (Message, error) {
@@ -468,8 +561,8 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		category = "groups"
 	}
 	data := map[string]string{
-		"type":     "message.new",
-		"chat_id":  chatID.String(),
+		"type":       "message.new",
+		"chat_id":    chatID.String(),
 		"message_id": fmt.Sprintf("%d", msg.ID),
 	}
 	for _, uid := range ids {
@@ -478,6 +571,10 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		}
 		if s.hub != nil && s.hub.Online(uid) {
 			continue // live WS already delivers
+		}
+		// Respect a per-user mute on this chat.
+		if muted, err := s.repo.IsMuted(ctx, chatID, uid); err == nil && muted {
+			continue
 		}
 		_ = s.push.NotifyUser(ctx, uid, category, title, body, data)
 	}
@@ -506,4 +603,85 @@ func hkdfDerive(ikm, salt []byte, outLen int) []byte {
 		out = out[:outLen]
 	}
 	return out
+}
+
+// VotePoll records the caller's selections on a poll message.
+//
+// A separate endpoint rather than an edit of the message: editing is the
+// author's alone, so voting on someone else's poll was rejected outright —
+// and the body is end-to-end encrypted, so the server could not have merged
+// a tally into it even for the author.
+func (s *Service) VotePoll(ctx context.Context, chatID, userID uuid.UUID, msgID int64, optionIDs []string) (*PollTally, error) {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return nil, err
+	}
+	ids, err := s.repo.MessageIDsInChat(ctx, chatID, []int64{msgID})
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, ErrMessageNotFound
+	}
+	if err := s.repo.SetPollVotes(ctx, msgID, userID, optionIDs); err != nil {
+		return nil, err
+	}
+	tallies, err := s.repo.PollTallies(ctx, []int64{msgID}, userID)
+	if err != nil {
+		return nil, err
+	}
+	t := tallies[msgID]
+	if t == nil {
+		t = &PollTally{Counts: map[string]int{}, Mine: []string{}}
+	}
+	s.broadcast(ctx, chatID, "poll.voted", map[string]any{
+		"message_id": msgID,
+		"poll_votes": t,
+	})
+	return t, nil
+}
+
+// attachPollTallies fills PollVotes on every poll message in a page.
+//
+// Without it a reload showed zero votes on every poll: the counts live in
+// their own table now, so nothing in the message body carries them.
+func (s *Service) attachPollTallies(ctx context.Context, userID uuid.UUID, msgs []Message) {
+	var ids []int64
+	for i := range msgs {
+		if msgs[i].MessageType == MsgPoll {
+			ids = append(ids, msgs[i].ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	tallies, err := s.repo.PollTallies(ctx, ids, userID)
+	if err != nil {
+		return // tallies are cosmetic; never fail a history load over them
+	}
+	for i := range msgs {
+		if t := tallies[msgs[i].ID]; t != nil {
+			msgs[i].PollVotes = t
+		}
+	}
+}
+
+// ReportChat files a moderation report, optionally blocking the chat too.
+//
+// Blocking in the same call is deliberate: reporting someone and then still
+// hearing from them is the worst outcome for the person doing it, and making
+// it two separate taps means some people only manage the first.
+func (s *Service) ReportChat(ctx context.Context, chatID, userID uuid.UUID, reason, note string, alsoBlock bool) error {
+	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
+		return err
+	}
+	if reason == "" {
+		return ErrInvalidReport
+	}
+	if err := s.repo.InsertReport(ctx, chatID, userID, reason, note); err != nil {
+		return err
+	}
+	if alsoBlock {
+		return s.BlockChat(ctx, chatID, userID)
+	}
+	return nil
 }

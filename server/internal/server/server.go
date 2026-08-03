@@ -5,29 +5,26 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/CreadorLanda/Socilaize/server/internal/config"
 	"github.com/CreadorLanda/Socilaize/server/internal/middleware"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/auth"
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/bridges/whatsapp"
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/channels"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/groups"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/media"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/notifications"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/stickers"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/stories"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
@@ -42,10 +39,9 @@ type Server struct {
 	router       http.Handler
 	pg           *pgxpool.Pool
 	rdb          *redis.Client
-	wa           *whatsapp.Manager
 	pushWorker   *notifications.Worker
+	mediaSweeper *media.Sweeper
 	pubSrv       *http.Server
-	internalSrv  *http.Server // mTLS-protected, nil when disabled
 	errCh        chan error
 }
 
@@ -122,10 +118,13 @@ func New(cfg config.Config) (*Server, error) {
 
 	// Media uploads (auth) + public file streaming by UUID.
 	mediaRepo := media.NewRepository(pg)
-	mediaSvc := media.NewService(mediaRepo, cfg.Media.Dir, cfg.Media.MaxUploadBytes)
+	mediaSvc := media.NewService(mediaRepo, cfg.Media.Dir, cfg.Media.MaxUploadBytes, cfg.Media.TTL)
 	mediaCtl := media.NewController(mediaSvc)
 	media.Register(authed, mediaCtl)
-	media.RegisterPublic(api, mediaCtl)
+
+	// The server is a relay for media, not a store: bytes are swept once
+	// every recipient has them, or when the deadline passes.
+	mediaSweeper := media.NewSweeper(mediaRepo, cfg.Media.Dir, cfg.Media.SweepEvery)
 
 	// Group chats (roles + history settings on chats type=group).
 	groupsRepo := groups.NewRepository(pg)
@@ -134,51 +133,35 @@ func New(cfg config.Config) (*Server, error) {
 
 	// Ephemeral stories (24h feed + views).
 	storiesRepo := stories.NewRepository(pg)
-	storiesCtl := stories.NewController(stories.NewService(storiesRepo))
+	storiesCtl := stories.NewController(stories.NewService(storiesRepo, chatOpener{msgSvc}))
 	stories.Register(authed, storiesCtl)
+
+	// Imported sticker packs (bytes live in media_objects).
+	stickersRepo := stickers.NewRepository(pg)
+	stickersCtl := stickers.NewController(stickers.NewService(stickersRepo, mediaCopier{mediaSvc}))
+	stickers.Register(authed, stickersCtl)
 
 	// Discover channels + posts.
 	channelsRepo := channels.NewRepository(pg)
 	channelsCtl := channels.NewController(channels.NewService(channelsRepo))
 	channels.Register(authed, channelsCtl)
 
-	// WhatsApp bridge - thin HTTP client to Baileys sidecar.
-	// Media bridge reuses the native media store so WA images land as
-	// /api/media/{id}/file URLs the mobile client already understands.
-	waMedia := whatsapp.NewMediaBridge(mediaSvc)
-	waRepo := whatsapp.NewRepository(pg, cfg.Crypto.MessageKey)
-	waMgr := whatsapp.NewManager(cfg.WA.BridgeURL, cfg.WA.InternalToken)
-	waCtl := whatsapp.NewController(whatsapp.NewService(waRepo, waMgr, waMedia))
-	whatsapp.Register(authed, waCtl)
-
-	// Inbound bridge webhook. Uses its own Bearer-token check against the
-	// shared internal token, not the user-facing JWT auth.
-	waWebhook := whatsapp.NewWebhookController(waRepo, cfg.WA.InternalToken, waMedia)
-	api.POST("/internal/wa/events", waWebhook.PostEvent)
-	api.POST("/internal/wa/media", waWebhook.PostMedia)
-
-	// ── Internal mTLS server ──────────────────────────────────────────────
-	// A second HTTPS listener that requires a valid client certificate
-	// signed by our CA. Used exclusively by the wa-bridge sidecar so the
-	// webhook is not accessible over plain TCP.
-	//
-	// Only starts when WA_INTERNAL_ADDR and all TLS cert paths are set.
-	var internalSrv *http.Server
-	if cfg.WA.InternalAddr != "" &&
-		cfg.WA.TLSCACert != "" &&
-		cfg.WA.TLSCert != "" &&
-		cfg.WA.TLSKey != "" {
-		internalSrv, err = newInternalServer(cfg, r)
-		if err != nil {
-			pg.Close()
-			return nil, fmt.Errorf("internal server: %w", err)
-		}
-	}
-
 	return &Server{
-		cfg: cfg, router: r, pg: pg, rdb: rdb, wa: waMgr,
-		pushWorker: pushWorker, internalSrv: internalSrv, errCh: make(chan error, 2),
+		cfg: cfg, router: r, pg: pg, rdb: rdb,
+		pushWorker: pushWorker, mediaSweeper: mediaSweeper, errCh: make(chan error, 2),
 	}, nil
+}
+
+// mediaCopier adapts media.Service to the narrow interface the stickers
+// module declares, so neither module has to know the other's shape.
+type mediaCopier struct{ svc *media.Service }
+
+func (m mediaCopier) Duplicate(ctx context.Context, srcID, newOwner uuid.UUID) (uuid.UUID, error) {
+	obj, err := m.svc.Duplicate(ctx, srcID, newOwner)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return obj.ID, nil
 }
 
 func (s *Server) Handler() http.Handler { return s.router }
@@ -198,16 +181,11 @@ func (s *Server) ListenAndServe() {
 		}
 	}()
 
-	if s.internalSrv != nil {
-		go func() {
-			if err := s.internalSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				s.errCh <- err
-			}
-		}()
-	}
-
 	if s.pushWorker != nil {
 		s.pushWorker.Start()
+	}
+	if s.mediaSweeper != nil {
+		s.mediaSweeper.Start()
 	}
 }
 
@@ -220,14 +198,11 @@ func (s *Server) Close() {
 	if s.pushWorker != nil {
 		s.pushWorker.Stop()
 	}
+	if s.mediaSweeper != nil {
+		s.mediaSweeper.Stop()
+	}
 	if s.pubSrv != nil {
 		_ = s.pubSrv.Close()
-	}
-	if s.internalSrv != nil {
-		_ = s.internalSrv.Close()
-	}
-	if s.wa != nil {
-		s.wa.Close()
 	}
 	if s.rdb != nil {
 		_ = s.rdb.Close()
@@ -237,34 +212,14 @@ func (s *Server) Close() {
 	}
 }
 
-// newInternalServer creates an HTTPS server with mandatory client cert
-// verification for the bridge webhook.
-func newInternalServer(cfg config.Config, handler http.Handler) (*http.Server, error) {
-	caPEM, err := os.ReadFile(cfg.WA.TLSCACert)
+// chatOpener lets a blind story thread graduate into a real conversation
+// without the stories module importing the messages one.
+type chatOpener struct{ svc *messages.Service }
+
+func (c chatOpener) OpenDirectChat(ctx context.Context, a, b uuid.UUID) (uuid.UUID, error) {
+	chat, err := c.svc.CreateDirectChat(ctx, a, b)
 	if err != nil {
-		return nil, fmt.Errorf("read CA cert: %w", err)
+		return uuid.Nil, err
 	}
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("no CA certs appended (empty or invalid PEM)")
-	}
-
-	cert, err := tls.LoadX509KeyPair(cfg.WA.TLSCert, cfg.WA.TLSKey)
-	if err != nil {
-		return nil, fmt.Errorf("load server cert: %w", err)
-	}
-
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS13,
-	}
-
-	return &http.Server{
-		Addr:              cfg.WA.InternalAddr,
-		Handler:           handler,
-		TLSConfig:         tlsCfg,
-		ReadHeaderTimeout: 10 * time.Second,
-	}, nil
+	return chat.ID, nil
 }

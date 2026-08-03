@@ -18,22 +18,24 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 }
 
 type row struct {
-	ID           uuid.UUID
-	AuthorID     uuid.UUID
-	Kind         string
-	Caption      string
-	MediaURL     *string
-	Accent       string
-	Visibility   string
-	IsAnonymous  bool
-	DurationSec  int
-	ExpiresAt    time.Time
-	CreatedAt    time.Time
-	AuthorName   string
-	AuthorUser   string
-	AuthorAvatar string
-	Viewers      int
-	IsViewed     bool
+	ID                    uuid.UUID
+	AuthorID              uuid.UUID
+	Kind                  string
+	Caption               string
+	MediaURL              *string
+	Accent                string
+	Visibility            string
+	IsAnonymous           bool
+	DurationSec           int
+	ExpiresAt             time.Time
+	CreatedAt             time.Time
+	AuthorName            string
+	AuthorUser            string
+	AuthorAvatar          string
+	Viewers               int
+	IsViewed              bool
+	AllowComments         bool
+	AllowAnonymousReplies bool
 }
 
 func (r *Repository) Insert(
@@ -45,6 +47,8 @@ func (r *Repository) Insert(
 	anon bool,
 	durationSec int,
 	expires time.Time,
+	allowComments bool,
+	allowAnonReplies bool,
 ) (uuid.UUID, error) {
 	var media *string
 	if mediaURL != "" {
@@ -54,10 +58,12 @@ func (r *Repository) Insert(
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO stories (
 			author_id, kind, caption, media_url, accent, visibility,
-			is_anonymous, duration_sec, expires_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			is_anonymous, duration_sec, expires_at,
+			allow_comments, allow_anonymous_replies
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING id
-	`, author, string(kind), caption, media, accent, string(vis), anon, durationSec, expires).Scan(&id)
+	`, author, string(kind), caption, media, accent, string(vis), anon, durationSec, expires,
+		allowComments, allowAnonReplies).Scan(&id)
 	return id, err
 }
 
@@ -65,6 +71,7 @@ func (r *Repository) Get(ctx context.Context, id, viewer uuid.UUID) (row, error)
 	const q = `
 		SELECT s.id, s.author_id, s.kind, s.caption, s.media_url, s.accent, s.visibility,
 		       s.is_anonymous, s.duration_sec, s.expires_at, s.created_at,
+		       s.allow_comments, s.allow_anonymous_replies,
 		       COALESCE(u.display_name,''), COALESCE(u.username,''), COALESCE(u.avatar_uri,''),
 		       (SELECT COUNT(*) FROM story_views v WHERE v.story_id = s.id),
 		       EXISTS(SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = $2)
@@ -76,6 +83,7 @@ func (r *Repository) Get(ctx context.Context, id, viewer uuid.UUID) (row, error)
 	err := r.db.QueryRow(ctx, q, id, viewer).Scan(
 		&x.ID, &x.AuthorID, &x.Kind, &x.Caption, &x.MediaURL, &x.Accent, &x.Visibility,
 		&x.IsAnonymous, &x.DurationSec, &x.ExpiresAt, &x.CreatedAt,
+		&x.AllowComments, &x.AllowAnonymousReplies,
 		&x.AuthorName, &x.AuthorUser, &x.AuthorAvatar, &x.Viewers, &x.IsViewed,
 	)
 	return x, err
@@ -87,6 +95,7 @@ func (r *Repository) Feed(ctx context.Context, viewer uuid.UUID) ([]row, error) 
 	const q = `
 		SELECT s.id, s.author_id, s.kind, s.caption, s.media_url, s.accent, s.visibility,
 		       s.is_anonymous, s.duration_sec, s.expires_at, s.created_at,
+		       s.allow_comments, s.allow_anonymous_replies,
 		       COALESCE(u.display_name,''), COALESCE(u.username,''), COALESCE(u.avatar_uri,''),
 		       (SELECT COUNT(*) FROM story_views v WHERE v.story_id = s.id),
 		       EXISTS(SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = $1)
@@ -114,6 +123,7 @@ func (r *Repository) Feed(ctx context.Context, viewer uuid.UUID) ([]row, error) 
 		if err := rows.Scan(
 			&x.ID, &x.AuthorID, &x.Kind, &x.Caption, &x.MediaURL, &x.Accent, &x.Visibility,
 			&x.IsAnonymous, &x.DurationSec, &x.ExpiresAt, &x.CreatedAt,
+			&x.AllowComments, &x.AllowAnonymousReplies,
 			&x.AuthorName, &x.AuthorUser, &x.AuthorAvatar, &x.Viewers, &x.IsViewed,
 		); err != nil {
 			return nil, err
@@ -152,4 +162,38 @@ func (r *Repository) React(ctx context.Context, storyID, userID uuid.UUID, emoji
 		ON CONFLICT (story_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW()
 	`, storyID, userID, emoji)
 	return err
+}
+
+// Viewers lists who opened a story, newest first, with the reaction each
+// one left.
+//
+// The reaction is folded in here rather than fetched separately because the
+// two are read together every time: a viewer list without reactions is a
+// roll call, and the reaction is the part the author actually looks for.
+func (r *Repository) Viewers(ctx context.Context, storyID uuid.UUID) ([]Viewer, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT u.id, u.username, COALESCE(u.display_name, ''), COALESCE(u.avatar_uri, ''),
+		       v.viewed_at, COALESCE(x.emoji, '')
+		FROM story_views v
+		JOIN users u ON u.id = v.viewer_id
+		LEFT JOIN story_reactions x
+		       ON x.story_id = v.story_id AND x.user_id = v.viewer_id
+		WHERE v.story_id = $1
+		ORDER BY v.viewed_at DESC
+	`, storyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Viewer{}
+	for rows.Next() {
+		var v Viewer
+		if err := rows.Scan(&v.UserID, &v.Username, &v.DisplayName, &v.AvatarURI,
+			&v.ViewedAt, &v.Emoji); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

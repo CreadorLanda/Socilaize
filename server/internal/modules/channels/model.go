@@ -39,26 +39,26 @@ const (
 )
 
 type Channel struct {
-	ID                  uuid.UUID      `json:"id"`
-	OwnerID             uuid.UUID      `json:"owner_id"`
-	Name                string         `json:"name"`
-	Handle              string         `json:"handle"`
-	Description         string         `json:"description"`
-	Category            string         `json:"category"`
-	AvatarURL           string         `json:"avatar_url,omitempty"`
-	CoverURL            string         `json:"cover_url,omitempty"`
-	Visibility          Visibility     `json:"visibility"`
-	WhoCanPost          PostPermission `json:"who_can_post"`
-	CommentsEnabled     bool           `json:"comments_enabled"`
-	AllowAnonComments   bool           `json:"allow_anon_comments"`
-	ReactionsEnabled    bool           `json:"reactions_enabled"`
-	JoinMode            JoinMode       `json:"join_mode"`
-	Verified            bool           `json:"verified"`
-	Members             int            `json:"members"`
-	Following           bool           `json:"following"`
-	Role                MemberRole     `json:"role"`
-	CreatedAt           time.Time      `json:"created_at"`
-	Posts               []Post         `json:"posts,omitempty"`
+	ID                uuid.UUID      `json:"id"`
+	OwnerID           uuid.UUID      `json:"owner_id"`
+	Name              string         `json:"name"`
+	Handle            string         `json:"handle"`
+	Description       string         `json:"description"`
+	Category          string         `json:"category"`
+	AvatarURL         string         `json:"avatar_url,omitempty"`
+	CoverURL          string         `json:"cover_url,omitempty"`
+	Visibility        Visibility     `json:"visibility"`
+	WhoCanPost        PostPermission `json:"who_can_post"`
+	CommentsEnabled   bool           `json:"comments_enabled"`
+	AllowAnonComments bool           `json:"allow_anon_comments"`
+	ReactionsEnabled  bool           `json:"reactions_enabled"`
+	JoinMode          JoinMode       `json:"join_mode"`
+	Verified          bool           `json:"verified"`
+	Members           int            `json:"members"`
+	Following         bool           `json:"following"`
+	Role              MemberRole     `json:"role"`
+	CreatedAt         time.Time      `json:"created_at"`
+	Posts             []Post         `json:"posts,omitempty"`
 }
 
 type Post struct {
@@ -80,13 +80,13 @@ type React struct {
 }
 
 type Comment struct {
-	ID         uuid.UUID `json:"id"`
-	PostID     uuid.UUID `json:"post_id"`
+	ID         uuid.UUID  `json:"id"`
+	PostID     uuid.UUID  `json:"post_id"`
 	AuthorID   *uuid.UUID `json:"author_id,omitempty"`
-	AuthorName string    `json:"author_name,omitempty"`
-	Text       string    `json:"text"`
-	Anonymous  bool      `json:"anonymous"`
-	CreatedAt  time.Time `json:"created_at"`
+	AuthorName string     `json:"author_name,omitempty"`
+	Text       string     `json:"text"`
+	Anonymous  bool       `json:"anonymous"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 type CreateChannelRequest struct {

@@ -1,4 +1,4 @@
-.PHONY: help dev build test tidy fmt vet lint migrate-up migrate-down docker-up docker-down docker-bridge
+.PHONY: help dev build test tidy fmt vet migrate-up migrate-down docker-up docker-up-local docker-down
 
 POSTGRES_URL ?= postgres://socialize:socialize@localhost:5432/socialize?sslmode=disable
 
@@ -36,8 +36,5 @@ docker-up: ## Start Redis locally (use Supabase for Postgres).
 docker-up-local: ## Start Redis + a local Postgres (fully offline dev).
 	docker compose -f deploy/docker/docker-compose.yml --profile local-pg up -d
 
-docker-bridge: ## Start the Baileys wa-bridge sidecar.
-	docker compose -f deploy/docker/docker-compose.yml --profile bridge up -d --build wa-bridge
-
 docker-down: ## Stop the local stack.
-	docker compose -f deploy/docker/docker-compose.yml --profile local-pg --profile bridge down
+	docker compose -f deploy/docker/docker-compose.yml --profile local-pg down

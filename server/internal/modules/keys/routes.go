@@ -8,4 +8,6 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	rg.PUT("/users/me/keys", c.PutKeys)
 	rg.GET("/users/me/keys/count", c.GetMyCount)
 	rg.GET("/users/by-username/:username/keys", c.GetBundle)
+	// Identity only — no OTK consumed, so it is safe to poll on chat open.
+	rg.GET("/users/by-username/:username/identity", c.GetIdentity)
 }

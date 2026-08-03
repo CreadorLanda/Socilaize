@@ -165,3 +165,24 @@ func (r *Repository) FetchBundle(ctx context.Context, userID uuid.UUID) (*Bundle
 
 // IsNoRows mirrors the helper in other modules — keeps pgx out of callers.
 func IsNoRows(err error) bool { return err != nil && errors.Is(err, pgx.ErrNoRows) }
+
+// FetchIdentity returns just the current identity key for a user's most
+// recently seen device.
+//
+// Deliberately separate from FetchBundle: that one consumes a one-time
+// pre-key as a side effect, so it cannot be used to answer "is this peer
+// still the same identity?". Callers ask that on every chat open, and
+// burning an OTK each time would drain the reservoir in a day.
+func (r *Repository) FetchIdentity(ctx context.Context, userID uuid.UUID) (uuid.UUID, []byte, error) {
+	var deviceID uuid.UUID
+	var identity []byte
+	err := r.db.QueryRow(ctx, `
+		SELECT ik.device_id, ik.public_key
+		FROM identity_keys ik
+		JOIN devices d ON d.id = ik.device_id
+		WHERE ik.user_id = $1
+		ORDER BY d.last_seen_at DESC
+		LIMIT 1
+	`, userID).Scan(&deviceID, &identity)
+	return deviceID, identity, err
+}
