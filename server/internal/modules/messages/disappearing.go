@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -88,14 +89,40 @@ func (s *Service) SetDisappearing(ctx context.Context, chatID, userID uuid.UUID,
 	if !validTTL(seconds) {
 		return ErrInvalidTTL
 	}
+	previous, err := s.repo.DisappearSeconds(ctx, chatID)
+	if err == nil && previous == seconds {
+		// Nothing changed. Writing a notice anyway would fill the thread
+		// with announcements of non-events.
+		return nil
+	}
 	if err := s.repo.SetDisappearing(ctx, chatID, seconds); err != nil {
 		return err
 	}
+
+	// A notice in the conversation, not only a row in a settings screen.
+	//
+	// This changes what happens to everything written afterwards, and the
+	// other person did not ask for it — they find out here or they do not
+	// find out at all. It is stored as a message so it sits in the history
+	// at the moment it took effect, which is the only place it means
+	// anything.
+	//
+	// The body is machine-readable rather than a sentence, because the
+	// client has to render it in the reader's language and name the actor
+	// from their own contact list.
+	notice := fmt.Sprintf("disappearing:%d:%s", seconds, userID.String())
+	if id, err := s.repo.InsertMessage(ctx, chatID, userID, notice, MsgSystem, nil, nil, Origin{}); err == nil {
+		if msg, err := s.getMessage(ctx, chatID, id); err == nil {
+			s.broadcast(ctx, chatID, "message.new", msg)
+		}
+	}
+
 	// Everyone in the chat needs to know, or one side keeps composing under
 	// rules that no longer apply.
 	s.broadcast(ctx, chatID, "chat.disappearing", map[string]any{
 		"chat_id":           chatID.String(),
 		"disappear_seconds": seconds,
+		"changed_by":        userID.String(),
 	})
 	return nil
 }

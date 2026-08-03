@@ -37,6 +37,27 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
   };
   if (deleted) return base;
 
+  // System notices carry a machine-readable body, so the client can render
+  // them in the reader's language and name the actor from their own list
+  // rather than showing a sentence the server guessed at.
+  if ((m.message_type || '').toLowerCase() === 'system') {
+    const parts = m.content.split(':');
+    if (parts[0] === 'disappearing' && parts.length >= 3) {
+      return {
+        ...base,
+        text: '',
+        system: true,
+        systemEvent: {
+          kind: 'disappearing',
+          seconds: Number(parts[1]) || 0,
+          actorId: parts[2],
+        },
+      };
+    }
+    return { ...base, text: '', system: true, systemEvent: { kind: 'joined' } };
+  }
+
+
   const mt = (m.message_type || 'text').toLowerCase();
   if (mt === 'image' || mt === 'video' || mt === 'audio') {
     const decoded = decodeMediaContent(m.content);

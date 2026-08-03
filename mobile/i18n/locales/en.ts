@@ -256,6 +256,9 @@ export default {
     verified: 'Verified channel',
   },
   chat: {
+    disappearing_on_notice: '{{name}} turned on disappearing messages. They are deleted {{duration}} after being read.',
+    disappearing_off_notice: '{{name}} turned off disappearing messages.',
+    tap_to_change: 'Tap to change.',
     open_source_post: 'View in channel',
     forwarded_many: 'Forwarded many times',
     forward_to_story: 'Your story',

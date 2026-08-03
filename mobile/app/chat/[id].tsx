@@ -81,6 +81,8 @@ import {
   deleteMessage as apiDeleteMessage,
   editMessage as apiEditMessage,
   listMessages,
+  setDisappearing,
+  DISAPPEAR_OPTIONS,
   votePoll,
   type PollTally,
   markRead,
@@ -1157,6 +1159,33 @@ export default function ChatScreen() {
    * One at a time — a story is a single frame, so a multi-select forward has
    * no meaning here and the option is hidden for it.
    */
+  /**
+   * Change the disappearing timer from inside the conversation.
+   *
+   * Either side may, including turning off what the other turned on: it is a
+   * property of this conversation and both people live with it. It applies
+   * only here — one chat's timer says nothing about any other.
+   */
+  const pickDisappearing = () => {
+    if (!id) return;
+    const current = apiChatInfo?.disappear_seconds ?? 0;
+    appAlert(
+      t('chat_info.disappearing'),
+      t('chat_info.disappearing_hint'),
+      DISAPPEAR_OPTIONS.map((sec) => ({
+        text:
+          (sec === 0
+            ? t('chat_info.off')
+            : t(`chat_info.disappear_${sec}` as never)) + (sec === current ? '  ✓' : ''),
+        onPress: () => {
+          setDisappearing(id, sec).catch(() => {
+            appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+          });
+        },
+      })).concat([{ text: t('common.cancel'), onPress: () => {} }]),
+    );
+  };
+
   const forwardToStory = () => {
     const msg = forwardTargets[0];
     if (!msg) return;
@@ -1976,7 +2005,12 @@ export default function ChatScreen() {
             keyExtractor={(item) => item.id}
             renderItem={({ item }) =>
               item.system ? (
-                <SystemDivider text={t('chat.joined')} />
+                <SystemDivider
+                  msg={item}
+                  mine={item.fromMe}
+                  peerName={chat?.name ?? ''}
+                  onPressDisappearing={pickDisappearing}
+                />
               ) : (
                 <Bubble
                   msg={item}
@@ -2396,13 +2430,59 @@ export default function ChatScreen() {
   );
 }
 
-function SystemDivider({ text }: { text: string }) {
+/**
+ * A centred notice about the conversation itself.
+ *
+ * It used to render one hardcoded string regardless of the message, so every
+ * system event in every chat read "you joined".
+ *
+ * The disappearing notice is tappable, and says so. Announcing a change to
+ * what happens to everything written afterwards, while making the person go
+ * hunting through a settings screen to answer it, is only half a message.
+ */
+function SystemDivider({
+  msg,
+  mine,
+  peerName,
+  onPressDisappearing,
+}: {
+  msg: GroupedMessage;
+  mine: boolean;
+  peerName: string;
+  onPressDisappearing?: () => void;
+}) {
   const { colors } = useTheme();
+  const ev = msg.systemEvent;
+
+  if (ev?.kind === 'disappearing') {
+    const who = mine ? t('chat.you') : peerName;
+    const label =
+      ev.seconds === 0
+        ? t('chat.disappearing_off_notice', { name: who })
+        : t('chat.disappearing_on_notice', {
+            name: who,
+            duration: t(`chat_info.disappear_${ev.seconds}` as never),
+          });
+    return (
+      <Pressable onPress={onPressDisappearing} style={styles.systemRow}>
+        <View style={[styles.systemPill, { backgroundColor: colors.surface }]}>
+          <Ionicons name="timer-outline" size={11} color={colors.primary} />
+          <Text style={[styles.systemText, { color: colors.textSecondary }]}>
+            {label}{' '}
+            <Text style={{ color: colors.primary }}>{t('chat.tap_to_change')}</Text>
+          </Text>
+        </View>
+      </Pressable>
+    );
+  }
+
   return (
     <View style={styles.systemRow}>
       <View style={[styles.systemPill, { backgroundColor: colors.surface }]}>
         <Ionicons name="person-add" size={11} color={colors.textSecondary} />
-        <Text style={[styles.systemText, { color: colors.textSecondary }]}>{text}</Text>
+        <Text style={[styles.systemText, { color: colors.textSecondary }]}>
+          {t('chat.joined')}
+        </Text>
       </View>
     </View>
   );

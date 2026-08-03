@@ -678,3 +678,94 @@ func TestExpiredMessagesAreHiddenThenSwept(t *testing.T) {
 		t.Fatal("the sweep took a message that had no deadline")
 	}
 }
+
+// TestDisappearingAnnouncesItself: changing the timer writes a notice into
+// the conversation.
+//
+// The other person did not ask for the change and it governs everything they
+// write afterwards — they find out in the thread or they do not find out.
+func TestDisappearingAnnouncesItself(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, _ := svc.CreateDirectChat(ctx, alice, bob)
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	notices := func() []Message {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, bob, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		var out []Message
+		for _, m := range msgs {
+			if m.MessageType == MsgSystem {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 3600); err != nil {
+		t.Fatalf("SetDisappearing: %v", err)
+	}
+	got := notices()
+	if len(got) != 1 {
+		t.Fatalf("expected one notice, got %d", len(got))
+	}
+	// Machine-readable, so the client renders it in the reader's language
+	// and names the actor from their own contacts.
+	want := "disappearing:3600:" + alice.String()
+	if got[0].Content != want {
+		t.Fatalf("notice body = %q, want %q", got[0].Content, want)
+	}
+	if got[0].SenderID != alice {
+		t.Fatalf("notice attributed to %s, want %s", got[0].SenderID, alice)
+	}
+
+	// Setting the same value again is not an event, and must not fill the
+	// thread with announcements of nothing happening.
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 3600); err != nil {
+		t.Fatalf("re-set: %v", err)
+	}
+	if n := len(notices()); n != 1 {
+		t.Fatalf("a no-op change was announced: %d notices", n)
+	}
+
+	// The other side may turn off what the first turned on, and that is
+	// announced too.
+	if err := svc.SetDisappearing(ctx, chat.ID, bob, 0); err != nil {
+		t.Fatalf("bob turning it off: %v", err)
+	}
+	got = notices()
+	if len(got) != 2 {
+		t.Fatalf("expected two notices, got %d", len(got))
+	}
+	// Checked by content rather than position: the list is newest-first, and
+	// an index assumption here would only be testing the ordering.
+	var foundOff bool
+	for _, m := range got {
+		if m.Content == "disappearing:0:"+bob.String() {
+			foundOff = true
+		}
+	}
+	if !foundOff {
+		t.Fatalf("no notice for turning it off: %+v", got)
+	}
+
+	// And it only governs this conversation.
+	other, _ := svc.CreateDirectChat(ctx, alice, createTestUser(t, pool, "carol_"+uuid.NewString()[:8]))
+	sec, err := svc.repo.DisappearSeconds(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("DisappearSeconds: %v", err)
+	}
+	if sec != 0 {
+		t.Fatalf("another chat inherited the timer: %d", sec)
+	}
+}

@@ -204,8 +204,17 @@ export type Message = {
   senderAvatarUri?: string;
   /** True for messages sent before the current user joined the group. */
   historical?: boolean;
-  /** Renders as a centered system notice (e.g. the "you joined" divider) instead of a bubble. */
+  /** Renders as a centered system notice instead of a bubble. */
   system?: boolean;
+  /**
+   * What the notice is about.
+   *
+   * The divider used to render one hardcoded string no matter what the
+   * message said, so every system event in every chat read "you joined".
+   */
+  systemEvent?:
+    | { kind: 'joined' }
+    | { kind: 'disappearing'; seconds: number; actorId: string };
   replyTo?: { id: string; text: string; fromMe: boolean; senderName?: string; icon?: string };
   attachment?: MessageAttachment;
   /** True for messages authored by the Dandara AI assistant. */

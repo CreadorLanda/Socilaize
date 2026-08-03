@@ -256,6 +256,9 @@ export default {
     verified: 'Canal verificado',
   },
   chat: {
+    disappearing_on_notice: '{{name}} ativou mensagens temporárias. Serão apagadas {{duration}} depois de lidas.',
+    disappearing_off_notice: '{{name}} desativou as mensagens temporárias.',
+    tap_to_change: 'Toca para mudar.',
     open_source_post: 'Ver no canal',
     forwarded_many: 'Reencaminhada muitas vezes',
     forward_to_story: 'O teu estado',
