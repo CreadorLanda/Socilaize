@@ -30,6 +30,7 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     edited: !!m.edited_at,
     deletedAt: m.deleted_at,
     status: m.read_by && m.read_by > 0 ? 'read' : m.delivered_to && m.delivered_to > 0 ? 'delivered' : 'sent',
+    expiresAt: m.expires_at,
     forwardCount: m.forward_count ?? 0,
     sourceChannelId: m.source_channel_id,
     sourcePostId: m.source_post_id,

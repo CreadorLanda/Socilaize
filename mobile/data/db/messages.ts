@@ -35,6 +35,7 @@ type Row = {
   forward_count: number;
   source_channel_id: string | null;
   source_post_id: string | null;
+  expires_at: string | null;
 };
 
 function rowToDTO(r: Row): MessageDTO {
@@ -58,6 +59,7 @@ function rowToDTO(r: Row): MessageDTO {
     forward_count: r.forward_count ?? 0,
     source_channel_id: r.source_channel_id ?? undefined,
     source_post_id: r.source_post_id ?? undefined,
+    expires_at: r.expires_at ?? undefined,
   };
 }
 
@@ -79,7 +81,7 @@ export async function loadCachedMessages(
   const res = await db.execute(
     `SELECT server_id, chat_id, sender_id, sender_name, sender_avatar, body,
             message_type, reply_to_id, created_at, edited_at, deleted_at, status,
-            forward_count, source_channel_id, source_post_id
+            forward_count, source_channel_id, source_post_id, expires_at
        FROM messages
       WHERE chat_id = ? AND server_id IS NOT NULL
       ORDER BY server_id DESC
@@ -112,8 +114,8 @@ export async function saveCachedMessages(
         `INSERT INTO messages
            (id, server_id, chat_id, sender_id, sender_name, sender_avatar, body,
             message_type, reply_to_id, created_at, edited_at, deleted_at, status, pending,
-            forward_count, source_channel_id, source_post_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+            forward_count, source_channel_id, source_post_id, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            body        = excluded.body,
            sender_name = excluded.sender_name,
@@ -125,6 +127,7 @@ export async function saveCachedMessages(
            forward_count     = excluded.forward_count,
            source_channel_id = excluded.source_channel_id,
            source_post_id    = excluded.source_post_id,
+           expires_at        = excluded.expires_at,
            -- Receipts only ever move forward. Without this guard a refresh
            -- that raced a websocket update could walk a read message back to
            -- delivered, flipping the ticks backwards on screen.
@@ -151,6 +154,7 @@ export async function saveCachedMessages(
           dto.forward_count ?? 0,
           dto.source_channel_id ?? null,
           dto.source_post_id ?? null,
+          dto.expires_at ?? null,
         ],
       );
     }

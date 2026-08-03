@@ -3,6 +3,7 @@ import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 
 import { AnonInbox } from '@/components/story/anon-inbox';
+import { StoryVideo } from '@/components/story/story-video';
 import { appAlert } from '@/data/dialog-store';
 import { ViewersSheet } from '@/components/story/viewers-sheet';
 import { CachedImage } from '@/components/ui/cached-image';
@@ -489,6 +490,11 @@ export default function StoryViewerScreen() {
               contentFit="cover"
               transition={200}
             />
+            {/* Plays on top of its own cover, so the frame is never blank
+                while the file downloads. */}
+            {story.kind === 'video' ? (
+              <StoryVideo url={story.coverUri} active paused={paused} />
+            ) : null}
             <View style={styles.vignetteTop} />
             <View style={styles.vignetteBottom} />
           </>
@@ -606,12 +612,6 @@ export default function StoryViewerScreen() {
           </GestureDetector>
 
           <View style={styles.storyBody} pointerEvents="none">
-            {story.kind === 'video' ? (
-              <View style={styles.videoBadge}>
-                <Ionicons name="play" size={16} color="#FFFFFF" />
-                <Text style={styles.videoBadgeText}>{story.durationSec}s</Text>
-              </View>
-            ) : null}
 
             {isAudio ? (
               <View style={styles.audioCard}>
@@ -1321,17 +1321,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: 220,
   },
-  videoBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radii.pill,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    marginBottom: Spacing.lg,
-  },
-  videoBadgeText: { ...Typography.caption, color: '#FFFFFF', fontWeight: '600' },
   audioCard: { alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.lg },
   audioOrb: {
     width: 88,

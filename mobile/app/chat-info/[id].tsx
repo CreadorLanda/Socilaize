@@ -11,6 +11,8 @@ import { NoteEditor } from '@/components/chat/note-editor';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import {
   blockChat,
+  DISAPPEAR_OPTIONS,
+  setDisappearing,
   listMessages,
   reportChat,
   type ChatDTO,
@@ -270,6 +272,41 @@ export default function ChatInfoScreen() {
       cancelled = true;
     };
   }, [id]);
+
+  /**
+   * Disappearing messages.
+   *
+   * Each message's clock starts when it is read, not when it is sent — a
+   * timer that runs while someone is asleep can destroy a message they never
+   * saw, which is loss rather than privacy. The picker says so, because
+   * "24 hours" alone does not tell you from when.
+   */
+  const [disappearSeconds, setDisappearSeconds] = useState(0);
+  useEffect(() => {
+    setDisappearSeconds(apiChat?.disappear_seconds ?? 0);
+  }, [apiChat?.disappear_seconds]);
+
+  const disappearLabel = (sec: number) =>
+    sec === 0 ? t('chat_info.off') : t(`chat_info.disappear_${sec}` as never);
+
+  const pickDisappearing = () => {
+    if (!id) return;
+    appAlert(
+      t('chat_info.disappearing'),
+      t('chat_info.disappearing_hint'),
+      DISAPPEAR_OPTIONS.map((sec) => ({
+        text: disappearLabel(sec) + (sec === disappearSeconds ? '  ✓' : ''),
+        onPress: () => {
+          const previous = disappearSeconds;
+          setDisappearSeconds(sec);
+          setDisappearing(id, sec).catch(() => {
+            setDisappearSeconds(previous);
+            failed();
+          });
+        },
+      })).concat([{ text: t('common.cancel'), onPress: () => {} }]),
+    );
+  };
 
   const failed = () =>
     appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
@@ -568,8 +605,9 @@ export default function ChatInfoScreen() {
           <Row
             icon="timer-outline"
             label={t('chat_info.disappearing')}
-            value={t('chat_info.off')}
+            value={disappearLabel(disappearSeconds)}
             colors={colors}
+            onPress={pickDisappearing}
           />
           <Divider colors={colors} />
           <RowToggle

@@ -45,6 +45,8 @@ type Chat struct {
 	PinnedAt   *time.Time `json:"pinned_at,omitempty"`
 	MutedUntil *time.Time `json:"muted_until,omitempty"`
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	// 0 = off. Each message's clock starts when it is read.
+	DisappearSeconds int `json:"disappear_seconds"`
 }
 
 // ListChatsOptions pages the chat list and selects the archived slice.
@@ -125,6 +127,9 @@ type Message struct {
 	// PollVotes carries per-option tallies for poll messages. The body itself
 	// is end-to-end encrypted, so this is the only tally the server can serve.
 	PollVotes *PollTally `json:"poll_votes,omitempty"`
+	// Set once the message has been read, in a chat with a timer. Null
+	// means either no timer or not read yet.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// 0 for anything written here; 1+ once it has been passed along.
 	ForwardCount    int     `json:"forward_count,omitempty"`
 	SourceChannelID *string `json:"source_channel_id,omitempty"`

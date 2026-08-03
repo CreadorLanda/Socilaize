@@ -43,6 +43,9 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	// Per-user chat management (pin / mute / archive, clear, delete)
 	rg.PATCH("/chats/:id/settings", c.PatchChatSettings)
 	rg.POST("/chats/:id/clear", c.PostClearChat)
+	// Disappearing messages. Any participant may set it — it is a property
+	// of the conversation, not of one side.
+	rg.PUT("/chats/:id/disappearing", c.PutDisappearing)
 	rg.DELETE("/chats/:id", c.DeleteChat)
 }
 

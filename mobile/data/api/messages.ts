@@ -27,6 +27,8 @@ export interface ChatDTO {
   pinned_at?: string;
   muted_until?: string;
   archived_at?: string;
+  /** 0 = off. Each message's clock starts when it is read. */
+  disappear_seconds?: number;
 }
 
 export interface ChatSettings {
@@ -59,6 +61,8 @@ export interface MessageDTO {
   sender_avatar?: string;
   delivered_to?: number;
   read_by?: number;
+  /** Set once read, in a chat with a timer. The countdown runs to this. */
+  expires_at?: string;
   /** 0 when written here; 1+ once it has been passed along. */
   forward_count?: number;
   /** Set when a channel post was forwarded here, so we can link back. */
@@ -120,6 +124,22 @@ export function updateChatSettings(chatId: string, settings: ChatSettings) {
 }
 
 /** Hide existing messages for the caller only; the peer keeps their copy. */
+/** The durations the server accepts. Anything else is refused. */
+export const DISAPPEAR_OPTIONS = [0, 3600, 86400, 604800, 2592000] as const;
+
+/**
+ * Set the disappearing timer for a chat.
+ *
+ * Any participant may: it is a property of the conversation, and both people
+ * live with it. The clock on each message starts when it is read, not when
+ * it is sent.
+ */
+export function setDisappearing(chatId: string, seconds: number) {
+  return api.put<void>(`/api/chats/${chatId}/disappearing`, {
+    disappear_seconds: seconds,
+  });
+}
+
 export function clearChatHistory(chatId: string) {
   return api.post<void>(`/api/chats/${chatId}/clear`, {});
 }

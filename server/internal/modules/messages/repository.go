@@ -139,6 +139,7 @@ func (r *Repository) FindDirectChat(ctx context.Context, userID, peerID uuid.UUI
 const chatSelectBase = `
 		SELECT
 		    c.id, c.type, c.title, c.avatar_url, c.created_by, c.status, c.created_at,
+		    c.disappear_seconds,
 		    cp.pinned_at, cp.muted_until, cp.archived_at,
 		    lm.content, lm.message_type, lm.sender_id, lm.created_at,
 		    COALESCE(uc.n, 0),
@@ -239,6 +240,7 @@ func (r *Repository) scanChatRows(rows pgx.Rows) ([]Chat, error) {
 		)
 		if err := rows.Scan(
 			&c.ID, &c.Type, &c.Title, &c.AvatarURL, &c.CreatedBy, &c.Status, &c.CreatedAt,
+			&c.DisappearSeconds,
 			&c.PinnedAt, &c.MutedUntil, &c.ArchivedAt,
 			&lmContent, &lmType, &lmSender, &lmAt,
 			&c.UnreadCount,
@@ -538,7 +540,8 @@ const messageSelectBase = `
 	       m.created_at, m.edited_at, m.deleted_at,
 	       COALESCE(u.display_name, ''), COALESCE(u.avatar_uri, ''),
 	       rc.delivered_to, rc.read_by,
-	       m.forward_count, m.source_channel_id::text, m.source_post_id::text
+	       m.forward_count, m.source_channel_id::text, m.source_post_id::text,
+	       m.expires_at
 	FROM messages m
 	LEFT JOIN users u ON u.id = m.sender_id
 	LEFT JOIN LATERAL (
@@ -565,6 +568,9 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 	if before > 0 {
 		const q = messageSelectBase + `
 			WHERE m.chat_id = $1 AND m.id < $2 AND m.deleted_at IS NULL
+			  -- Past its deadline but not yet swept: hide it now rather
+			  -- than let the sweep interval decide how long it lingers.
+			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
 			ORDER BY m.id DESC
 			LIMIT $3
 		`
@@ -572,6 +578,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 	} else {
 		const q = messageSelectBase + `
 			WHERE m.chat_id = $1 AND m.deleted_at IS NULL
+			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
 			ORDER BY m.id DESC
 			LIMIT $2
 		`
@@ -588,10 +595,11 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 		var senderName, senderAvatar string
 		var deliveredTo, readBy, forwardCount int
 		var srcChannel, srcPost *string
+		var expiresAt *time.Time
 		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderID, &m.Content,
 			&m.MessageType, &m.ReplyToID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
 			&senderName, &senderAvatar, &deliveredTo, &readBy,
-			&forwardCount, &srcChannel, &srcPost); err != nil {
+			&forwardCount, &srcChannel, &srcPost, &expiresAt); err != nil {
 			return nil, err
 		}
 		out = append(out, Message{
@@ -611,6 +619,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 			ForwardCount:    forwardCount,
 			SourceChannelID: srcChannel,
 			SourcePostID:    srcPost,
+			ExpiresAt:       expiresAt,
 		})
 	}
 	return out, rows.Err()

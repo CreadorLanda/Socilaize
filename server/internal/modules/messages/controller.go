@@ -428,7 +428,8 @@ func writeErr(ctx *gin.Context, err error) {
 		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrPendingChatLimit), errors.Is(err, ErrChatNotPending):
 		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrInvalidReceipt), errors.Is(err, ErrInvalidReport):
+	case errors.Is(err, ErrInvalidReceipt), errors.Is(err, ErrInvalidReport),
+		errors.Is(err, ErrInvalidTTL):
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
@@ -476,6 +477,29 @@ func (c *Controller) PostReportChat(ctx *gin.Context) {
 	}
 	if err := c.svc.ReportChat(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx),
 		req.Reason, req.Note, req.Block); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+type disappearingRequest struct {
+	Seconds int `json:"disappear_seconds"`
+}
+
+func (c *Controller) PutDisappearing(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	var req disappearingRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	if err := c.svc.SetDisappearing(ctx.Request.Context(), chatID,
+		middleware.UserIDFrom(ctx), req.Seconds); err != nil {
 		writeErr(ctx, err)
 		return
 	}

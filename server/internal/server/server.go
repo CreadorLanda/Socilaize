@@ -41,6 +41,7 @@ type Server struct {
 	rdb          *redis.Client
 	pushWorker   *notifications.Worker
 	mediaSweeper *media.Sweeper
+	msgSweeper   *messages.Sweeper
 	pubSrv       *http.Server
 	errCh        chan error
 }
@@ -148,7 +149,9 @@ func New(cfg config.Config) (*Server, error) {
 
 	return &Server{
 		cfg: cfg, router: r, pg: pg, rdb: rdb,
-		pushWorker: pushWorker, mediaSweeper: mediaSweeper, errCh: make(chan error, 2),
+		pushWorker: pushWorker, mediaSweeper: mediaSweeper,
+		msgSweeper: messages.NewSweeper(msgSvc, 5*time.Minute),
+		errCh:      make(chan error, 2),
 	}, nil
 }
 
@@ -187,6 +190,9 @@ func (s *Server) ListenAndServe() {
 	if s.mediaSweeper != nil {
 		s.mediaSweeper.Start()
 	}
+	if s.msgSweeper != nil {
+		s.msgSweeper.Start()
+	}
 }
 
 // Err returns a channel that receives the first listener error.
@@ -200,6 +206,9 @@ func (s *Server) Close() {
 	}
 	if s.mediaSweeper != nil {
 		s.mediaSweeper.Stop()
+	}
+	if s.msgSweeper != nil {
+		s.msgSweeper.Stop()
 	}
 	if s.pubSrv != nil {
 		_ = s.pubSrv.Close()

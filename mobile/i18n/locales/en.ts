@@ -384,6 +384,12 @@ export default {
     section: 'In your notes',
   },
   chat_info: {
+    disappearing_hint: 'The clock starts when a message is read, not when it is sent.',
+    disappear_3600: '1 hour',
+    disappear_86400: '24 hours',
+    disappear_604800: '7 days',
+    disappear_2592000: '30 days',
+    disappear_0: 'Off',
     title: 'Chat info',
     group_title: 'Group info',
     message: 'Message',

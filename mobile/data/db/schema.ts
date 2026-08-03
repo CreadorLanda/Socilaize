@@ -210,4 +210,13 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE messages ADD COLUMN source_post_id TEXT;
     `,
   },
+  {
+    name: '007_message_expiry',
+    sql: `
+      -- The disappearing-message deadline. Cached like everything else the
+      -- DTO carries: a countdown that disappears on a cached read would look
+      -- exactly like a message that is no longer expiring.
+      ALTER TABLE messages ADD COLUMN expires_at TEXT;
+    `,
+  },
 ];

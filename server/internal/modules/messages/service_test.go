@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -523,5 +524,157 @@ func TestReadReceiptsAreReciprocal(t *testing.T) {
 				t.Fatalf("delivery was suppressed too: %d", m.DeliveredTo)
 			}
 		}
+	}
+}
+
+// TestDisappearingStartsOnRead is the decision this feature turns on.
+//
+// A timer that starts at send can expire a message before it was ever seen,
+// which is not privacy — it is loss. Starting at read makes the window mean
+// the same thing for both people.
+func TestDisappearingStartsOnRead(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	// Only the offered durations are accepted — a wrong value here destroys
+	// messages sooner than agreed, so it is refused rather than clamped.
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 12345); !errors.Is(err, ErrInvalidTTL) {
+		t.Fatalf("odd duration: got %v, want ErrInvalidTTL", err)
+	}
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 3600); err != nil {
+		t.Fatalf("SetDisappearing: %v", err)
+	}
+
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "efémera"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	expiry := func() *time.Time {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for _, m := range msgs {
+			if m.ID == sent.ID {
+				return m.ExpiresAt
+			}
+		}
+		t.Fatal("message missing")
+		return nil
+	}
+
+	// Sending does not start the clock.
+	if got := expiry(); got != nil {
+		t.Fatalf("clock started at send: %v", got)
+	}
+
+	// Delivered is not read, and does not start it either.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptDelivered,
+	}); err != nil {
+		t.Fatalf("SetReceipts(delivered): %v", err)
+	}
+	if got := expiry(); got != nil {
+		t.Fatalf("delivery started the clock: %v", got)
+	}
+
+	// Reading does.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts(read): %v", err)
+	}
+	first := expiry()
+	if first == nil {
+		t.Fatal("reading did not start the clock")
+	}
+	if d := time.Until(*first); d < 55*time.Minute || d > 61*time.Minute {
+		t.Fatalf("deadline is %v away, want about an hour", d)
+	}
+
+	// A second read must not push the deadline out — otherwise the last
+	// person to open a group chat decides how long everyone keeps it.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if second := expiry(); second == nil || !second.Equal(*first) {
+		t.Fatalf("deadline moved: %v then %v", first, second)
+	}
+}
+
+// TestExpiredMessagesAreHiddenThenSwept: a past deadline stops being served
+// immediately, and the row goes on the next sweep.
+func TestExpiredMessagesAreHiddenThenSwept(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, _ := svc.CreateDirectChat(ctx, alice, bob)
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "ida"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	keep, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "fica"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	// Backdate one deadline rather than wait an hour.
+	if _, err := pool.Exec(ctx,
+		`UPDATE messages SET expires_at = NOW() - interval '1 minute' WHERE id = $1`,
+		sent.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	for _, m := range msgs {
+		if m.ID == sent.ID {
+			t.Fatal("an expired message was served before the sweep ran")
+		}
+	}
+
+	n, err := svc.SweepExpired(ctx)
+	if err != nil {
+		t.Fatalf("SweepExpired: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("sweep removed %d rows", n)
+	}
+
+	// The message without a deadline is untouched.
+	msgs, _ = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	var found bool
+	for _, m := range msgs {
+		if m.ID == keep.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the sweep took a message that had no deadline")
 	}
 }

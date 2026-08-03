@@ -384,6 +384,12 @@ export default {
     section: 'Nas tuas notas',
   },
   chat_info: {
+    disappearing_hint: 'O tempo começa a contar quando a mensagem é lida, não quando é enviada.',
+    disappear_3600: '1 hora',
+    disappear_86400: '24 horas',
+    disappear_604800: '7 dias',
+    disappear_2592000: '30 dias',
+    disappear_0: 'Desligado',
     title: 'Info da conversa',
     group_title: 'Info do grupo',
     message: 'Mensagem',

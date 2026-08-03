@@ -423,6 +423,14 @@ func (s *Service) SetReceipts(ctx context.Context, chatID, userID uuid.UUID, req
 	if err != nil {
 		return err
 	}
+	// Reading is what starts a disappearing message's clock. Done here
+	// rather than in the client so it cannot be skipped by not asking.
+	if req.Status == ReceiptRead {
+		if sec, err := s.repo.DisappearSeconds(ctx, chatID); err == nil && sec > 0 {
+			_ = s.repo.StartExpiryClock(ctx, ids, sec)
+		}
+	}
+
 	var maxID int64
 	for _, id := range ids {
 		if err := s.repo.UpsertReceipt(ctx, id, userID, req.Status); err != nil {
