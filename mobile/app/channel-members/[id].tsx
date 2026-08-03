@@ -3,10 +3,11 @@ import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import { ApiError } from '@/data/api/client';
 import {
   addChannelMember,
@@ -69,7 +70,7 @@ export default function ChannelMembersScreen() {
   }, [members]);
 
   const failed = () =>
-    Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
 
   const submitAdd = () => {
     const name = handle.trim().replace(/^@/, '');
@@ -83,7 +84,7 @@ export default function ChannelMembersScreen() {
         // A managing role is a request, not a change: saying "added" would
         // promise something that has not happened and may never.
         if (addRole !== 'member') {
-          Alert.alert(t('channel_members.invited'), t('channel_members.invited_body'));
+          appAlert(t('channel_members.invited'), t('channel_members.invited_body'));
         }
       })
       .catch((err) => {
@@ -91,7 +92,7 @@ export default function ChannelMembersScreen() {
         // the server refuses to confirm which usernames exist, so the
         // message here says what the person can act on.
         const code = err instanceof ApiError ? err.code : '';
-        Alert.alert(
+        appAlert(
           t('channel_members.add_failed'),
           code === 'member_not_found'
             ? t('channel_members.unknown_handle')
@@ -136,7 +137,7 @@ export default function ChannelMembersScreen() {
     });
     options.push({ text: t('common.cancel'), style: 'cancel' });
 
-    Alert.alert(member.display_name || member.username, t('channel_members.manage_hint'), options);
+    appAlert(member.display_name || member.username, t('channel_members.manage_hint'), options);
   };
 
   return (

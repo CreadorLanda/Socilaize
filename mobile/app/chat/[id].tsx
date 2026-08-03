@@ -17,7 +17,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Dimensions,
   FlatList,
   Modal,
@@ -49,6 +48,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { AttachmentBubble } from '@/components/chat/attachment-bubbles';
 import { MediaEditor, type EditorAsset, type EditorResult } from '@/components/chat/media-editor';
+import { appAlert } from '@/data/dialog-store';
 import { ApiError } from '@/data/api/client';
 import { CachedImage } from '@/components/ui/cached-image';
 import { ForwardPicker } from '@/components/chat/forward-picker';
@@ -832,7 +832,7 @@ export default function ChatScreen() {
           } catch (err) {
             // Silently keeping the bubble made a failed send look like a
             // successful one that vanished on reload. Say what broke.
-            Alert.alert(t('chats.action_failed_title'), describeError(err));
+            appAlert(t('chats.action_failed_title'), describeError(err));
           }
         }
       }
@@ -1028,7 +1028,7 @@ export default function ChatScreen() {
       }
       await refreshStickerPacks();
     } catch {
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     }
   };
 
@@ -1209,7 +1209,7 @@ export default function ChatScreen() {
       }
       await refreshChats();
     } catch {
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     }
   };
 
@@ -1362,7 +1362,7 @@ export default function ChatScreen() {
       await refreshChats();
     } catch {
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     }
   };
 
@@ -1426,7 +1426,7 @@ export default function ChatScreen() {
         return prev.map((m) => (m.id === tempId ? mapped : m));
       });
     } catch (err) {
-      Alert.alert(t('chats.action_failed_title'), describeError(err));
+      appAlert(t('chats.action_failed_title'), describeError(err));
       // Keep local optimistic bubble if upload/send fails.
     }
   };
@@ -1513,7 +1513,7 @@ export default function ChatScreen() {
         await refreshStickerPacks();
         showToast(t('stickers.saved'));
       } catch {
-        Alert.alert(t('stickers.import_failed_title'), t('stickers.import_failed_body'));
+        appAlert(t('stickers.import_failed_title'), t('stickers.import_failed_body'));
       }
       return;
     }
@@ -1554,7 +1554,7 @@ export default function ChatScreen() {
       setMessages((prev) => [...prev, mapApiMessage(dto, meId)]);
       await refreshChats();
     } catch (err) {
-      Alert.alert(t('chats.action_failed_title'), describeError(err));
+      appAlert(t('chats.action_failed_title'), describeError(err));
     }
   };
 
@@ -1631,7 +1631,7 @@ export default function ChatScreen() {
       );
       await refreshChats();
     } catch {
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     }
   };
 
@@ -1661,7 +1661,7 @@ export default function ChatScreen() {
         const body = encodeMediaContent(uploaded.url, asset.name, docKey);
         await apiSendMessage(id, body, 'document');
       } catch (err) {
-        Alert.alert(t('chats.action_failed_title'), describeError(err));
+        appAlert(t('chats.action_failed_title'), describeError(err));
       }
     }
   };
@@ -1718,7 +1718,7 @@ export default function ChatScreen() {
       votePoll(id, mid, chosen)
         .then((tally) => applyPollTally(msgId, tally))
         .catch(() => {
-          Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+          appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
         });
     }
   };

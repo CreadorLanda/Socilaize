@@ -1,5 +1,6 @@
 import { resetChatPrefsCache } from './chat-prefs';
 import { resetChatStore } from './chat-store';
+import { resetDialogs } from './dialog-store';
 import { relockAll } from './chat-lock';
 import { clearE2EEState } from './crypto';
 import { wipeLocalHistory } from './db/messages';
@@ -28,6 +29,7 @@ import { resetStoryStore } from './story-store';
  */
 export async function resetAllStores(): Promise<void> {
   const steps: [string, () => void | Promise<unknown>][] = [
+    ['dialogs', resetDialogs],
     ['chats', resetChatStore],
     ['chat prefs', resetChatPrefsCache],
     ['locks', relockAll],

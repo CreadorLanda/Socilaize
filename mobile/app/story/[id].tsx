@@ -3,8 +3,8 @@ import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 
 import { AnonInbox } from '@/components/story/anon-inbox';
+import { appAlert } from '@/data/dialog-store';
 import { ViewersSheet } from '@/components/story/viewers-sheet';
-import { Dialog } from '@/components/ui/dialog';
 import { CachedImage } from '@/components/ui/cached-image';
 import { ensureLocal, mediaIdFromURL } from '@/data/media-cache';
 import * as Haptics from 'expo-haptics';
@@ -137,7 +137,6 @@ export default function StoryViewerScreen() {
   const isOwnStory = !!story?.isOwn;
   const [replyTo, setReplyTo] = useState<{ id: number; author: string } | null>(null);
   const [viewersOpen, setViewersOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [anonOpen, setAnonOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -157,12 +156,10 @@ export default function StoryViewerScreen() {
     deleteStory(doomed)
       .then(() => {
         removeStoryLocal(doomed);
-        setConfirmDelete(false);
         if (hasNext) setPaused(false);
         else router.back();
       })
       .catch(() => {
-        setConfirmDelete(false);
         setToast(t('stories.delete_failed'));
         setPaused(false);
       })
@@ -574,7 +571,14 @@ export default function StoryViewerScreen() {
               <Pressable
                 onPress={() => {
                   setPaused(true);
-                  setConfirmDelete(true);
+                  appAlert(t('stories.delete_title'), t('stories.delete_body'), [
+                    {
+                      text: t('common.cancel'),
+                      style: 'cancel',
+                      onPress: () => setPaused(false),
+                    },
+                    { text: t('stories.delete'), style: 'destructive', onPress: removeStory },
+                  ]);
                 }}
                 hitSlop={12}
                 style={styles.iconButton}
@@ -670,27 +674,6 @@ export default function StoryViewerScreen() {
         </SafeAreaView>
       </SlideSwap>
 
-      <Dialog
-        visible={confirmDelete}
-        icon="trash-outline"
-        title={t('stories.delete_title')}
-        body={t('stories.delete_body')}
-        onDismiss={() => {
-          setConfirmDelete(false);
-          setPaused(false);
-        }}
-        actions={[
-          {
-            label: t('common.cancel'),
-            cancel: true,
-            onPress: () => {
-              setConfirmDelete(false);
-              setPaused(false);
-            },
-          },
-          { label: t('stories.delete'), destructive: true, onPress: removeStory },
-        ]}
-      />
 
       <AnonInbox
         visible={anonOpen}

@@ -4,7 +4,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,6 +29,7 @@ import {
   type PostPermission,
   type SlowMode,
 } from '@/data/channel-store';
+import { appAlert } from '@/data/dialog-store';
 import { CHANNEL_CATEGORIES, type ChannelCategory } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
@@ -128,11 +128,11 @@ export default function ChannelSettingsScreen() {
   const save = () => {
     const h = normalizeHandle(handle);
     if (name.trim().length < 2) {
-      Alert.alert(t('channel_settings.title'), t('channel_create.fill_required'));
+      appAlert(t('channel_settings.title'), t('channel_create.fill_required'));
       return;
     }
     if (!isHandleAvailable(h, channel.id)) {
-      Alert.alert(t('channel_settings.title'), t('channel_create.handle_taken'));
+      appAlert(t('channel_settings.title'), t('channel_create.handle_taken'));
       return;
     }
 

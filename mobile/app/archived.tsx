@@ -3,10 +3,11 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import type { ChatDTO } from '@/data/api/messages';
 import { useRevealedChats } from '@/data/chat-lock';
 import { useLockedChatIds } from '@/data/chat-prefs';
@@ -45,7 +46,7 @@ export default function ArchivedScreen() {
       await refreshChats({ archived: true });
       await refreshChats();
     } catch {
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     } finally {
       setBusy(null);
     }

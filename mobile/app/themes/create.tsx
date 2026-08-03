@@ -6,7 +6,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import {
   BUBBLE_SHAPES,
   COMPOSER_STYLES,
@@ -144,7 +144,7 @@ export default function ThemeCreatorScreen() {
 
   const runAi = () => {
     if (aiPrompt.trim().length < 3) {
-      Alert.alert(t('themes.ai_title'), t('themes.ai_need_prompt'));
+      appAlert(t('themes.ai_title'), t('themes.ai_need_prompt'));
       return;
     }
     setAiBusy(true);
@@ -170,7 +170,7 @@ export default function ThemeCreatorScreen() {
 
   const save = () => {
     if (!canSave) {
-      Alert.alert(t('themes.creator_title'), t('themes.creator_need_name'));
+      appAlert(t('themes.creator_title'), t('themes.creator_need_name'));
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

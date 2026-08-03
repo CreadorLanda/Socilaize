@@ -3,7 +3,6 @@ import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -20,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TabScene } from '@/components/ui/tab-scene';
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import { connectRealtime, type ChatDTO } from '@/data/api/messages';
 import { getCurrentUser } from '@/data/auth-store';
 import {
@@ -318,7 +318,7 @@ export default function ChatsScreen() {
             break;
         }
       } catch {
-        Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+        appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
       }
     },
     [],

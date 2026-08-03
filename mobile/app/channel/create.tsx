@@ -4,7 +4,6 @@ import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -20,6 +19,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 
 import { ChannelCover, ChannelLogo } from '@/components/ui/channel-art';
+import { appAlert } from '@/data/dialog-store';
 import { checkHandleAvailable } from '@/data/api/channels';
 import { uploadMedia } from '@/data/api/media';
 import {
@@ -152,7 +152,7 @@ export default function CreateChannelScreen() {
         }
       } catch {
         setUploading(false);
-        Alert.alert(t('chats.action_failed_title'), t('channel_create.image_failed'));
+        appAlert(t('chats.action_failed_title'), t('channel_create.image_failed'));
         return;
       }
       setUploading(false);
@@ -460,7 +460,7 @@ export default function CreateChannelScreen() {
         <Pressable
           onPress={() => {
             if (!canCreate) {
-              Alert.alert(t('channel_create.title'), t('channel_create.fill_required'));
+              appAlert(t('channel_create.title'), t('channel_create.fill_required'));
               return;
             }
             onCreate();

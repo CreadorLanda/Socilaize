@@ -6,7 +6,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   ScrollView,
@@ -20,6 +19,7 @@ import Animated, { FadeIn, FadeOut, Layout } from 'react-native-reanimated';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { CachedImage } from '@/components/ui/cached-image';
+import { appAlert } from '@/data/dialog-store';
 import { MIN_STICKERS, type StickerPackDTO } from '@/data/api/stickers';
 import {
   commitImport,
@@ -70,7 +70,7 @@ export default function StickersScreen() {
       setPreview(next);
       setPackName(next.packName);
     } catch {
-      Alert.alert(t('stickers.import_failed_title'), t('stickers.import_failed_body'));
+      appAlert(t('stickers.import_failed_title'), t('stickers.import_failed_body'));
     } finally {
       setBusy(false);
     }
@@ -89,7 +89,7 @@ export default function StickersScreen() {
       setPackName('');
     } catch (err) {
       const key = err instanceof Error ? err.message : '';
-      Alert.alert(
+      appAlert(
         t('stickers.import_failed_title'),
         key === 'too_few_stickers'
           ? t('stickers.too_few', { min: MIN_STICKERS })
@@ -114,7 +114,7 @@ export default function StickersScreen() {
       setProgress({ done: 0, total: 0 });
       const scanned = await scanFolder(dir, (done, total) => setProgress({ done, total }));
       if (scanned.stickers.length < MIN_STICKERS) {
-        Alert.alert(t('stickers.import_failed_title'), t('stickers.too_few', { min: MIN_STICKERS }));
+        appAlert(t('stickers.import_failed_title'), t('stickers.too_few', { min: MIN_STICKERS }));
         return;
       }
 
@@ -125,12 +125,12 @@ export default function StickersScreen() {
         );
         await importPack(body);
       }
-      Alert.alert(
+      appAlert(
         t('stickers.folder_done_title'),
         t('stickers.folder_done_body', { packs: chunks.length, count: scanned.stickers.length }),
       );
     } catch {
-      Alert.alert(t('stickers.import_failed_title'), t('stickers.folder_failed_body'));
+      appAlert(t('stickers.import_failed_title'), t('stickers.folder_failed_body'));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -138,14 +138,14 @@ export default function StickersScreen() {
   };
 
   const confirmDelete = (pack: StickerPackDTO) => {
-    Alert.alert(t('stickers.delete_title'), t('stickers.delete_body', { name: pack.name }), [
+    appAlert(t('stickers.delete_title'), t('stickers.delete_body', { name: pack.name }), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('chats.delete'),
         style: 'destructive',
         onPress: () => {
           removePack(pack.id).catch(() =>
-            Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body')),
+            appAlert(t('chats.action_failed_title'), t('chats.action_failed_body')),
           );
         },
       },

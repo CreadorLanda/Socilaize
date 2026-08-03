@@ -12,7 +12,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   Dimensions,
   Modal,
   Pressable,
@@ -34,6 +33,7 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import type { StoryVisibility } from '@/data/mock';
 import { useProfile } from '@/data/profile-store';
 import { queueStoryPublish } from '@/data/story-store';
@@ -134,7 +134,7 @@ export default function CreateStoryScreen() {
   const selectCaptureMode = (mode: CaptureMode) => {
     if (mode === 'live') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      Alert.alert(t('stories.go_live'), t('stories.live_coming_soon') || 'Live is coming soon.');
+      appAlert(t('stories.go_live'), t('stories.live_coming_soon') || 'Live is coming soon.');
       return;
     }
     setCaptureMode(mode);
@@ -204,7 +204,7 @@ export default function CreateStoryScreen() {
   const startAudioRecording = async () => {
     const perm = await requestRecordingPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert(t('stories.voice_mode'), t('stories.tap_to_record'));
+      appAlert(t('stories.voice_mode'), t('stories.tap_to_record'));
       return;
     }
     try {
@@ -309,19 +309,19 @@ export default function CreateStoryScreen() {
     if (sticker === 'poll') {
       kind = 'poll';
       if (!caption.trim()) {
-        Alert.alert(t('stories.poll_mode'), t('stories.poll_placeholder'));
+        appAlert(t('stories.poll_mode'), t('stories.poll_placeholder'));
         return;
       }
     } else if (sticker === 'question') {
       kind = 'question';
       if (!caption.trim()) {
-        Alert.alert(t('stories.question_mode'), t('stories.question_placeholder'));
+        appAlert(t('stories.question_mode'), t('stories.question_placeholder'));
         return;
       }
     } else if (textOnly) {
       kind = 'text';
       if (!caption.trim()) {
-        Alert.alert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
+        appAlert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
         return;
       }
     } else if (isAudio && mediaUri) {
@@ -331,7 +331,7 @@ export default function CreateStoryScreen() {
     } else if (caption.trim()) {
       kind = 'text';
     } else {
-      Alert.alert(t('stories.sent_notice'), 'Pick a photo, video, audio, or write something.');
+      appAlert(t('stories.sent_notice'), 'Pick a photo, video, audio, or write something.');
       return;
     }
 

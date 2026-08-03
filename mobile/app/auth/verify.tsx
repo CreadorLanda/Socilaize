@@ -1,8 +1,6 @@
-import { Platform as RNPlatform } from 'react-native';
 import { router } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
 import {
+  Platform as RNPlatform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +8,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect, useRef, useState } from 'react';
 import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 

@@ -8,7 +8,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ListPicker } from '@/components/chat/list-picker';
 import { NoteEditor } from '@/components/chat/note-editor';
-import { CodePrompt } from '@/components/ui/dialog';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import {
   blockChat,
@@ -17,6 +16,7 @@ import {
   type ChatDTO,
   type ReportReason,
 } from '@/data/api/messages';
+import { appAlert, appPrompt } from '@/data/dialog-store';
 import { leaveGroup } from '@/data/api/groups';
 import { getCurrentUser } from '@/data/auth-store';
 import {
@@ -107,7 +107,7 @@ export default function ChatInfoScreen() {
     try {
       await setChatSettings(id, settings);
     } catch {
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     }
   };
 
@@ -168,7 +168,7 @@ export default function ChatInfoScreen() {
   }, [id]);
 
   const confirmClearCache = () =>
-    Alert.alert(t('chat_info.manage_storage'), t('chat_info.clear_cache_confirm'), [
+    appAlert(t('chat_info.manage_storage'), t('chat_info.clear_cache_confirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('chat_info.clear_cache'),
@@ -219,7 +219,7 @@ export default function ChatInfoScreen() {
           if (!isValidCode(code)) return false;
           await setLockCode(code);
           lockAndLeave();
-          Alert.alert(t('chat_info.lock_set_title'), t('chat_info.lock_set_body'));
+          appAlert(t('chat_info.lock_set_title'), t('chat_info.lock_set_body'));
           return true;
         });
         return;
@@ -240,12 +240,17 @@ export default function ChatInfoScreen() {
    * lets the field be a real secure entry rather than plain text.
    */
   const promptCode = (title: string, onSubmit: (code: string) => Promise<boolean>) =>
-    setCodePrompt({ title, onSubmit });
-
-  const [codePrompt, setCodePrompt] = useState<{
-    title: string;
-    onSubmit: (code: string) => Promise<boolean>;
-  } | null>(null);
+    appPrompt(title, {
+      message: t('chat_info.lock_code_hint'),
+      placeholder: t('chat_info.lock_code_placeholder'),
+      secure: true,
+      keyboard: 'number-pad',
+      cancelLabel: t('common.cancel'),
+      submitLabel: t('common.confirm'),
+      // Returning false keeps the dialog open on a wrong code, so the
+      // person is not thrown back to the screen to start again.
+      onSubmit,
+    });
 
   const [showLists, setShowLists] = useState(false);
   const [showNote, setShowNote] = useState(false);
@@ -267,10 +272,10 @@ export default function ChatInfoScreen() {
   }, [id]);
 
   const failed = () =>
-    Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
 
   const confirmBlock = () =>
-    Alert.alert(t('chat_info.block', { name: chat?.name ?? '' }), t('chat_info.block_confirm'), [
+    appAlert(t('chat_info.block', { name: chat?.name ?? '' }), t('chat_info.block_confirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('chat_info.block_confirm_action'),
@@ -288,7 +293,7 @@ export default function ChatInfoScreen() {
     ]);
 
   const confirmReport = () =>
-    Alert.alert(t('chat_info.report', { name: chat?.name ?? '' }), t('chat_info.report_reason'), [
+    appAlert(t('chat_info.report', { name: chat?.name ?? '' }), t('chat_info.report_reason'), [
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('chat_info.report_spam'), onPress: () => submitReport('spam') },
       { text: t('chat_info.report_abuse'), onPress: () => submitReport('abuse') },
@@ -302,14 +307,14 @@ export default function ChatInfoScreen() {
     reportChat(id, reason, { block: true })
       .then(() => {
         void refreshChats();
-        Alert.alert(t('chat_info.report_sent'), t('chat_info.report_sent_body'));
+        appAlert(t('chat_info.report_sent'), t('chat_info.report_sent_body'));
         router.back();
       })
       .catch(failed);
   };
 
   const confirmLeaveGroup = () =>
-    Alert.alert(t('chat_info.leave_group'), t('chat_info.leave_group_confirm'), [
+    appAlert(t('chat_info.leave_group'), t('chat_info.leave_group_confirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('chat_info.leave_group'),
@@ -328,10 +333,10 @@ export default function ChatInfoScreen() {
 
   const showSafetyNumber = () => {
     if (!safetyDigits) {
-      Alert.alert(t('chat_info.encryption_title'), t('chat_info.encryption_hint'));
+      appAlert(t('chat_info.encryption_title'), t('chat_info.encryption_hint'));
       return;
     }
-    Alert.alert(t('chat_info.encryption_title'), safetyDigits);
+    appAlert(t('chat_info.encryption_title'), safetyDigits);
   };
 
   if (!chat) {
@@ -706,7 +711,7 @@ export default function ChatInfoScreen() {
             colors={colors}
             destructive
             onPress={() =>
-              Alert.alert(t('chat_info.clear_chat'), t('chat_info.clear_chat_confirm'), [
+              appAlert(t('chat_info.clear_chat'), t('chat_info.clear_chat_confirm'), [
                 { text: t('common.cancel'), style: 'cancel' },
                 {
                   text: t('chat_info.clear_chat'),
@@ -716,7 +721,7 @@ export default function ChatInfoScreen() {
                     clearChat(id)
                       .then(() => setMessages([]))
                       .catch(() =>
-                        Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body')),
+                        appAlert(t('chats.action_failed_title'), t('chats.action_failed_body')),
                       );
                   },
                 },
@@ -761,7 +766,7 @@ export default function ChatInfoScreen() {
             colors={colors}
             destructive
             onPress={() =>
-              Alert.alert(t('chats.delete'), t('chat_info.delete_chat_confirm'), [
+              appAlert(t('chats.delete'), t('chat_info.delete_chat_confirm'), [
                 { text: t('common.cancel'), style: 'cancel' },
                 {
                   text: t('chats.delete'),
@@ -774,7 +779,7 @@ export default function ChatInfoScreen() {
                         router.replace('/(tabs)');
                       })
                       .catch(() =>
-                        Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body')),
+                        appAlert(t('chats.action_failed_title'), t('chats.action_failed_body')),
                       );
                   },
                 },
@@ -800,18 +805,6 @@ export default function ChatInfoScreen() {
         </>
       ) : null}
 
-      <CodePrompt
-        visible={!!codePrompt}
-        title={codePrompt?.title ?? ''}
-        body={t('chat_info.lock_code_hint')}
-        minLength={LOCK_CODE_MIN_LENGTH}
-        onCancel={() => setCodePrompt(null)}
-        onSubmit={async (code) => {
-          const ok = await codePrompt!.onSubmit(code);
-          if (ok) setCodePrompt(null);
-          return ok;
-        }}
-      />
     </SafeAreaView>
   );
 }

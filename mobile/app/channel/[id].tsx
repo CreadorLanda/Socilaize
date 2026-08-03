@@ -3,7 +3,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Dimensions,
   FlatList,
   Modal,
@@ -30,7 +29,7 @@ import { formatCount } from '@/components/ui/follow-button';
 import { ReactionTray } from '@/components/ui/reaction-tray';
 import { Radii, Spacing, Typography } from '@/constants/theme';
 import { CachedImage } from '@/components/ui/cached-image';
-import { TextPrompt } from '@/components/ui/dialog';
+import { appAlert, appPrompt } from '@/data/dialog-store';
 import { deleteChannelPost, editChannelPost } from '@/data/api/channels';
 import { ForwardPicker } from '@/components/chat/forward-picker';
 import { sendMessage as apiSendMessage } from '@/data/api/messages';
@@ -96,7 +95,6 @@ export default function ChannelScreen() {
   const publishOk = canPublish(channel);
   const manageOk = canManage(channel);
   const [posts, setPosts] = useState<ChannelPost[]>([]);
-  const [editingPost, setEditingPost] = useState<ChannelPost | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [postDraft, setPostDraft] = useState('');
   const [postKind, setPostKind] = useState<
@@ -193,10 +191,10 @@ export default function ChannelScreen() {
     (!!meId && post.authorId === meId) || manageOk;
 
   const mutationFailed = () =>
-    Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
 
   const confirmDeletePost = (post: ChannelPost) =>
-    Alert.alert(t('channel.delete_post'), t('channel.delete_post_confirm'), [
+    appAlert(t('channel.delete_post'), t('channel.delete_post_confirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('channel.delete_post'),
@@ -214,9 +212,38 @@ export default function ChannelScreen() {
       },
     ]);
 
+  /**
+   * Edit or delete, in one prompt.
+   *
+   * The field starts with the existing text rather than empty: fixing one
+   * word should not mean retyping a paragraph.
+   */
   const openPostMenu = (post: ChannelPost) => {
     if (!canMutatePost(post)) return;
-    setEditingPost(post);
+    appPrompt(t('channel.edit_post'), {
+      initialValue: post.text ?? '',
+      multiline: true,
+      cancelLabel: t('common.cancel'),
+      submitLabel: t('common.save'),
+      extraButton: {
+        text: t('channel.delete_post'),
+        style: 'destructive',
+        onPress: () => confirmDeletePost(post),
+      },
+      onSubmit: async (text) => {
+        const next = text.trim();
+        if (!next || next === post.text) return true;
+        const before = post.text;
+        updatePost(post.id, (p) => ({ ...p, text: next }));
+        try {
+          await editChannelPost(post.id, next);
+        } catch {
+          updatePost(post.id, (p) => ({ ...p, text: before }));
+          mutationFailed();
+        }
+        return true;
+      },
+    });
   };
 
   /**
@@ -286,9 +313,9 @@ export default function ChannelScreen() {
         sourcePostId: post.id,
       });
       await refreshChats();
-      Alert.alert(t('chat.forward_sent', { name: dest?.title ?? '' }));
+      appAlert(t('chat.forward_sent', { name: dest?.title ?? '' }));
     } catch {
-      Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
     }
   };
 
@@ -1493,41 +1520,6 @@ export default function ChannelScreen() {
         </View>
       </Modal>
 
-      {/* Alert.prompt is iOS-only, so editing goes through the in-app dialog
-          — which also lets the field start with the existing text instead of
-          making someone retype a paragraph to fix one word. */}
-      <TextPrompt
-        visible={!!editingPost}
-        title={t('channel.edit_post')}
-        initialValue={editingPost?.text ?? ''}
-        confirmLabel={t('common.save')}
-        secondaryLabel={t('channel.delete_post')}
-        onSecondary={() => {
-          const target = editingPost;
-          setEditingPost(null);
-          if (target) confirmDeletePost(target);
-        }}
-        onCancel={() => setEditingPost(null)}
-        onSubmit={async (text) => {
-          const target = editingPost;
-          if (!target) return true;
-          const next = text.trim();
-          if (!next || next === target.text) {
-            setEditingPost(null);
-            return true;
-          }
-          setEditingPost(null);
-          const before = target.text;
-          updatePost(target.id, (p) => ({ ...p, text: next }));
-          try {
-            await editChannelPost(target.id, next);
-          } catch {
-            updatePost(target.id, (p) => ({ ...p, text: before }));
-            mutationFailed();
-          }
-          return true;
-        }}
-      />
 
       <ForwardPicker
         count={forwardPost ? 1 : 0}

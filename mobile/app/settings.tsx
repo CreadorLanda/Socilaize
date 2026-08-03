@@ -4,10 +4,11 @@ import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import { deleteMe, me, patchMe, type UserPatch } from '@/data/api/users';
 import { clearSession, getSessionPhone } from '@/data/auth-store';
 import { resetAllStores } from '@/data/reset';
@@ -79,7 +80,7 @@ export default function SettingsScreen() {
       if (!privacyLoaded) return;
       patchMe(patch).catch(() => {
         rollback();
-        Alert.alert(t('settings.privacy_failed_title'), t('settings.privacy_failed_body'));
+        appAlert(t('settings.privacy_failed_title'), t('settings.privacy_failed_body'));
       });
     },
     [privacyLoaded],
@@ -152,7 +153,7 @@ export default function SettingsScreen() {
         savePrivacy({ [field]: v }, () => set(current));
       },
     });
-    Alert.alert(title, undefined, [
+    appAlert(title, undefined, [
       opt('everyone'),
       opt('contacts'),
       opt('nobody'),
@@ -168,13 +169,13 @@ export default function SettingsScreen() {
    * real and irreversible, which is exactly why it asks twice.
    */
   const confirmDelete = () =>
-    Alert.alert(t('settings.delete_confirm_title'), t('settings.delete_confirm_body'), [
+    appAlert(t('settings.delete_confirm_title'), t('settings.delete_confirm_body'), [
       { text: t('settings.cancel'), style: 'cancel' },
       {
         text: t('settings.delete_continue'),
         style: 'destructive',
         onPress: () =>
-          Alert.alert(t('settings.delete_final_title'), t('settings.delete_final_body'), [
+          appAlert(t('settings.delete_final_title'), t('settings.delete_final_body'), [
             { text: t('settings.cancel'), style: 'cancel' },
             {
               text: t('settings.delete'),
@@ -188,7 +189,7 @@ export default function SettingsScreen() {
                     return clearSession();
                   })
                   .catch(() => {
-                    Alert.alert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+                    appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
                   })
                   .finally(() => router.replace('/onboarding'));
               },
@@ -198,7 +199,7 @@ export default function SettingsScreen() {
     ]);
 
   const confirmLogout = () =>
-    Alert.alert(t('settings.logout_title'), t('settings.logout_body'), [
+    appAlert(t('settings.logout_title'), t('settings.logout_body'), [
       { text: t('settings.cancel'), style: 'cancel' },
       {
         text: t('settings.logout_confirm'),
