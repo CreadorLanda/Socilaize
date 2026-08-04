@@ -23,16 +23,58 @@ err() { echo -e "${RED}[vps]${NC} $*" >&2; }
 
 cd "$SERVER_DIR"
 
-# 1. Verifica docker + migrate
-for cmd in docker migrate; do
-  if ! command -v "$cmd" &>/dev/null; then
-    err "'$cmd' não encontrado. Instale docker e golang-migrate."
-    err "golang-migrate: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest"
-    exit 1
-  fi
-done
+# 1. Verifica sudo
+if ! sudo -v &>/dev/null; then
+  err "Precisa de sudo para instalar dependências."
+  exit 1
+fi
 
-# 2. Sobe Postgres + Redis (perfil local-pg = tudo rodando na VPS)
+# 2. Instala o que faltar (Go, Docker, Docker Compose, golang-migrate)
+need_sudo_install=false
+
+if ! command -v go &>/dev/null; then
+  log "Instalando Go..."
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq golang-go || {
+    curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz -o /tmp/go.tar.gz
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+    export PATH="/usr/local/go/bin:$PATH"
+  }
+fi
+export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+
+if ! command -v migrate &>/dev/null; then
+  log "Instalando golang-migrate..."
+  go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+fi
+export PATH="$HOME/go/bin:$PATH"
+
+if ! command -v docker &>/dev/null; then
+  log "Instalando Docker..."
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker "$USER"
+  newgrp docker
+  need_sudo_install=true
+fi
+
+if ! docker compose version &>/dev/null; then
+  log "Instalando Docker Compose plugin..."
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq docker-compose-plugin
+fi
+
+if [[ "$need_sudo_install" == "true" ]]; then
+  warn "Docker instalado. Re-execute o script numa nova sessão (o grupo docker foi atualizado)."
+  exit 0
+fi
+
+# Garante que docker funciona sem sudo
+if ! docker info &>/dev/null; then
+  sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
+fi
+
+# 3. Sobe Postgres + Redis (perfil local-pg = tudo rodando na VPS)
 log "Subindo Postgres + Redis..."
 docker compose --profile local-pg up -d
 
@@ -47,7 +89,7 @@ for svc in postgres redis; do
   done
 done
 
-# 3. Configura .env (Postgres local + secrets gerados)
+# 4. Configura .env (Postgres local + secrets gerados)
 if [[ ! -f .env ]]; then
   log "Criando .env para Postgres local..."
   cp .env.example .env
@@ -56,11 +98,11 @@ if [[ ! -f .env ]]; then
   sed -i "s/^REFRESH_SECRET=.*/REFRESH_SECRET=$(openssl rand -hex 32)/" .env
 fi
 
-# 4. Migrations
+# 5. Migrations
 log "Rodando migrations..."
 POSTGRES_URL="postgres://socialize:socialize@localhost:5432/socialize?sslmode=disable" make migrate-up
 
-# 5. Build + roda API
+# 6. Build + roda API
 log "Compilando API..."
 make build
 
@@ -77,7 +119,7 @@ for i in {1..15}; do
   sleep 1
 done
 
-# 6. Descobre IP público
+# 7. Descobre IP público
 PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me || curl -s --max-time 5 icanhazip.com || hostname -I | awk '{print $1}')
 LOCAL_IP=$(hostname -I | awk '{print $1}')
 

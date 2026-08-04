@@ -18,13 +18,32 @@ log() { echo -e "${GREEN}[dev-local]${NC} $*"; }
 warn() { echo -e "${YELLOW}[dev-local]${NC} $*"; }
 err() { echo -e "${RED}[dev-local]${NC} $*" >&2; }
 
-# 1. Verifica dependências
-for cmd in docker bun go; do
-  if ! command -v "$cmd" &>/dev/null; then
-    err "Comando '$cmd' não encontrado. Instale: docker, bun, go"
-    exit 1
-  fi
-done
+# 1. Instala o que faltar (Go, golang-migrate, bun) — docker deve estar instalado
+if ! command -v docker &>/dev/null; then
+  err "Docker não encontrado. Instale: https://docs.docker.com/engine/install/"
+  exit 1
+fi
+
+if ! command -v go &>/dev/null; then
+  warn "Go não encontrado. Instalando..."
+  curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz -o /tmp/go.tar.gz
+  sudo rm -rf /usr/local/go
+  sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+  export PATH="/usr/local/go/bin:$PATH"
+fi
+export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+
+if ! command -v migrate &>/dev/null; then
+  log "Instalando golang-migrate..."
+  go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+fi
+export PATH="$HOME/go/bin:$PATH"
+
+if ! command -v bun &>/dev/null; then
+  warn "Bun não encontrado. Instalando..."
+  curl -fsSL https://bun.sh/install | bash
+  export PATH="$HOME/.bun/bin:$PATH"
+fi
 
 # 2. Sobe Postgres + Redis (perfil local-pg)
 log "Subindo Postgres + Redis (docker compose --profile local-pg)..."
@@ -119,7 +138,7 @@ else
   log "  ou: npx expo run:android --variant release"
 fi
 
-# 11. Instruções finais
+# 11. Instrucoes finais
 echo
 echo "=========================================="
 echo "  TUDO RODANDO LOCALMENTE"
