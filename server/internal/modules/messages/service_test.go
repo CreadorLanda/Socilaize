@@ -769,3 +769,89 @@ func TestDisappearingAnnouncesItself(t *testing.T) {
 		t.Fatalf("another chat inherited the timer: %d", sec)
 	}
 }
+
+// TestLimitedViewSurvivesReload is the whole point of a view-once message:
+// that it is spent for good.
+//
+// It was not. The limit went into the database on send and no read path ever
+// reported it — ListMessages did not select view_limit, so every history load
+// rebuilt the message as unopened, and the client had nothing to render a
+// spent one from. Opening it burned a view server-side that nobody could see.
+func TestLimitedViewSurvivesReload(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	once := 1
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "for your eyes only", ViewLimit: &once,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	find := func(msgs []Message, id int64) Message {
+		t.Helper()
+		for _, m := range msgs {
+			if m.ID == id {
+				return m
+			}
+		}
+		t.Fatalf("message %d missing from history", id)
+		return Message{}
+	}
+
+	// Listing must describe the limit without spending it: a thread that
+	// burns a view for every scroll past is a thread nobody can reread.
+	msgs, err := svc.ListMessages(ctx, chat.ID, bob, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	m := find(msgs, sent.ID)
+	if m.ViewLimit == nil || *m.ViewLimit != 1 {
+		t.Fatalf("view_limit before opening: %v, want 1", m.ViewLimit)
+	}
+	if m.ViewsLeft == nil || *m.ViewsLeft != 1 {
+		t.Fatalf("views_left before opening: %v, want 1", m.ViewsLeft)
+	}
+
+	if _, _, err := svc.OpenLimitedMessage(ctx, chat.ID, sent.ID, bob); err != nil {
+		t.Fatalf("OpenLimitedMessage: %v", err)
+	}
+
+	// Reload: the state has to come back from the server, not from whatever
+	// the client happened to remember.
+	msgs, err = svc.ListMessages(ctx, chat.ID, bob, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages after open: %v", err)
+	}
+	if m := find(msgs, sent.ID); m.ViewsLeft == nil || *m.ViewsLeft != 0 {
+		t.Fatalf("views_left after opening: %v, want 0", m.ViewsLeft)
+	}
+
+	if _, _, err := svc.OpenLimitedMessage(ctx, chat.ID, sent.ID, bob); !errors.Is(err, ErrViewsExhausted) {
+		t.Fatalf("second open: got %v, want ErrViewsExhausted", err)
+	}
+
+	// Alice never opened it, so her own copy is untouched. Views are per
+	// person: the sender's screen must not go blank because the recipient
+	// looked.
+	msgs, err = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages as sender: %v", err)
+	}
+	if m := find(msgs, sent.ID); m.ViewsLeft == nil || *m.ViewsLeft != 1 {
+		t.Fatalf("sender's views_left: %v, want 1", m.ViewsLeft)
+	}
+}

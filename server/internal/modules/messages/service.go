@@ -249,10 +249,10 @@ func (s *Service) OpenLimitedMessage(ctx context.Context, chatID uuid.UUID, mess
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrMessageNotFound
 		}
-		return nil, nil, err
-	}
-	if limit != nil && left != nil && *left <= 0 {
-		return limit, left, ErrViewsExhausted
+		// Includes ErrViewsExhausted, which the repository decides because
+		// only it can tell "this was the last view" from "there was none
+		// left" without a second query racing the first.
+		return limit, left, err
 	}
 	return limit, left, nil
 }
@@ -330,7 +330,7 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 		}
 	}
 
-	msgs, err := s.repo.ListMessages(ctx, chatID, limit, before, hideRead)
+	msgs, err := s.repo.ListMessages(ctx, chatID, userID, limit, before, hideRead)
 	if err != nil {
 		return nil, err
 	}
