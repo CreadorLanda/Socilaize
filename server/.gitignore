@@ -1,6 +1,21 @@
+# Build artifacts
 /bin/
-/.env
-/data/
-*.test
 *.out
+*.test
 coverage.txt
+
+# Data & local DB
+/data/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# OS
+.DS_Store
