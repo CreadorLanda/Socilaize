@@ -69,9 +69,15 @@ if ! command -v docker &>/dev/null; then
 fi
 
 if ! docker compose version &>/dev/null; then
-  log "Instalando Docker Compose plugin..."
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq docker-compose-plugin
+  log "Instalando Docker Compose (binário direto do GitHub)..."
+  COMPOSE_VERSION="v2.29.7"
+  COMPOSE_ARCH="x86_64"
+  case "$(uname -m)" in
+    aarch64|arm64) COMPOSE_ARCH="aarch64" ;;
+  esac
+  sudo mkdir -p /usr/local/lib/docker/cli-plugins
+  sudo curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${COMPOSE_ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+  sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 fi
 
 if [[ "$need_sudo_install" == "true" ]]; then
