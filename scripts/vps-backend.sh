@@ -120,13 +120,16 @@ for svc in postgres redis; do
 done
 
 # 4. Configura .env (Postgres local + secrets gerados)
+# Sobrescreve SEMPRE as URLs/placeholders — o .env.example traz valores do
+# Supabase/Upstash que quebram o parse. O .env local da VPS é o que vale.
+log "Configurando .env para Postgres local..."
 if [[ ! -f .env ]]; then
-  log "Criando .env para Postgres local..."
   cp .env.example .env
-  sed -i 's|DATABASE_URL=.*|DATABASE_URL=postgres://socialize:socialize@localhost:5432/socialize?sslmode=disable|' .env
-  sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env
-  sed -i "s/^REFRESH_SECRET=.*/REFRESH_SECRET=$(openssl rand -hex 32)/" .env
 fi
+sed -i "s|^POSTGRES_URL=.*|POSTGRES_URL=postgres://socialize:socialize@localhost:5432/socialize?sslmode=disable|" .env
+sed -i "s|^REDIS_URL=.*|REDIS_URL=redis://localhost:6379/0|" .env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
+sed -i "s|^MESSAGE_KEY=.*|MESSAGE_KEY=$(openssl rand -hex 32)|" .env
 
 # 5. Migrations
 log "Rodando migrations..."

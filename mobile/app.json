@@ -76,6 +76,13 @@
         "projectId": "5e47a526-6fb4-469a-b5a8-5549755dc991"
       }
     },
-    "owner": "alexandrelanda"
+    "owner": "alexandrelanda",
+    "updates": {
+      "url": "https://u.expo.dev/5e47a526-6fb4-469a-b5a8-5549755dc991",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }
