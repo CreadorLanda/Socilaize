@@ -91,13 +91,14 @@ if ! docker info &>/dev/null; then
 fi
 
 # 3. Sobe Postgres + Redis (perfil local-pg = tudo rodando na VPS)
+COMPOSE_FILE="deploy/docker/docker-compose.yml"
 log "Subindo Postgres + Redis..."
-docker compose --profile local-pg up -d
+docker compose -f "$COMPOSE_FILE" --profile local-pg up -d
 
 log "Aguardando serviços ficarem saudáveis..."
 for svc in postgres redis; do
   for i in {1..30}; do
-    if docker compose ps "$svc" | grep -q "healthy"; then
+    if docker compose -f "$COMPOSE_FILE" ps "$svc" | grep -q "healthy"; then
       log "$svc OK"
       break
     fi

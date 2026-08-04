@@ -61,13 +61,13 @@ fi
 # 2. Sobe Postgres + Redis (perfil local-pg)
 log "Subindo Postgres + Redis (docker compose --profile local-pg)..."
 cd "$SERVER_DIR"
-docker compose --profile local-pg up -d
+docker compose -f deploy/docker/docker-compose.yml --profile local-pg up -d
 
 # 3. Aguarda healthchecks
 log "Aguardando serviços ficarem saudáveis..."
 for svc in postgres redis; do
   for i in {1..30}; do
-    if docker compose ps "$svc" | grep -q "healthy"; then
+    if docker compose -f deploy/docker/docker-compose.yml ps "$svc" | grep -q "healthy"; then
       log "$svc OK"
       break
     fi
@@ -102,7 +102,7 @@ make build
 log "Iniciando API (porta 8080)..."
 ./bin/api &
 API_PID=$!
-trap "kill $API_PID 2>/dev/null; docker compose --profile local-pg down; exit" INT TERM EXIT
+trap "kill $API_PID 2>/dev/null; docker compose -f deploy/docker/docker-compose.yml --profile local-pg down; exit" INT TERM EXIT
 
 # Aguarda API subir
 for i in {1..15}; do
