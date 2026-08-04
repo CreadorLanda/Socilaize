@@ -8,13 +8,11 @@ import {
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   Dimensions,
-  FlatList,
   Modal,
   Pressable,
   ScrollView,
@@ -27,7 +25,6 @@ import {
 import Animated, {
   FadeIn,
   FadeInDown,
-  FadeInRight,
   useAnimatedStyle,
   useSharedValue,
   withSequence,
@@ -36,11 +33,10 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { uploadMedia } from '@/data/api/media';
-import { createStory } from '@/data/api/stories';
+import { appAlert } from '@/data/dialog-store';
 import type { StoryVisibility } from '@/data/mock';
 import { useProfile } from '@/data/profile-store';
-import { prependStoryFromDTO } from '@/data/story-store';
+import { queueStoryPublish } from '@/data/story-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -56,31 +52,49 @@ type EditTool = 'text' | 'sticker' | 'draw' | 'music' | null;
 type StickerKind = 'poll' | 'question' | 'mention' | null;
 
 const { width: W, height: H } = Dimensions.get('window');
-const ACCENTS = ['#2D5BFF', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#A78BFA', '#EF4444', '#FFFFFF'];
+// The brand violet leads; the rest are the user's own choices, so blue
+// stays available as one of them rather than as the product's colour.
+const ACCENTS = ['#4F46E5', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#2D5BFF', '#EF4444', '#FFFFFF'];
+/** All creatable modes — live is listed but blocked until hangout ships. */
 const CAPTURE_MODES: CaptureMode[] = ['type', 'normal', 'boomerang', 'handsfree', 'audio', 'live'];
 
-const RECENT_GALLERY = Array.from({ length: 18 }, (_, i) => ({
-  id: `g${i}`,
-  uri: `https://picsum.photos/seed/story-gallery-${i + 3}/400/700`,
-  isVideo: i % 5 === 2,
-}));
+/**
+ * How long a story stays up. Must stay inside the server's 1..72 bound —
+ * see StoryTTLMinHours / StoryTTLMaxHours in the stories module.
+ */
+const TTL_CHOICES = [1, 3, 6, 12, 24, 36, 48, 72] as const;
 
 export default function CreateStoryScreen() {
+  // Prefill from a forward. The composer is the same screen either way — a
+  // second one for "forwarded to story" would be a copy that drifts.
+  const params = useLocalSearchParams<{
+    forwardText?: string;
+    forwardMedia?: string;
+    forwardKind?: string;
+  }>();
   const profile = useProfile();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  const [phase, setPhase] = useState<Phase>('capture');
+  // A forward arrives with its content already chosen, so it starts in the
+  // editor. Opening the camera would ask for something the person just
+  // handed over, and there is no way back to it from there.
+  const forwarded = !!(params.forwardMedia || params.forwardText);
+  const [phase, setPhase] = useState<Phase>(forwarded ? 'edit' : 'capture');
   const [captureMode, setCaptureMode] = useState<CaptureMode>('normal');
-  const [mediaUri, setMediaUri] = useState<string | null>(null);
-  const [isVideo, setIsVideo] = useState(false);
+  const [mediaUri, setMediaUri] = useState<string | null>(params.forwardMedia ?? null);
+  const [isVideo, setIsVideo] = useState(params.forwardKind === 'video');
   const [isAudio, setIsAudio] = useState(false);
   const [audioSec, setAudioSec] = useState(0);
-  const [textOnly, setTextOnly] = useState(false);
-  const [caption, setCaption] = useState('');
+  const [textOnly, setTextOnly] = useState(!!params.forwardText && !params.forwardMedia);
+  const [caption, setCaption] = useState(params.forwardText ?? '');
   const [accent, setAccent] = useState(ACCENTS[0]);
   const [audience, setAudience] = useState<StoryVisibility>('contacts');
+  // Mirrors the server bound (StoryTTLMinHours..StoryTTLMaxHours). Offering
+  // a value the server would clamp means telling the author a story lasts
+  // longer than it will.
+  const [ttlHours, setTtlHours] = useState(24);
   const [postAnonymous, setPostAnonymous] = useState(false);
   const [allowComments, setAllowComments] = useState(true);
   const [allowAnonReplies, setAllowAnonReplies] = useState(true);
@@ -93,9 +107,9 @@ export default function CreateStoryScreen() {
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [audioRecording, setAudioRecording] = useState(false);
-  const [isLiveSetup, setIsLiveSetup] = useState(false);
   const audioTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioStart = useRef(0);
+  const publishLock = useRef(false);
 
   const shutterScale = useSharedValue(1);
   const shutterStyle = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
@@ -113,22 +127,22 @@ export default function CreateStoryScreen() {
       setMediaUri(null);
       setIsVideo(false);
       setIsAudio(false);
-      setIsLiveSetup(false);
+      setSticker(null);
       setPhase('edit');
       setActiveTool('text');
     }
-    if (captureMode === 'live' && phase === 'capture') {
-      setTextOnly(false);
-      setMediaUri(null);
-      setIsVideo(true);
-      setIsAudio(false);
-      setIsLiveSetup(true);
-      setPhase('edit');
-      setActiveTool(null);
-    }
   }, [captureMode, phase]);
 
-  const lastGalleryThumb = RECENT_GALLERY[0]?.uri;
+  const selectCaptureMode = (mode: CaptureMode) => {
+    if (mode === 'live') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      appAlert(t('stories.go_live'), t('stories.live_coming_soon') || 'Live is coming soon.');
+      return;
+    }
+    setCaptureMode(mode);
+  };
+
+  const lastGalleryThumb = mediaUri && !isAudio ? mediaUri : null;
 
   const enterEdit = (opts: {
     uri?: string | null;
@@ -157,8 +171,7 @@ export default function CreateStoryScreen() {
     setCaption('');
     setSticker(null);
     setActiveTool(null);
-    setIsLiveSetup(false);
-    if (captureMode === 'type' || captureMode === 'audio' || captureMode === 'live') {
+    if (captureMode === 'type' || captureMode === 'audio') {
       setCaptureMode('normal');
     }
   };
@@ -193,7 +206,7 @@ export default function CreateStoryScreen() {
   const startAudioRecording = async () => {
     const perm = await requestRecordingPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert(t('stories.voice_mode'), t('stories.tap_to_record'));
+      appAlert(t('stories.voice_mode'), t('stories.tap_to_record'));
       return;
     }
     try {
@@ -260,86 +273,99 @@ export default function CreateStoryScreen() {
     }
   };
 
-  const audienceLabel =
-    audience === 'public'
-      ? t('stories.privacy_public')
-      : audience === 'close'
-        ? t('stories.privacy_close')
-        : t('stories.privacy_contacts');
+  const buildInteractiveCaption = (): string => {
+    if (sticker === 'poll') {
+      return JSON.stringify({
+        q: caption.trim(),
+        a: (pollA || t('stories.poll_yes')).trim(),
+        b: (pollB || t('stories.poll_no')).trim(),
+      });
+    }
+    if (sticker === 'question') {
+      return JSON.stringify({ q: caption.trim() });
+    }
+    return caption.trim();
+  };
 
-  const publish = async () => {
-    if (isLiveSetup) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(t('stories.go_live'), t('stories.live_starting'), [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+  const resolveDurationSec = (kind: string): number => {
+    if (kind === 'audio') return Math.min(30, Math.max(5, audioSec || 5));
+    if (kind === 'video') {
+      if (captureMode === 'boomerang') return 3;
+      if (captureMode === 'handsfree') return 15;
+      return 10;
+    }
+    if (kind === 'poll' || kind === 'question') return 8;
+    if (kind === 'text') return 6;
+    return 5;
+  };
+
+  /**
+   * WhatsApp-style: close the composer immediately and publish in background.
+   * Upload + API run via queueStoryPublish; a global toast reports status.
+   */
+  const publish = () => {
+    if (publishLock.current) return;
+
+    let kind: 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question' = 'text';
+
+    if (sticker === 'poll') {
+      kind = 'poll';
+      if (!caption.trim()) {
+        appAlert(t('stories.poll_mode'), t('stories.poll_placeholder'));
+        return;
+      }
+    } else if (sticker === 'question') {
+      kind = 'question';
+      if (!caption.trim()) {
+        appAlert(t('stories.question_mode'), t('stories.question_placeholder'));
+        return;
+      }
+    } else if (textOnly) {
+      kind = 'text';
+      if (!caption.trim()) {
+        appAlert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
+        return;
+      }
+    } else if (isAudio && mediaUri) {
+      kind = 'audio';
+    } else if (mediaUri) {
+      kind = isVideo ? 'video' : 'image';
+    } else if (caption.trim()) {
+      kind = 'text';
+    } else {
+      appAlert(t('stories.sent_notice'), 'Pick a photo, video, audio, or write something.');
       return;
     }
 
-    try {
-      let mediaUrl: string | undefined;
-      let kind: 'image' | 'video' | 'text' | 'audio' = 'text';
+    publishLock.current = true;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      if (textOnly) {
-        kind = 'text';
-        if (!caption.trim()) {
-          Alert.alert(t('stories.sent_notice'), t('stories.creator_need_name') || 'Add a caption');
-          return;
-        }
-      } else if (isAudio && mediaUri) {
-        kind = 'audio';
-        const up = await uploadMedia({
-          uri: mediaUri,
-          name: `story-audio-${Date.now()}.m4a`,
-          mimeType: 'audio/mp4',
-          durationMs: audioSec * 1000,
-        });
-        mediaUrl = up.url;
-      } else if (mediaUri) {
-        kind = isVideo ? 'video' : 'image';
-        const up = await uploadMedia({
-          uri: mediaUri,
-          mimeType: isVideo ? 'video/mp4' : 'image/jpeg',
-        });
-        mediaUrl = up.url;
-      } else if (caption.trim()) {
-        kind = 'text';
-      } else {
-        Alert.alert(t('stories.sent_notice'), 'Pick a photo or write something.');
-        return;
-      }
+    const bodyCaption =
+      kind === 'poll' || kind === 'question' ? buildInteractiveCaption() : caption.trim();
 
-      const dto = await createStory({
-        kind,
-        caption: caption.trim(),
-        media_url: mediaUrl,
-        accent,
-        visibility: audience,
-        is_anonymous: postAnonymous,
-        duration_sec: isAudio ? Math.max(5, audioSec) : 5,
-      });
-      prependStoryFromDTO(dto);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        t('stories.sent_notice'),
-        t('stories.sent_detail', {
-          audience: audienceLabel,
-          anon: postAnonymous ? t('stories.sent_as_anon') : '',
-        }),
-        [{ text: 'OK', onPress: () => router.back() }],
-      );
-    } catch {
-      // Offline / API down — still close with local notice.
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        t('stories.sent_notice'),
-        t('stories.sent_detail', {
-          audience: audienceLabel,
-          anon: postAnonymous ? t('stories.sent_as_anon') : '',
-        }),
-        [{ text: 'OK', onPress: () => router.back() }],
-      );
-    }
+    queueStoryPublish({
+      kind,
+      caption: bodyCaption,
+      localMediaUri: mediaUri,
+      mediaMimeType:
+        kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mp4' : 'image/jpeg',
+      audioDurationMs: kind === 'audio' ? audioSec * 1000 : undefined,
+      accent,
+      visibility: audience,
+      ttlHours,
+      isAnonymous: postAnonymous,
+      // Both toggles have been on this screen from the start and neither
+      // reached the server, so the choice was discarded on publish.
+      allowComments,
+      allowAnonymousReplies: allowComments && allowAnonReplies,
+      durationSec: resolveDurationSec(kind),
+      authorName: profile.name || 'You',
+      authorUsername: profile.username,
+      authorAvatar: profile.avatarUri,
+    });
+
+    // Leave immediately — status continues on the toast + your story ring.
+    router.back();
   };
 
   // ── CAPTURE ──────────────────────────────────────────────────────────────
@@ -409,44 +435,19 @@ export default function CreateStoryScreen() {
 
         <View style={[styles.captureBottom, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           {captureMode !== 'audio' ? (
-            <FlatList
-              horizontal
-              data={RECENT_GALLERY}
-              keyExtractor={(item) => item.id}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.galleryRail}
-              renderItem={({ item, index }) => (
-                <Animated.View entering={FadeInRight.delay(index * 18).duration(280)}>
-                  <Pressable
-                    onPress={() => {
-                      if (index === 0) {
-                        pickFromLibrary();
-                        return;
-                      }
-                      enterEdit({ uri: item.uri, video: item.isVideo });
-                    }}
-                    style={styles.galleryCell}
-                  >
-                    <Image source={{ uri: item.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
-                    {item.isVideo ? (
-                      <View style={styles.galleryVideoMark}>
-                        <Ionicons name="play" size={10} color="#FFF" />
-                      </View>
-                    ) : null}
-                    {index === 0 ? (
-                      <View style={styles.galleryAllOverlay}>
-                        <Ionicons name="images" size={16} color="#FFF" />
-                      </View>
-                    ) : null}
-                  </Pressable>
-                </Animated.View>
-              )}
-            />
+            <View style={styles.galleryRail}>
+              <Pressable onPress={pickFromLibrary} style={styles.galleryCell}>
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.12)' }]} />
+                <View style={styles.galleryAllOverlay}>
+                  <Ionicons name="images" size={18} color="#FFF" />
+                </View>
+              </Pressable>
+            </View>
           ) : (
             <View style={{ height: 8 }} />
           )}
 
-          <ModeCarousel mode={captureMode} onChange={setCaptureMode} />
+          <ModeCarousel mode={captureMode} onChange={selectCaptureMode} />
 
           <View style={styles.shutterRow}>
             <Pressable
@@ -517,32 +518,27 @@ export default function CreateStoryScreen() {
   }
 
   // ── EDIT ─────────────────────────────────────────────────────────────────
+  const solidBg = textOnly || isAudio || sticker === 'poll' || sticker === 'question';
   return (
     <View
       style={[
         styles.root,
-        (textOnly || isAudio || isLiveSetup) && {
-          backgroundColor: isLiveSetup ? '#0A0B0F' : isAudio ? '#12141A' : accent,
+        solidBg && {
+          backgroundColor: isAudio ? '#12141A' : accent,
         },
       ]}
     >
       <StatusBar style="light" />
 
-      {!textOnly && !isAudio && !isLiveSetup && mediaUri ? (
+      {!solidBg && mediaUri ? (
         <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
       ) : null}
-      {!textOnly && !isAudio && !isLiveSetup && mediaUri ? <View style={styles.editScrim} /> : null}
-      {textOnly || isAudio ? (
+      {!solidBg && mediaUri ? <View style={styles.editScrim} /> : null}
+      {solidBg ? (
         <>
           <View style={[StyleSheet.absoluteFill, { backgroundColor: isAudio ? '#12141A' : accent }]} />
           <View style={styles.textOrbA} />
           <View style={styles.textOrbB} />
-        </>
-      ) : null}
-      {isLiveSetup ? (
-        <>
-          <View style={styles.liveSetupBg} />
-          <View style={styles.livePulseRing} />
         </>
       ) : null}
 
@@ -588,30 +584,6 @@ export default function CreateStoryScreen() {
         </View>
 
         <View style={styles.editBody} pointerEvents="box-none">
-          {isLiveSetup ? (
-            <View style={styles.liveSetupCard}>
-              <View style={styles.liveBadgeBig}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveBadgeBigText}>{t('stories.live_now')}</Text>
-              </View>
-              <Image
-                source={{ uri: profile.avatarUri }}
-                style={styles.liveAvatar}
-                contentFit="cover"
-              />
-              <Text style={styles.liveTitle}>{t('stories.live_starting')}</Text>
-              <Text style={styles.liveHint}>{t('stories.live_hint')}</Text>
-              <TextInput
-                value={caption}
-                onChangeText={setCaption}
-                placeholder={t('stories.caption_placeholder')}
-                placeholderTextColor="rgba(255,255,255,0.45)"
-                style={styles.liveTitleInput}
-                maxLength={80}
-              />
-            </View>
-          ) : null}
-
           {isAudio ? (
             <View style={styles.audioEditCard}>
               <View style={styles.audioOrb}>
@@ -622,7 +594,9 @@ export default function CreateStoryScreen() {
             </View>
           ) : null}
 
-          {textOnly || activeTool === 'text' || isAudio ? (
+          {(textOnly || activeTool === 'text' || isAudio) &&
+          sticker !== 'poll' &&
+          sticker !== 'question' ? (
             <TextInput
               value={caption}
               onChangeText={setCaption}
@@ -634,7 +608,7 @@ export default function CreateStoryScreen() {
               autoFocus={textOnly || activeTool === 'text'}
               style={[styles.storyTextInput, textOnly && styles.storyTextInputLarge]}
             />
-          ) : mediaUri && !textOnly ? (
+          ) : mediaUri && !textOnly && !sticker ? (
             <Pressable onPress={() => setActiveTool('text')} style={styles.captionTapZone}>
               {caption ? (
                 <Text style={styles.overlayCaption}>{caption}</Text>
@@ -761,6 +735,38 @@ export default function CreateStoryScreen() {
           />
         </View>
 
+        <Text style={styles.audienceHeading}>{t('stories.duration_label')}</Text>
+        <View style={styles.ttlRow}>
+          {TTL_CHOICES.map((h) => (
+            <Pressable
+              key={h}
+              onPress={() => setTtlHours(h)}
+              style={[
+                styles.ttlChip,
+                {
+                  borderColor: ttlHours === h ? colors.primary : 'rgba(255,255,255,0.18)',
+                  backgroundColor: ttlHours === h ? colors.primary : 'transparent',
+                },
+              ]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: ttlHours === h }}
+            >
+              <Text
+                style={[
+                  styles.ttlChipText,
+                  { color: ttlHours === h ? colors.onPrimary : 'rgba(255,255,255,0.75)' },
+                ]}
+              >
+                {h === 1
+                  ? t('stories.duration_1h')
+                  : h === 72
+                    ? t('stories.duration_max')
+                    : t('stories.duration_hours', { count: h })}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
         <View style={styles.toggleCard}>
           <ToggleRow
             icon="eye-off-outline"
@@ -795,17 +801,14 @@ export default function CreateStoryScreen() {
           onPress={publish}
           style={({ pressed }) => [
             styles.shareBtn,
-            { backgroundColor: isLiveSetup ? '#EF4444' : colors.primary },
+            { backgroundColor: colors.primary },
             pressed && { transform: [{ scale: 0.98 }], opacity: 0.92 },
           ]}
         >
-          {isLiveSetup ? <Ionicons name="radio" size={18} color="#FFF" /> : null}
           <Text style={[styles.shareBtnText, { color: colors.onPrimary }]}>
-            {isLiveSetup ? t('stories.go_live') : t('stories.share_story')}
+            {t('stories.share_story')}
           </Text>
-          {!isLiveSetup ? (
-            <Ionicons name="arrow-forward" size={18} color={colors.onPrimary} />
-          ) : null}
+          <Ionicons name="arrow-forward" size={18} color={colors.onPrimary} />
         </Pressable>
       </View>
 
@@ -988,7 +991,7 @@ function ToggleRow({
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: 'rgba(255,255,255,0.18)', true: '#2D5BFF' }}
+        trackColor={{ false: 'rgba(255,255,255,0.18)', true: '#4F46E5' }}
         thumbColor="#FFF"
       />
     </View>
@@ -1108,7 +1111,7 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: 48,
-    backgroundColor: 'rgba(45,91,255,0.85)',
+    backgroundColor: 'rgba(79, 70, 229,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1203,7 +1206,7 @@ const styles = StyleSheet.create({
   },
   shutterBoomerang: { borderColor: '#F59E0B' },
   shutterHandsfree: { borderColor: '#EF4444' },
-  shutterAudio: { borderColor: '#2D5BFF', backgroundColor: '#FFF' },
+  shutterAudio: { borderColor: '#4F46E5', backgroundColor: '#FFF' },
   shutterRecording: { borderColor: '#EF4444' },
   shutterInner: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#FFF' },
   shutterInnerVideo: { width: 36, height: 36, borderRadius: 8, backgroundColor: '#EF4444' },
@@ -1357,6 +1360,14 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
+  ttlRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  ttlChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  ttlChipText: { fontSize: 13, fontWeight: '600' },
   audienceRow: { flexDirection: 'row', gap: Spacing.xs },
   audienceChip: {
     flex: 1,

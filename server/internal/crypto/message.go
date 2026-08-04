@@ -1,8 +1,8 @@
 // Package crypto provides message-level encryption for the Socialize backend.
 //
-// Incoming WhatsApp message content is encrypted with AES-256-GCM before
-// it reaches the database (encryption at rest). The encryption key is
-// configured via environment variable and never logged or exposed.
+// Message content is encrypted with AES-256-GCM before it reaches the
+// database (encryption at rest). The key comes from MESSAGE_KEY and is
+// never logged or exposed.
 //
 // Design:
 //   - AES-256-GCM (authenticated encryption) — provides both confidentiality
@@ -26,12 +26,12 @@ import (
 )
 
 var (
-	ErrEmptyKey     = errors.New("encryption key is empty")
-	ErrInvalidKey   = errors.New("encryption key must be exactly 32 bytes for AES-256")
-	ErrDecryptFail  = errors.New("decryption failed — key mismatch or tampered ciphertext")
-	ErrEmptyInput   = errors.New("cannot encrypt empty input")
-	ErrInvalidHex   = errors.New("invalid hex ciphertext")
-	ErrTooShort     = errors.New("ciphertext too short (missing nonce)")
+	ErrEmptyKey    = errors.New("encryption key is empty")
+	ErrInvalidKey  = errors.New("encryption key must be exactly 32 bytes for AES-256")
+	ErrDecryptFail = errors.New("decryption failed — key mismatch or tampered ciphertext")
+	ErrEmptyInput  = errors.New("cannot encrypt empty input")
+	ErrInvalidHex  = errors.New("invalid hex ciphertext")
+	ErrTooShort    = errors.New("ciphertext too short (missing nonce)")
 )
 
 // Encrypt plaintext using AES-256-GCM. Returns hex( nonce || ciphertext || tag ).

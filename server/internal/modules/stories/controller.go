@@ -2,6 +2,7 @@ package stories
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -105,14 +106,191 @@ func (c *Controller) PostReact(ctx *gin.Context) {
 
 func writeErr(ctx *gin.Context, err error) {
 	switch {
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrThreadNotFound),
+		errors.Is(err, ErrCommentNotFound):
+		// A thread the caller is not part of is reported as missing, not as
+		// forbidden: "you may not read this" confirms it exists.
 		ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrNotAuthor):
 		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrRateLimited):
+		ctx.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrInvalidKind), errors.Is(err, ErrInvalidVis),
-		errors.Is(err, ErrNeedMedia), errors.Is(err, ErrEmptyCaption):
+		errors.Is(err, ErrNeedMedia), errors.Is(err, ErrEmptyCaption),
+		errors.Is(err, ErrEmptyBody), errors.Is(err, ErrOwnStory),
+		errors.Is(err, ErrCommentsDisabled), errors.Is(err, ErrAnonNotAllowed):
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 	}
+}
+
+func (c *Controller) GetViewers(ctx *gin.Context) {
+	id, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	viewers, err := c.svc.Viewers(ctx.Request.Context(), id, middleware.UserIDFrom(ctx))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, viewers)
+}
+
+// ── blind channel ───────────────────────────────────────────────────────────
+
+type anonBodyRequest struct {
+	Body string `json:"body"`
+}
+
+func (c *Controller) PostAnonWrite(ctx *gin.Context) {
+	storyID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	var req anonBodyRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	if err := c.svc.WriteAnon(ctx.Request.Context(), storyID,
+		middleware.UserIDFrom(ctx), req.Body); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *Controller) GetAnonInbox(ctx *gin.Context) {
+	threads, err := c.svc.AnonInbox(ctx.Request.Context(), middleware.UserIDFrom(ctx))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, threads)
+}
+
+func (c *Controller) GetAnonMessages(ctx *gin.Context) {
+	threadID, err := uuid.Parse(ctx.Param("tid"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	msgs, err := c.svc.AnonMessages(ctx.Request.Context(), threadID, middleware.UserIDFrom(ctx))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, msgs)
+}
+
+func (c *Controller) PostAnonReply(ctx *gin.Context) {
+	threadID, err := uuid.Parse(ctx.Param("tid"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	var req anonBodyRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	msg, err := c.svc.ReplyAnon(ctx.Request.Context(), threadID,
+		middleware.UserIDFrom(ctx), req.Body)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, msg)
+}
+
+func (c *Controller) PostAnonBlock(ctx *gin.Context) {
+	threadID, err := uuid.Parse(ctx.Param("tid"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	if err := c.svc.BlockAnon(ctx.Request.Context(), threadID, middleware.UserIDFrom(ctx)); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *Controller) PostAnonReveal(ctx *gin.Context) {
+	threadID, err := uuid.Parse(ctx.Param("tid"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	chatID, err := c.svc.RevealAnon(ctx.Request.Context(), threadID, middleware.UserIDFrom(ctx))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	// A chat id means both sides agreed and the thread is gone; the client
+	// uses it to move the person into the real conversation.
+	if chatID != uuid.Nil {
+		ctx.JSON(http.StatusOK, gin.H{"chat_id": chatID.String()})
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+// ── comments ────────────────────────────────────────────────────────────────
+
+type addCommentRequest struct {
+	Body        string `json:"body"`
+	ParentID    *int64 `json:"parent_id"`
+	IsAnonymous bool   `json:"is_anonymous"`
+}
+
+func (c *Controller) GetComments(ctx *gin.Context) {
+	storyID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	list, err := c.svc.Comments(ctx.Request.Context(), storyID, middleware.UserIDFrom(ctx))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, list)
+}
+
+func (c *Controller) PostComment(ctx *gin.Context) {
+	storyID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	var req addCommentRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	comment, err := c.svc.AddComment(ctx.Request.Context(), storyID,
+		middleware.UserIDFrom(ctx), req.ParentID, req.Body, req.IsAnonymous)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusCreated, comment)
+}
+
+func (c *Controller) DeleteComment(ctx *gin.Context) {
+	var id int64
+	if _, err := fmt.Sscanf(ctx.Param("cid"), "%d", &id); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	if err := c.svc.DeleteComment(ctx.Request.Context(), id, middleware.UserIDFrom(ctx)); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
 }

@@ -7,7 +7,11 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 
+import { AppToast } from '@/components/ui/app-toast';
+import { DialogHost } from '@/components/ui/dialog-host';
+import { AnimatedSplash } from '@/components/ui/splash';
 import { bootstrapAuth } from '@/data/auth-store';
+import { ensureKeysPublished } from '@/data/crypto';
 import { registerPushWithServer } from '@/data/push';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -22,18 +26,37 @@ export default function RootLayout() {
   // but cover it with a splash backstop until boot resolves — this hides the
   // brief onboarding flash that returning users would otherwise see.
   const [booted, setBooted] = useState(false);
+  const [splashGone, setSplashGone] = useState(false);
 
   useEffect(() => {
     let mounted = true;
-    bootstrapAuth().then((user) => {
-      if (!mounted) return;
-      if (user) {
-        router.replace('/(tabs)');
-        // Register Expo/FCM token once a session is restored.
-        registerPushWithServer().catch(() => {});
-      }
-      setBooted(true);
-    });
+    bootstrapAuth()
+      .then((user) => {
+        if (!mounted) return;
+        if (user) {
+          router.replace('/(tabs)');
+          // Register Expo/FCM token once a session is restored.
+          registerPushWithServer().catch(() => {});
+          // Generate / publish Signal-style pre-key material for E2EE.
+          ensureKeysPublished().catch(() => {});
+        } else {
+          // Send signed-out users to onboarding explicitly rather than
+          // relying on the anchor to resolve "/". A standalone build opens
+          // with no deep link, and an unresolved root renders nothing —
+          // which, under the splash backstop, is an indistinguishable
+          // blank screen.
+          router.replace('/onboarding');
+        }
+      })
+      .catch(() => {
+        // A rejected bootstrap (unreadable keychain, for instance) must not
+        // strand the app: without this the backstop below never lifts and
+        // the user stares at a blank screen forever. Treat it as signed out.
+        if (mounted) router.replace('/onboarding');
+      })
+      .finally(() => {
+        if (mounted) setBooted(true);
+      });
     return () => {
       mounted = false;
     };
@@ -90,7 +113,19 @@ export default function RootLayout() {
             <Stack.Screen name="search" options={{ headerShown: false, presentation: 'modal' }} />
             <Stack.Screen name="profile" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
+            <Stack.Screen name="stickers/index" options={{ headerShown: false }} />
             <Stack.Screen name="calls" options={{ headerShown: false }} />
+            <Stack.Screen name="archived" options={{ headerShown: false }} />
+            <Stack.Screen name="chat-media/[id]" options={{ headerShown: false }} />
+            <Stack.Screen name="channel-members/[id]" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="group/create"
+              options={{
+                headerShown: false,
+                presentation: 'modal',
+                animation: 'slide_from_bottom',
+              }}
+            />
             <Stack.Screen
               name="story/[id]"
               options={{
@@ -136,19 +171,20 @@ export default function RootLayout() {
             />
             <Stack.Screen name="modal" options={{ presentation: 'modal', headerShown: false }} />
           </Stack>
-          {!booted ? (
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: palette.background,
-              }}
-            />
+          {/*
+            Covers the app until boot resolves, and says so while it does.
+            `booted` starts the exit; `splashGone` removes the cover once the
+            exit has actually finished, so the two are not the same flag —
+            unmounting on `booted` alone would cut the animation off at the
+            first frame.
+          */}
+          {!splashGone ? (
+            <AnimatedSplash done={booted} onDone={() => setSplashGone(true)} />
           ) : null}
+          {/* Global toast for background story publish, etc. */}
+          <AppToast />
+          {/* One dialog host for the whole app — see data/dialog-store. */}
+          <DialogHost />
         </View>
         <StatusBar style="auto" />
       </ThemeProvider>

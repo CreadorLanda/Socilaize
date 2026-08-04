@@ -6,17 +6,32 @@ export type Availability = {
   available: boolean;
 };
 
+export type Visibility = 'everyone' | 'contacts' | 'nobody';
+
 export type UserPatch = Partial<{
   username: string;
   display_name: string;
   bio: string;
   avatar_uri: string;
   username_public: boolean;
+  last_seen_visibility: Visibility;
+  photo_visibility: Visibility;
+  /** Reciprocal: off means you neither send nor see read receipts. */
+  read_receipts: boolean;
 }>;
 
 export const me = () => api.get<ApiUser>('/api/users/me');
 
 export const patchMe = (patch: UserPatch) => api.patch<ApiUser>('/api/users/me', patch);
+
+/**
+ * Erase the account for good.
+ *
+ * No grace period: an account that is "deleted" but still there is a lie
+ * told to someone who asked to be gone. Everything that references the user
+ * goes with it.
+ */
+export const deleteMe = () => api.del<void>('/api/users/me');
 
 export const checkAvailability = (username: string) =>
   api.get<Availability>(`/api/users/availability?username=${encodeURIComponent(username)}`);

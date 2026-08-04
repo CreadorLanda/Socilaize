@@ -67,7 +67,6 @@ npm run dev
 | **Database** | PostgreSQL + MongoDB + Redis |
 | **Real-Time** | WebSockets + WebRTC |
 | **AI** | Dandara AI |
-| **WhatsApp** | Evolution API |
 
 ---
 

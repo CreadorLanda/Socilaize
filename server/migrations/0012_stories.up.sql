@@ -20,9 +20,11 @@ CREATE TABLE IF NOT EXISTS stories (
 
 CREATE INDEX IF NOT EXISTS idx_stories_author_created
     ON stories (author_id, created_at DESC);
+-- Plain (non-partial) index: NOW() is STABLE, not IMMUTABLE, so it cannot
+-- appear in an index predicate. Queries still filter on `expires_at > NOW()`
+-- at runtime and use this index.
 CREATE INDEX IF NOT EXISTS idx_stories_expires
-    ON stories (expires_at)
-    WHERE expires_at > NOW();
+    ON stories (expires_at);
 
 CREATE TABLE IF NOT EXISTS story_views (
     story_id    UUID NOT NULL REFERENCES stories(id) ON DELETE CASCADE,

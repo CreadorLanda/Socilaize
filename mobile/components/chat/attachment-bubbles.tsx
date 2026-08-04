@@ -1,9 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { STICKER_BUBBLE_SIZE } from '@/data/message-map';
 import type { MessageAttachment } from '@/data/mock';
+import * as Sharing from 'expo-sharing';
+
+import { CachedImage } from '@/components/ui/cached-image';
+import { ensureLocal, mediaIdFromURL, useCacheState } from '@/data/media-cache';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -24,10 +29,13 @@ export function AttachmentBubble({
   attachment,
   mine,
   onVote,
+  onLongPress,
 }: {
   attachment: MessageAttachment;
   mine: boolean;
   onVote?: (optionId: string) => void;
+  /** Forwarded so a child Pressable does not swallow the bubble's menu. */
+  onLongPress?: () => void;
 }) {
   const { colors } = useTheme();
 
@@ -38,22 +46,13 @@ export function AttachmentBubble({
   const fieldBg = mine ? 'rgba(255,255,255,0.16)' : colors.surfaceMuted;
 
   if (attachment.kind === 'document') {
-    const color = extColor(attachment.ext);
     return (
-      <View style={styles.docRow}>
-        <View style={[styles.docIcon, { backgroundColor: `${color}26` }]}>
-          <Ionicons name="document-text" size={24} color={color} />
-        </View>
-        <View style={styles.docText}>
-          <Text style={[styles.docName, { color: tint }]} numberOfLines={2}>
-            {attachment.name}
-          </Text>
-          <Text style={[styles.docMeta, { color: subtle }]} numberOfLines={1}>
-            {attachment.sizeLabel} · {attachment.ext.toUpperCase()}
-          </Text>
-        </View>
-        <Ionicons name="arrow-down-circle" size={22} color={subtle} />
-      </View>
+      <DocumentRow
+        attachment={attachment}
+        tint={tint}
+        subtle={subtle}
+        onLongPress={onLongPress}
+      />
     );
   }
 
@@ -89,15 +88,18 @@ export function AttachmentBubble({
   }
 
   if (attachment.kind === 'sticker') {
-    const w = attachment.width ?? 160;
-    const h = attachment.height ?? 160;
+    // Falls back to the shared size so old messages match new ones.
+    const w = attachment.width ?? STICKER_BUBBLE_SIZE;
+    const h = attachment.height ?? STICKER_BUBBLE_SIZE;
     return (
       <View style={styles.stickerWrap}>
-        <Image
-          source={{ uri: attachment.uri }}
+        <CachedImage
+          url={attachment.uri}
           style={[styles.sticker, { width: w, height: h }]}
           contentFit="contain"
+          mime="image/webp"
           transition={120}
+          onLongPress={onLongPress}
         />
       </View>
     );
@@ -435,3 +437,79 @@ const styles = StyleSheet.create({
   },
   gamePlayText: { ...Typography.caption, fontWeight: '700' },
 });
+
+/**
+ * Document row: shows size before anything is fetched, downloads on tap,
+ * then hands the file to whatever app can open it.
+ *
+ * Rendering documents in-app would need a viewer per format; handing off to
+ * the system covers every type the phone already knows, which is what other
+ * messengers do for anything that is not a PDF.
+ */
+function DocumentRow({
+  attachment,
+  tint,
+  subtle,
+  onLongPress,
+}: {
+  attachment: Extract<MessageAttachment, { kind: 'document' }>;
+  tint: string;
+  subtle: string;
+  onLongPress?: () => void;
+}) {
+  const { colors } = useTheme();
+  const color = extColor(attachment.ext);
+  const id = attachment.url ? mediaIdFromURL(attachment.url) : null;
+  const state = useCacheState(id ?? undefined);
+
+  const open = async () => {
+    if (!id) return;
+    const uri =
+      state.status === 'ready'
+        ? state.uri
+        : await ensureLocal(id, { key: attachment.key, mime: attachment.mime });
+    if (!uri) return;
+    try {
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: attachment.mime, UTI: attachment.mime });
+      }
+    } catch {
+      /* user dismissed the sheet */
+    }
+  };
+
+  const icon =
+    state.status === 'downloading'
+      ? 'ellipsis-horizontal'
+      : state.status === 'ready'
+        ? 'open-outline'
+        : 'arrow-down-circle';
+
+  return (
+    <Pressable
+      onPress={open}
+      onLongPress={onLongPress}
+      delayLongPress={260}
+      style={styles.docRow}
+    >
+      <View style={[styles.docIcon, { backgroundColor: `${color}26` }]}>
+        <Ionicons name="document-text" size={24} color={color} />
+      </View>
+      <View style={styles.docText}>
+        <Text style={[styles.docName, { color: tint }]} numberOfLines={2}>
+          {attachment.name}
+        </Text>
+        <Text style={[styles.docMeta, { color: subtle }]} numberOfLines={1}>
+          {attachment.sizeLabel}
+          {attachment.ext ? ` · ${attachment.ext.toUpperCase()}` : ''}
+          {state.status === 'ready' ? ` · ${t('media.open')}` : ''}
+        </Text>
+      </View>
+      {state.status === 'downloading' ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Ionicons name={icon} size={22} color={subtle} />
+      )}
+    </Pressable>
+  );
+}

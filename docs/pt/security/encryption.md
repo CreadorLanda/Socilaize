@@ -85,19 +85,6 @@ O servidor nunca tem:
 
 ---
 
-## Pontes e compromissos E2E
-
-Fazer ponte do WhatsApp via mautrix parte o E2E do WhatsApp *no salto da ponte*: o worker é, por definição, um cliente WhatsApp e pode ler mensagens. Isolamos claramente:
-
-- Dados da ponte vivem em tabelas separadas e passam por um code path separado.
-- Blobs de sessão são envelope-encrypted em repouso.
-- O fluxo de ligação obriga o utilizador a aceitar o compromisso antes de completar.
-- Conversas Socialize nativas *não* são afetadas — as suas sessões Signal continuam ponta-a-ponta.
-
-Texto de divulgação completo e detalhes operacionais em [whatsapp-bridge.md](../tech/whatsapp-bridge.md#modelo-de-ameaça--divulgação-ao-utilizador).
-
----
-
 ## Rotação de chaves
 
 | Material                   | Rotação                            |
@@ -119,6 +106,5 @@ Dizemos em voz alta para ninguém ser apanhado de surpresa:
 
 - **Metadados.** O servidor vê quem fala com quem e quando. Mitigações estilo sealed-sender estão no seguimento.
 - **Um dispositivo comprometido enquanto desbloqueado.** Quem tem o telefone desbloqueado pode ler tudo; SQLCipher não defende disso.
-- **Side channels na ponte.** Tudo o que passa pela ponte WhatsApp é, nesse salto, acessível ao worker.
 
 Qualquer coisa para além desta lista deve ser reportada como bug, não como feature.

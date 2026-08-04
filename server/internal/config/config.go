@@ -15,7 +15,6 @@ type Config struct {
 	Postgres PostgresConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
-	WA       WAConfig
 	Crypto   CryptoConfig
 	Media    MediaConfig
 	Push     PushConfig
@@ -38,19 +37,13 @@ type PushConfig struct {
 type MediaConfig struct {
 	// Dir is the absolute/relative root for stored files.
 	Dir string
+	// TTL is how long a blob may sit on the server before the sweeper
+	// removes it, even if not every recipient fetched it.
+	TTL time.Duration
+	// SweepEvery is how often the retention sweep runs.
+	SweepEvery time.Duration
 	// MaxUploadBytes caps a single upload (0 = default 25 MiB).
 	MaxUploadBytes int64
-}
-
-// WAConfig wires the WhatsApp bridge sidecar (Baileys) and its mTLS
-// internal server for webhook events.
-type WAConfig struct {
-	BridgeURL     string
-	InternalToken string
-	InternalAddr  string
-	TLSCACert     string
-	TLSCert       string
-	TLSKey        string
 }
 
 // CryptoConfig holds keys for at-rest encryption of message content.
@@ -93,20 +86,18 @@ func Load() (Config, error) {
 			AccessTokenTTL:  getenvDuration("JWT_ACCESS_TTL", 15*time.Minute),
 			RefreshTokenTTL: getenvDuration("JWT_REFRESH_TTL", 30*24*time.Hour),
 		},
-		WA: WAConfig{
-			BridgeURL:     os.Getenv("WA_BRIDGE_URL"),
-			InternalToken: os.Getenv("SOCIALIZE_INTERNAL_TOKEN"),
-			InternalAddr:  os.Getenv("WA_INTERNAL_ADDR"),
-			TLSCACert:     os.Getenv("TLS_CA_CERT"),
-			TLSCert:       os.Getenv("TLS_SERVER_CERT"),
-			TLSKey:        os.Getenv("TLS_SERVER_KEY"),
-		},
 		Crypto: CryptoConfig{
-			MessageKey: os.Getenv("WA_MESSAGE_KEY"),
+			// Encrypts message content at rest (see internal/crypto).
+			// WA_MESSAGE_KEY is a deprecated alias from the removed WhatsApp
+			// bridge — kept so existing deployments keep decrypting. Drop it
+			// once every environment sets MESSAGE_KEY.
+			MessageKey: getenv("MESSAGE_KEY", os.Getenv("WA_MESSAGE_KEY")),
 		},
 		Media: MediaConfig{
 			Dir:            getenv("MEDIA_DIR", "./data/media"),
 			MaxUploadBytes: getenvInt64("MEDIA_MAX_BYTES", 25<<20),
+			TTL:            getenvDuration("MEDIA_TTL", 30*24*time.Hour),
+			SweepEvery:     getenvDuration("MEDIA_SWEEP_EVERY", time.Hour),
 		},
 		Push: PushConfig{
 			WebhookURL:         os.Getenv("PUSH_WEBHOOK_URL"),

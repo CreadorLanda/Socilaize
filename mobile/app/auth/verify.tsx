@@ -1,8 +1,6 @@
-import { Platform as RNPlatform } from 'react-native';
 import { router } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
 import {
+  Platform as RNPlatform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +8,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect, useRef, useState } from 'react';
 import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -20,6 +20,7 @@ import { authStart, authVerify, type Platform } from '@/data/api/auth';
 import { ApiError } from '@/data/api/client';
 import { setSession } from '@/data/auth-store';
 import { useTheme } from '@/hooks/use-theme';
+import { getInstallId } from '@/data/install-id';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
 
@@ -83,9 +84,12 @@ export default function VerifyScreen() {
         phone: e164,
         code,
         device: 'mobile',
+        // Without this the server cannot tell this phone from a new one and
+        // registers another device row on every sign-in.
+        device_key: await getInstallId(),
         platform: devicePlatform(),
       });
-      await setSession(res.user, res.tokens);
+      await setSession(res.user, res.tokens, e164);
       // Returning users land straight in the app. The backend marks a fresh
       // account with an empty display_name + a `u<hash>` placeholder username
       // — so a non-empty display_name is a reliable "already onboarded" flag.

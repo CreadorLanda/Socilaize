@@ -187,21 +187,7 @@ CREATE TABLE user_badges (
 );
 ```
 
-### Pontes
 
-```sql
-CREATE TABLE bridge_links (
-  id              UUID PRIMARY KEY,
-  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider        TEXT NOT NULL,                 -- whatsapp
-  external_id     TEXT NOT NULL,                 -- JID WhatsApp
-  session_blob_enc BYTEA NOT NULL,               -- sessão whatsmeow, cifrada em repouso
-  linked_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_synced_at  TIMESTAMPTZ
-);
-```
-
-Modelo completo da ponte em [whatsapp-bridge.md](./whatsapp-bridge.md).
 
 ---
 
@@ -242,13 +228,11 @@ Tabelas (resumido):
 ```sql
 chats (
   id TEXT PRIMARY KEY,
-  source TEXT NOT NULL,           -- native | whatsapp
   name TEXT NOT NULL,
   avatar_uri TEXT,
   last_message_at INTEGER,
   unread_count INTEGER NOT NULL DEFAULT 0,
   pinned INTEGER NOT NULL DEFAULT 0,
-  bridge_jid TEXT                 -- só para source = whatsapp
 );
 
 messages (

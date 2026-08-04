@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -159,5 +160,612 @@ func TestNonParticipantCannotAccessChat(t *testing.T) {
 	}
 	if _, err := svc.ListMessages(ctx, chat.ID, eve, 10, 0); !errors.Is(err, ErrNotParticipant) {
 		t.Fatalf("ListMessages by non-participant: got %v", err)
+	}
+}
+
+// TestListMessagesCarriesReceiptCounts locks in the tick state the sender
+// sees after reopening a chat.
+//
+// The Message struct always had DeliveredTo/ReadBy fields, but no query ever
+// populated them: they were serialized as zero on every history load, so a
+// reloaded thread showed a single tick even for messages the peer had read.
+// Only the live WebSocket receipt event moved the ticks, and that is gone the
+// moment the screen unmounts.
+func TestListMessagesCarriesReceiptCounts(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "read this"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	untouched, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "ignore this"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	find := func(msgs []Message, id int64) Message {
+		t.Helper()
+		for _, m := range msgs {
+			if m.ID == id {
+				return m
+			}
+		}
+		t.Fatalf("message %d missing from history", id)
+		return Message{}
+	}
+
+	// Nothing acknowledged yet: both must read as merely sent.
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if m := find(msgs, sent.ID); m.DeliveredTo != 0 || m.ReadBy != 0 {
+		t.Fatalf("before any receipt: delivered=%d read=%d, want 0/0", m.DeliveredTo, m.ReadBy)
+	}
+
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptDelivered,
+	}); err != nil {
+		t.Fatalf("SetReceipts delivered: %v", err)
+	}
+
+	msgs, err = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages after delivered: %v", err)
+	}
+	if m := find(msgs, sent.ID); m.DeliveredTo != 1 || m.ReadBy != 0 {
+		t.Fatalf("after delivered: delivered=%d read=%d, want 1/0", m.DeliveredTo, m.ReadBy)
+	}
+
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts read: %v", err)
+	}
+
+	msgs, err = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages after read: %v", err)
+	}
+	// DeliveredTo must still count the row now that it says 'read'. The
+	// receipt is upserted in place, so a query that only matched the literal
+	// 'delivered' status would drop this back to zero and flicker the ticks.
+	if m := find(msgs, sent.ID); m.DeliveredTo != 1 || m.ReadBy != 1 {
+		t.Fatalf("after read: delivered=%d read=%d, want 1/1", m.DeliveredTo, m.ReadBy)
+	}
+	// The untouched message must not inherit its neighbour's receipts.
+	if m := find(msgs, untouched.ID); m.DeliveredTo != 0 || m.ReadBy != 0 {
+		t.Fatalf("untouched message: delivered=%d read=%d, want 0/0", m.DeliveredTo, m.ReadBy)
+	}
+}
+
+// TestVoteOnAnotherUsersPoll is the case that used to be impossible.
+//
+// Voting was implemented as an edit of the message carrying the poll, and
+// editing is restricted to its author — so every vote on someone else's poll
+// came back 403. Votes now live in their own table, which also keeps the
+// message body opaque to the server.
+func TestVoteOnAnotherUsersPoll(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	// Alice posts the poll; the body stays opaque to the server.
+	poll, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content:     `{"kind":"poll","question":"?","options":[{"id":"o0"},{"id":"o1"}]}`,
+		MessageType: MsgPoll,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(poll): %v", err)
+	}
+
+	// The regression: editing someone else's message must still be refused.
+	if _, err := svc.EditMessage(ctx, chat.ID, bob, poll.ID, "hijacked"); err == nil {
+		t.Fatal("bob was allowed to edit alice's message — the old vote path")
+	}
+
+	// But voting must succeed.
+	tally, err := svc.VotePoll(ctx, chat.ID, bob, poll.ID, []string{"o1"})
+	if err != nil {
+		t.Fatalf("bob voting on alice's poll: %v", err)
+	}
+	if tally.Counts["o1"] != 1 || len(tally.Mine) != 1 || tally.Mine[0] != "o1" {
+		t.Fatalf("after bob votes: counts=%v mine=%v", tally.Counts, tally.Mine)
+	}
+
+	// Alice votes for the same option; the tally is shared, hers is separate.
+	tally, err = svc.VotePoll(ctx, chat.ID, alice, poll.ID, []string{"o1"})
+	if err != nil {
+		t.Fatalf("alice voting: %v", err)
+	}
+	if tally.Counts["o1"] != 2 {
+		t.Fatalf("both voted o1: counts=%v, want 2", tally.Counts)
+	}
+
+	// Changing a single-choice vote must replace, not accumulate.
+	tally, err = svc.VotePoll(ctx, chat.ID, bob, poll.ID, []string{"o0"})
+	if err != nil {
+		t.Fatalf("bob changing vote: %v", err)
+	}
+	if tally.Counts["o0"] != 1 || tally.Counts["o1"] != 1 {
+		t.Fatalf("after bob switches: counts=%v, want o0=1 o1=1", tally.Counts)
+	}
+
+	// Withdrawing leaves nothing behind.
+	if _, err := svc.VotePoll(ctx, chat.ID, bob, poll.ID, nil); err != nil {
+		t.Fatalf("bob withdrawing: %v", err)
+	}
+
+	// A history load must carry the tally: nothing in the body holds it.
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	var seen *Message
+	for i := range msgs {
+		if msgs[i].ID == poll.ID {
+			seen = &msgs[i]
+		}
+	}
+	if seen == nil {
+		t.Fatal("poll missing from history")
+	}
+	if seen.PollVotes == nil {
+		t.Fatal("poll came back with no tally — a reload would show zero votes")
+	}
+	if seen.PollVotes.Counts["o1"] != 1 || seen.PollVotes.Counts["o0"] != 0 {
+		t.Fatalf("tally on reload: %v, want o1=1 and no o0", seen.PollVotes.Counts)
+	}
+	if len(seen.PollVotes.Mine) != 1 || seen.PollVotes.Mine[0] != "o1" {
+		t.Fatalf("alice's own selection on reload: %v", seen.PollVotes.Mine)
+	}
+
+	// Non-participants cannot vote.
+	eve := createTestUser(t, pool, "eve_"+uuid.NewString()[:8])
+	if _, err := svc.VotePoll(ctx, chat.ID, eve, poll.ID, []string{"o0"}); !errors.Is(err, ErrNotParticipant) {
+		t.Fatalf("outsider voting: got %v, want ErrNotParticipant", err)
+	}
+}
+
+// TestForwardCountCannotBeLaundered is the rule that makes the label mean
+// something.
+//
+// "Forwarded many times" is a warning, and a warning a sender can switch off
+// by claiming a lower number is not a warning. The server always stores one
+// more than the count it was handed.
+func TestForwardCountCannotBeLaundered(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	count := func(id int64) int {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for _, m := range msgs {
+			if m.ID == id {
+				return m.ForwardCount
+			}
+		}
+		t.Fatalf("message %d not found", id)
+		return -1
+	}
+
+	// Written here, not forwarded.
+	fresh, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "original"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if got := count(fresh.ID); got != 0 {
+		t.Fatalf("a new message reported %d hops, want 0", got)
+	}
+
+	// Forwarding something that had already made one hop makes two.
+	one := 1
+	fwd, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "passed along", ForwardCount: &one,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(forward): %v", err)
+	}
+	if got := count(fwd.ID); got != 2 {
+		t.Fatalf("forwarding a 1-hop message gave %d, want 2", got)
+	}
+
+	// Zero means "the thing I am forwarding had made no hops" — a channel
+	// post, say — so the result is one, not zero. Omitting the field is how
+	// a message says it was written here.
+	zero := 0
+	firstHop, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "from a channel", ForwardCount: &zero,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(zero): %v", err)
+	}
+	if got := count(firstHop.ID); got != 1 {
+		t.Fatalf("forwarding a 0-hop source gave %d, want 1", got)
+	}
+
+	// A high count survives and keeps climbing — this is what drives the
+	// "forwarded many times" label.
+	many := 6
+	heavy, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content: "chain letter", ForwardCount: &many,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage(many): %v", err)
+	}
+	if got := count(heavy.ID); got != 7 {
+		t.Fatalf("forwarding a 6-hop message gave %d, want 7", got)
+	}
+}
+
+// TestReadReceiptsAreReciprocal is the rule that makes the setting honest:
+// turning yours off also stops you seeing anyone else's.
+//
+// A switch that only hides your own is a way to take without giving, and
+// people would rightly stop trusting the tick.
+func TestReadReceiptsAreReciprocal(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+	usersRepo := users.NewRepository(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "olá"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	readBy := func(viewer uuid.UUID) int {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, viewer, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for _, m := range msgs {
+			if m.ID == sent.ID {
+				return m.ReadBy
+			}
+		}
+		t.Fatal("message missing")
+		return -1
+	}
+
+	// With receipts on, a read is recorded and Alice sees it.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts: %v", err)
+	}
+	if got := readBy(alice); got != 1 {
+		t.Fatalf("read not recorded: %d", got)
+	}
+
+	// Alice turns hers off. She stops seeing Bob's.
+	off := false
+	if _, err := usersRepo.Patch(ctx, alice, users.PatchRequest{ReadReceipts: &off}); err != nil {
+		t.Fatalf("patch alice: %v", err)
+	}
+	if got := readBy(alice); got != 0 {
+		t.Fatalf("alice still sees read receipts with hers off: %d", got)
+	}
+	// Bob, who kept his on, is unaffected.
+	if got := readBy(bob); got != 1 {
+		t.Fatalf("bob lost sight of a receipt he did not opt out of: %d", got)
+	}
+
+	// And Alice's own reads stop being recorded as reads.
+	fromBob, err := svc.SendMessage(ctx, chat.ID, bob, SendMessageRequest{Content: "e tu"})
+	if err != nil {
+		t.Fatalf("SendMessage(bob): %v", err)
+	}
+	if err := svc.SetReceipts(ctx, chat.ID, alice, ReceiptRequest{
+		MessageIDs: []int64{fromBob.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts(alice): %v", err)
+	}
+	msgs, _ := svc.ListMessages(ctx, chat.ID, bob, 50, 0)
+	for _, m := range msgs {
+		if m.ID == fromBob.ID {
+			if m.ReadBy != 0 {
+				t.Fatalf("alice sent a read receipt with hers off: %d", m.ReadBy)
+			}
+			// Delivered still counts — knowing it arrived is not the same
+			// as knowing it was read, and only the second is opted out of.
+			if m.DeliveredTo != 1 {
+				t.Fatalf("delivery was suppressed too: %d", m.DeliveredTo)
+			}
+		}
+	}
+}
+
+// TestDisappearingStartsOnRead is the decision this feature turns on.
+//
+// A timer that starts at send can expire a message before it was ever seen,
+// which is not privacy — it is loss. Starting at read makes the window mean
+// the same thing for both people.
+func TestDisappearingStartsOnRead(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	// Only the offered durations are accepted — a wrong value here destroys
+	// messages sooner than agreed, so it is refused rather than clamped.
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 12345); !errors.Is(err, ErrInvalidTTL) {
+		t.Fatalf("odd duration: got %v, want ErrInvalidTTL", err)
+	}
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 3600); err != nil {
+		t.Fatalf("SetDisappearing: %v", err)
+	}
+
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "efémera"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	expiry := func() *time.Time {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for _, m := range msgs {
+			if m.ID == sent.ID {
+				return m.ExpiresAt
+			}
+		}
+		t.Fatal("message missing")
+		return nil
+	}
+
+	// Sending does not start the clock.
+	if got := expiry(); got != nil {
+		t.Fatalf("clock started at send: %v", got)
+	}
+
+	// Delivered is not read, and does not start it either.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptDelivered,
+	}); err != nil {
+		t.Fatalf("SetReceipts(delivered): %v", err)
+	}
+	if got := expiry(); got != nil {
+		t.Fatalf("delivery started the clock: %v", got)
+	}
+
+	// Reading does.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("SetReceipts(read): %v", err)
+	}
+	first := expiry()
+	if first == nil {
+		t.Fatal("reading did not start the clock")
+	}
+	if d := time.Until(*first); d < 55*time.Minute || d > 61*time.Minute {
+		t.Fatalf("deadline is %v away, want about an hour", d)
+	}
+
+	// A second read must not push the deadline out — otherwise the last
+	// person to open a group chat decides how long everyone keeps it.
+	if err := svc.SetReceipts(ctx, chat.ID, bob, ReceiptRequest{
+		MessageIDs: []int64{sent.ID}, Status: ReceiptRead,
+	}); err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if second := expiry(); second == nil || !second.Equal(*first) {
+		t.Fatalf("deadline moved: %v then %v", first, second)
+	}
+}
+
+// TestExpiredMessagesAreHiddenThenSwept: a past deadline stops being served
+// immediately, and the row goes on the next sweep.
+func TestExpiredMessagesAreHiddenThenSwept(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, _ := svc.CreateDirectChat(ctx, alice, bob)
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "ida"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	keep, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "fica"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	// Backdate one deadline rather than wait an hour.
+	if _, err := pool.Exec(ctx,
+		`UPDATE messages SET expires_at = NOW() - interval '1 minute' WHERE id = $1`,
+		sent.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	for _, m := range msgs {
+		if m.ID == sent.ID {
+			t.Fatal("an expired message was served before the sweep ran")
+		}
+	}
+
+	n, err := svc.SweepExpired(ctx)
+	if err != nil {
+		t.Fatalf("SweepExpired: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("sweep removed %d rows", n)
+	}
+
+	// The message without a deadline is untouched.
+	msgs, _ = svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	var found bool
+	for _, m := range msgs {
+		if m.ID == keep.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the sweep took a message that had no deadline")
+	}
+}
+
+// TestDisappearingAnnouncesItself: changing the timer writes a notice into
+// the conversation.
+//
+// The other person did not ask for the change and it governs everything they
+// write afterwards — they find out in the thread or they do not find out.
+func TestDisappearingAnnouncesItself(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, _ := svc.CreateDirectChat(ctx, alice, bob)
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+
+	notices := func() []Message {
+		t.Helper()
+		msgs, err := svc.ListMessages(ctx, chat.ID, bob, 50, 0)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		var out []Message
+		for _, m := range msgs {
+			if m.MessageType == MsgSystem {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 3600); err != nil {
+		t.Fatalf("SetDisappearing: %v", err)
+	}
+	got := notices()
+	if len(got) != 1 {
+		t.Fatalf("expected one notice, got %d", len(got))
+	}
+	// Machine-readable, so the client renders it in the reader's language
+	// and names the actor from their own contacts.
+	want := "disappearing:3600:" + alice.String()
+	if got[0].Content != want {
+		t.Fatalf("notice body = %q, want %q", got[0].Content, want)
+	}
+	if got[0].SenderID != alice {
+		t.Fatalf("notice attributed to %s, want %s", got[0].SenderID, alice)
+	}
+
+	// Setting the same value again is not an event, and must not fill the
+	// thread with announcements of nothing happening.
+	if err := svc.SetDisappearing(ctx, chat.ID, alice, 3600); err != nil {
+		t.Fatalf("re-set: %v", err)
+	}
+	if n := len(notices()); n != 1 {
+		t.Fatalf("a no-op change was announced: %d notices", n)
+	}
+
+	// The other side may turn off what the first turned on, and that is
+	// announced too.
+	if err := svc.SetDisappearing(ctx, chat.ID, bob, 0); err != nil {
+		t.Fatalf("bob turning it off: %v", err)
+	}
+	got = notices()
+	if len(got) != 2 {
+		t.Fatalf("expected two notices, got %d", len(got))
+	}
+	// Checked by content rather than position: the list is newest-first, and
+	// an index assumption here would only be testing the ordering.
+	var foundOff bool
+	for _, m := range got {
+		if m.Content == "disappearing:0:"+bob.String() {
+			foundOff = true
+		}
+	}
+	if !foundOff {
+		t.Fatalf("no notice for turning it off: %+v", got)
+	}
+
+	// And it only governs this conversation.
+	other, _ := svc.CreateDirectChat(ctx, alice, createTestUser(t, pool, "carol_"+uuid.NewString()[:8]))
+	sec, err := svc.repo.DisappearSeconds(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("DisappearSeconds: %v", err)
+	}
+	if sec != 0 {
+		t.Fatalf("another chat inherited the timer: %d", sec)
 	}
 }

@@ -1,14 +1,13 @@
 # Socialize — Server
 
-> Go API. One binary, MVC modules, Postgres + Redis. WhatsApp bridge over mautrix.
+> Go API. One binary, MVC modules, Postgres + Redis.
 
-This is the **basic scaffold** on the `backend/dev` integration branch — enough to compile, boot, talk to Postgres + Redis, and answer `GET /api/healthz`. The auth module wires the canonical happy-path; the WhatsApp bridge handlers return `501 Not Implemented` until the per-feature branches land.
+This is the **basic scaffold** on the `backend/dev` integration branch — enough to compile, boot, talk to Postgres + Redis, and answer `GET /api/healthz`. The auth module wires the canonical happy-path.
 
 Full design notes:
 - [docs/tech/architecture.md](../docs/tech/architecture.md)
 - [docs/tech/backend-go.md](../docs/tech/backend-go.md)
 - [docs/tech/database.md](../docs/tech/database.md)
-- [docs/tech/whatsapp-bridge.md](../docs/tech/whatsapp-bridge.md)
 - [docs/security/encryption.md](../docs/security/encryption.md)
 - [docs/tech/services-and-branches.md](../docs/tech/services-and-branches.md)
 
@@ -27,7 +26,6 @@ server/
 │   └── modules/                   # MVC, one folder per feature
 │       ├── health/
 │       ├── auth/                  # phone OTP + JWT skeleton
-│       └── bridges/whatsapp/      # mautrix façade (skeleton)
 ├── migrations/                    # *.sql, golang-migrate
 ├── deploy/docker/                 # docker-compose + Dockerfile
 ├── .env.example
@@ -92,13 +90,6 @@ curl -s -X POST localhost:8080/api/auth/verify \
 | `PUT  /api/users/me/keys`                | required | ✅ identity + signed + OTK upload   |
 | `GET  /api/users/me/keys/count`          | required | ✅ OTK reservoir gauge              |
 | `GET  /api/users/by-username/:username/keys` | required | ✅ X3DH bundle, consumes one OTK |
-| `POST   /api/bridges/whatsapp/link`      | required | ✅ phone-pairing via Baileys        |
-| `GET    /api/bridges/whatsapp/status`    | required | ✅ polled view + pairing code TTL   |
-| `DELETE /api/bridges/whatsapp/link`      | required | ✅ remote logout + drop session     |
-| `GET    /api/bridges/whatsapp/chats`     | required | ✅ WA inbox from stored messages    |
-| `GET    /api/bridges/whatsapp/messages`  | required | ✅ list by jid query                |
-| `POST   /api/bridges/whatsapp/messages`  | required | ✅ send text/media via Baileys      |
-| `POST   /api/internal/wa/media`          | internal | ✅ bridge media re-upload           |
 | `POST   /api/chats`                      | required | ✅ create direct (pending) chat     |
 | `GET    /api/chats`                      | required | ✅ list chats + unread              |
 | `POST   /api/chats/:id/messages`         | required | ✅ send (+ WS `message.new`)        |
@@ -148,20 +139,6 @@ Token shape: HS256 JWT with `sub` (user id), `dev` (device id), `typ`
 (`access` or `refresh`), `iat`, `exp`. Verify with `cfg.JWT.Secret`.
 
 The skeletons exist so the route surface is real and the mobile client can be wired against them while the implementations are written on their dedicated branches.
-
----
-
-## WhatsApp bridge
-
-The bridge is a **separate process** (mautrix-whatsapp) — *not* part of this binary. The API only owns the façade endpoints and Redis queues that connect to the sidecar.
-
-Start it locally when you're ready to dogfood:
-
-```bash
-make docker-bridge
-```
-
-Then iterate on `backend/bridge-whatsapp`. The link/unlink flow, identification rules and threat model are spelled out in [docs/tech/whatsapp-bridge.md](../docs/tech/whatsapp-bridge.md).
 
 ---
 

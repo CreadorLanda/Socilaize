@@ -22,10 +22,13 @@ type Props = {
   emojis?: readonly string[];
   onSelect: (emoji: string) => void;
   onComment?: () => void;
+  /** Absent when the item cannot be forwarded. */
+  onForward?: () => void;
   onClose: () => void;
   /** Absolute position (optional). When omitted, centers on screen. */
   anchor?: { left: number; top: number; width: number } | null;
   commentLabel?: string;
+  forwardLabel?: string;
 };
 
 /**
@@ -37,9 +40,11 @@ export function ReactionTray({
   emojis = DEFAULT_EMOJIS,
   onSelect,
   onComment,
+  onForward,
   onClose,
   anchor,
   commentLabel = 'Comment',
+  forwardLabel = 'Forward',
 }: Props) {
   const { colors, isDark } = useTheme();
 
@@ -103,6 +108,27 @@ export function ReactionTray({
                 <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
               </Pressable>
             </>
+          ) : null}
+
+          {/* Forward sits beside comment rather than in a second menu: a
+              long press is already the "do something with this" gesture, and
+              splitting its results across two layers means learning both. */}
+          {onForward ? (
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                onForward();
+              }}
+              style={({ pressed }) => [
+                styles.commentBtn,
+                { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+                pressed && { opacity: 0.8 },
+              ]}
+            >
+              <Ionicons name="arrow-redo" size={16} color={colors.primary} />
+              <Text style={[styles.commentText, { color: colors.text }]}>{forwardLabel}</Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
+            </Pressable>
           ) : null}
         </Animated.View>
       </View>

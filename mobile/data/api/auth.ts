@@ -16,6 +16,10 @@ export type ApiUser = {
   avatar_uri?: string;
   username_public: boolean;
   created_at: string;
+  /** Privacy. Served on /users/me. */
+  last_seen_visibility?: 'everyone' | 'contacts' | 'nobody';
+  photo_visibility?: 'everyone' | 'contacts' | 'nobody';
+  read_receipts?: boolean;
 };
 
 export type StartResponse = {
@@ -36,6 +40,8 @@ export const authVerify = (input: {
   phone: string;
   code: string;
   device: string;
+  /** Stable per-installation id, so the server reuses this device's row. */
+  device_key?: string;
   platform: Platform;
 }) => api.post<VerifyResponse>('/api/auth/verify', input, { auth: false });
 

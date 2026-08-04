@@ -94,11 +94,24 @@ func writeErr(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrUsernameInvalid):
+	case errors.Is(err, ErrUsernameInvalid), errors.Is(err, ErrInvalidVisibility):
 		ctx.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrUsernameTaken):
 		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	default:
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 	}
+}
+
+// DeleteMe erases the caller's account.
+//
+// No confirmation token: the client already asks, twice, and a server-side
+// challenge here would only move the decision somewhere the user cannot see
+// it. What the server owes is that the deletion is real.
+func (c *Controller) DeleteMe(ctx *gin.Context) {
+	if err := c.svc.Delete(ctx.Request.Context(), middleware.UserIDFrom(ctx)); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
 }

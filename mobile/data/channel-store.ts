@@ -18,7 +18,6 @@ import {
   type ChannelDTO,
 } from '@/data/api/channels';
 import {
-  CHANNELS as SEED_CHANNELS,
   type Channel,
   type ChannelCategory,
   type ChannelComment,
@@ -81,6 +80,9 @@ export type CreateChannelInput = {
   allowAnonymousComments: boolean;
   reactionsEnabled: boolean;
   joinMode: JoinMode;
+  /** Uploaded media paths. Empty means "use the generated art". */
+  avatarUri?: string;
+  coverUri?: string;
 };
 
 const DEFAULT_SETTINGS: ChannelSettings = {
@@ -96,23 +98,14 @@ const DEFAULT_SETTINGS: ChannelSettings = {
   showHistoryToNew: true,
 };
 
-function seedManaged(): ManagedChannel[] {
-  return SEED_CHANNELS.map((c) => ({
-    ...c,
-    isOwned: false,
-    role: 'none' as ChannelRole,
-    settings: {
-      ...DEFAULT_SETTINGS,
-      // Official-ish channels: admins only
-      whoCanPost: 'admins',
-      visibility: 'public',
-      joinMode: 'open',
-    },
-  }));
-}
-
-let channels: ManagedChannel[] = seedManaged();
-let followed = new Set<string>(['ch1']);
+// Empty until the API answers.
+//
+// This used to start from the bundled CHANNELS fixture with 'ch1' already
+// followed, so a brand-new account opened Discover to a handful of channels
+// that do not exist and one it had never joined. Following one of them wrote
+// to an id the server has never heard of.
+let channels: ManagedChannel[] = [];
+let followed = new Set<string>();
 let apiBooted = false;
 const listeners = new Set<() => void>();
 
@@ -253,14 +246,17 @@ export function getChannel(id: string): ManagedChannel | undefined {
 export function createChannel(input: CreateChannelInput): ManagedChannel {
   const handle = normalizeHandle(input.handle || input.name);
   const id = `ch_${Date.now().toString(36)}`;
-  const seed = encodeURIComponent(input.name || id);
 
   const channel: ManagedChannel = {
     id,
     name: input.name.trim().slice(0, 60) || 'New channel',
     handle: handle || `@channel_${id.slice(-4)}`,
-    avatarUri: `https://api.dicebear.com/9.x/shapes/png?seed=${seed}&backgroundColor=2D5BFF&size=200`,
-    coverUri: `https://picsum.photos/seed/${seed}-cover/1200/800`,
+    // Empty rather than invented. These used to be a dicebear avatar and a
+    // random picsum photograph, so every new channel arrived wearing a stock
+    // picture of a landscape it had nothing to do with — and both depended
+    // on third-party services staying up to render at all.
+    avatarUri: input.avatarUri ?? '',
+    coverUri: input.coverUri ?? '',
     description: input.description.trim().slice(0, 500),
     category: input.category,
     members: 1,
@@ -297,6 +293,8 @@ export function createChannel(input: CreateChannelInput): ManagedChannel {
     allow_anon_comments: input.allowAnonymousComments,
     reactions_enabled: input.reactionsEnabled,
     join_mode: input.joinMode,
+    avatar_url: input.avatarUri,
+    cover_url: input.coverUri,
   })
     .then((dto) => {
       const mapped = mapChannelDTO(dto);

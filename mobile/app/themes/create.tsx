@@ -6,7 +6,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { appAlert } from '@/data/dialog-store';
 import {
   BUBBLE_SHAPES,
   COMPOSER_STYLES,
@@ -48,7 +48,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
 const PRESET_PRIMARIES = [
-  '#2D5BFF', '#EF4444', '#F59E0B', '#10B981', '#06B6D4', '#8B5CF6',
+  '#4F46E5', '#EF4444', '#F59E0B', '#10B981', '#06B6D4', '#2D5BFF',
   '#EC4899', '#A3E635', '#F97316', '#171717', '#E879F9', '#FB8A7E',
 ];
 const PRESET_BACKGROUNDS_LIGHT = ['#F7F9FC', '#FFF8F5', '#F0FDFA', '#FDF4FF', '#FAFAFA', '#F7F6F1', '#EEF1F6'];
@@ -75,7 +75,7 @@ export default function ThemeCreatorScreen() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [designMode, setDesignMode] = useState<DesignMode>('both');
-  const [primary, setPrimary] = useState('#2D5BFF');
+  const [primary, setPrimary] = useState('#4F46E5');
   const [background, setBackground] = useState(isDark ? '#0E0F13' : '#F7F9FC');
   const [surface, setSurface] = useState(isDark ? '#191A21' : '#FFFFFF');
   const [text, setText] = useState(isDark ? '#ECEDF2' : '#111827');
@@ -144,7 +144,7 @@ export default function ThemeCreatorScreen() {
 
   const runAi = () => {
     if (aiPrompt.trim().length < 3) {
-      Alert.alert(t('themes.ai_title'), t('themes.ai_need_prompt'));
+      appAlert(t('themes.ai_title'), t('themes.ai_need_prompt'));
       return;
     }
     setAiBusy(true);
@@ -170,7 +170,7 @@ export default function ThemeCreatorScreen() {
 
   const save = () => {
     if (!canSave) {
-      Alert.alert(t('themes.creator_title'), t('themes.creator_need_name'));
+      appAlert(t('themes.creator_title'), t('themes.creator_need_name'));
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -897,7 +897,7 @@ function ColorRow({
               styles.colorDot,
               {
                 backgroundColor: c,
-                borderColor: active ? '#2D5BFF' : ring,
+                borderColor: active ? '#4F46E5' : ring,
                 borderWidth: active ? 3 : 1,
                 transform: [{ scale: active ? 1.08 : 1 }],
               },

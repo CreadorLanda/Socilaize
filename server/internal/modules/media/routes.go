@@ -7,12 +7,14 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 	g := rg.Group("/media")
 	g.POST("/upload", c.PostUpload)
 	g.GET("/:id", c.GetMeta)
+	g.GET("/:id/file", c.GetFile)
 	g.DELETE("/:id", c.Delete)
 }
 
-// RegisterPublic mounts byte streaming. IDs are UUIDs (unguessable); the
-// client <Image> component cannot attach Authorization headers, so files
-// are reachable by id alone. Tighten with signed URLs later if needed.
-func RegisterPublic(rg *gin.RouterGroup, c *Controller) {
-	rg.GET("/media/:id/file", c.GetFile)
-}
+// RegisterPublic is gone on purpose.
+//
+// Byte streaming used to be unauthenticated because <Image> cannot attach
+// an Authorization header — which meant anyone holding a media UUID could
+// read the file. The client now fetches through its own cache layer with
+// fetch(), so the endpoint is authenticated like everything else, and the
+// bytes are encrypted end-to-end on top of that.

@@ -3,13 +3,53 @@ import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ListPicker } from '@/components/chat/list-picker';
+import { PeoplePicker } from '@/components/ui/people-picker';
+import { NoteEditor } from '@/components/chat/note-editor';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { listChats, type ChatDTO } from '@/data/api/messages';
+import {
+  blockChat,
+  DISAPPEAR_OPTIONS,
+  setDisappearing,
+  listMessages,
+  reportChat,
+  type ChatDTO,
+  type ReportReason,
+} from '@/data/api/messages';
+import { appAlert, appPrompt } from '@/data/dialog-store';
+import { invalidateGroupEpoch } from '@/data/crypto';
+import {
+  addGroupMembers,
+  leaveGroup,
+  removeGroupMember,
+  setGroupMemberRole,
+} from '@/data/api/groups';
+import { getCurrentUser } from '@/data/auth-store';
+import {
+  hasLockCode,
+  isValidCode,
+  LOCK_CODE_MIN_LENGTH,
+  setLockCode,
+  relockAll,
+  verifyLockCode,
+} from '@/data/chat-lock';
+import { forgetChatPrefs, setChatPref, useChatPrefs } from '@/data/chat-prefs';
+import { clearChat, refreshChats, removeChat, setChatSettings, useChats } from '@/data/chat-store';
+import {
+  ensureKeysPublished,
+  getIdentityPublic,
+  loadSession,
+  safetyNumber,
+} from '@/data/crypto';
+import { getNote } from '@/data/db/notes';
+import { useCustomFilters } from '@/data/filter-store';
 import { refreshGroup, useGroup } from '@/data/group-store';
-import { CHATS, MESSAGES, type ChatPreview, type Message } from '@/data/mock';
+import { clearMediaCache, formatBytes, mediaCacheSize } from '@/data/media-cache';
+import { mapApiMessage } from '@/data/message-map';
+import { type ChatPreview, type Message } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -17,34 +57,32 @@ const MAX_MEDIA_PREVIEW = 6;
 
 export default function ChatInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const mockChat = useMemo(() => CHATS.find((c) => c.id === id), [id]);
-  const [apiChat, setApiChat] = useState<ChatDTO | null>(null);
   const { colors, isDark } = useTheme();
 
-  useEffect(() => {
-    if (!id) return;
-    listChats()
-      .then((list) => {
-        const found = list.find((c) => c.id === id);
-        if (found) setApiChat(found);
-      })
-      .catch(() => {});
-  }, [id]);
+  // Single source of truth: the same store the list renders from, so a
+  // toggle here is reflected there without either screen refetching.
+  const { chats } = useChats();
+  const apiChat: ChatDTO | null = useMemo(
+    () => chats.find((c) => c.id === id) ?? null,
+    [chats, id],
+  );
 
-  const isGroup = !!mockChat?.isGroup || apiChat?.type === 'group';
+  useEffect(() => {
+    if (!chats.length) void refreshChats();
+  }, [chats.length]);
+
+  const isGroup = apiChat?.type === 'group';
   const group = useGroup(isGroup ? id : undefined);
 
   useEffect(() => {
     if (isGroup && id) refreshGroup(id).catch(() => {});
   }, [isGroup, id]);
 
-  const chat: ChatPreview | undefined = mockChat
-    ? mockChat
-    : apiChat
-      ? {
+  const chat: ChatPreview | undefined = apiChat
+    ? {
           id: apiChat.id,
           name: apiChat.title ?? group?.name ?? 'Chat',
-          username: '',
+          username: apiChat.peer_username ? `@${apiChat.peer_username.replace(/^@/, '')}` : '',
           avatarUri: apiChat.avatar_url ?? group?.avatarUri ?? '',
           lastMessage: '',
           timestamp: '',
@@ -52,29 +90,342 @@ export default function ChatInfoScreen() {
           online: false,
           isGroup: apiChat.type === 'group',
           memberCount: group?.members.length,
-          source: 'native',
         }
-      : group
-        ? {
-            id: group.id,
-            name: group.name,
-            username: '',
-            avatarUri: group.avatarUri,
-            lastMessage: '',
-            timestamp: '',
-            unreadCount: 0,
-            online: false,
-            isGroup: true,
-            memberCount: group.members.length,
-            source: 'native',
-          }
-        : undefined;
+    : group
+      ? {
+          id: group.id,
+          name: group.name,
+          username: '',
+          avatarUri: group.avatarUri,
+          lastMessage: '',
+          timestamp: '',
+          unreadCount: 0,
+          online: false,
+          isGroup: true,
+          memberCount: group.members.length,
+        }
+      : undefined;
 
-  // Local-only toggles. Real wiring lives on the server side.
-  const [muted, setMuted] = useState(false);
-  const [locked, setLocked] = useState(false);
-  const [favorite, setFavorite] = useState(false);
-  const [fileVisible, setFileVisible] = useState(true);
+  // Mute and favourite are server-backed per-participant settings; they
+  // read straight off the chat so they survive leaving the screen.
+  const muted = !!apiChat?.muted_until;
+  const favorite = !!apiChat?.pinned_at;
+
+  const applySetting = async (settings: Parameters<typeof setChatSettings>[1]) => {
+    if (!id) return;
+    try {
+      await setChatSettings(id, settings);
+    } catch {
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
+  };
+
+  // Device-local prefs: they describe this phone, not the account, so they
+  // live in SecureStore instead of syncing to the server.
+  const { locked, filesVisible: fileVisible } = useChatPrefs(id);
+
+  // Real messages for the media strip and the storage estimate. These used
+  // to read the mock MESSAGES fixture, so a real chat showed someone else's
+  // media — or nothing at all.
+  const [messages, setMessages] = useState<Message[]>([]);
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const me = getCurrentUser()?.id;
+    listMessages(id, 50)
+      .then((list) => {
+        if (cancelled || !list) return;
+        setMessages([...list].reverse().map((m) => mapApiMessage(m, me)));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  const [safetyDigits, setSafetyDigits] = useState<string | null>(null);
+  useEffect(() => {
+    if (!apiChat?.peer_user_id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await ensureKeysPublished();
+        const local = await getIdentityPublic();
+        if (!local || cancelled) return;
+        const session = await loadSession(apiChat.peer_user_id!);
+        const digits = safetyNumber(local, session?.peerIdentityPublic);
+        if (!cancelled) setSafetyDigits(digits);
+      } catch {
+        /* keys not ready */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiChat?.peer_user_id]);
+
+  // Measured from disk rather than guessed from the message count, which
+  // bore no relation to what media was actually cached.
+  const [cacheBytes, setCacheBytes] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    mediaCacheSize().then((n) => {
+      if (!cancelled) setCacheBytes(n);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const confirmClearCache = () =>
+    appAlert(t('chat_info.manage_storage'), t('chat_info.clear_cache_confirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('chat_info.clear_cache'),
+        style: 'destructive',
+        onPress: () => {
+          // Only the local copies. The originals stay on the server until
+          // its retention sweep collects them, so nothing is lost for good.
+          void clearMediaCache().then(() => setCacheBytes(0));
+        },
+      },
+    ]);
+
+  /**
+   * Locking requires a passcode; unlocking requires proving you know it.
+   *
+   * Both directions matter. Without the first, "locked" is decoration.
+   * Without the second, anyone holding the phone just turns the switch off.
+   */
+  const onToggleLock = (next: boolean) => {
+    if (!id) return;
+    void (async () => {
+      const configured = await hasLockCode();
+
+      if (!next) {
+        promptCode(t('chat_info.lock_enter_code'), async (code) => {
+          if (!(await verifyLockCode(code))) return false;
+          setChatPref(id, 'locked', false);
+          return true;
+        });
+        return;
+      }
+
+      // Locking hides the chat immediately, including from this screen.
+      //
+      // It used to stay revealed for the rest of the session so it would not
+      // vanish "from under" whoever just locked it. That was backwards: the
+      // one moment a person wants proof the lock works is the moment they
+      // turn it on, and a chat still sitting in the list reads as a lock
+      // that did nothing.
+      const lockAndLeave = () => {
+        setChatPref(id, 'locked', true);
+        relockAll();
+        router.replace('/(tabs)');
+      };
+
+      if (!configured) {
+        promptCode(t('chat_info.lock_set_code'), async (code) => {
+          if (!isValidCode(code)) return false;
+          await setLockCode(code);
+          lockAndLeave();
+          appAlert(t('chat_info.lock_set_title'), t('chat_info.lock_set_body'));
+          return true;
+        });
+        return;
+      }
+
+      promptCode(t('chat_info.lock_enter_code'), async (code) => {
+        if (!(await verifyLockCode(code))) return false;
+        lockAndLeave();
+        return true;
+      });
+    })();
+  };
+
+  /**
+   * Ask for the code, retrying on a wrong one.
+   *
+   * Alert.prompt is iOS-only, so this uses the in-app dialog — which also
+   * lets the field be a real secure entry rather than plain text.
+   */
+  const promptCode = (title: string, onSubmit: (code: string) => Promise<boolean>) =>
+    appPrompt(title, {
+      message: t('chat_info.lock_code_hint'),
+      placeholder: t('chat_info.lock_code_placeholder'),
+      secure: true,
+      keyboard: 'number-pad',
+      cancelLabel: t('common.cancel'),
+      submitLabel: t('common.confirm'),
+      // Returning false keeps the dialog open on a wrong code, so the
+      // person is not thrown back to the screen to start again.
+      onSubmit,
+    });
+
+  const [showLists, setShowLists] = useState(false);
+  const [showNote, setShowNote] = useState(false);
+  const allLists = useCustomFilters();
+  const memberOf = id ? allLists.filter((f) => f.chatIds.includes(id)) : [];
+
+  const [notePreview, setNotePreview] = useState('');
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    getNote(id)
+      .then((n) => {
+        if (!cancelled) setNotePreview(firstLine(n?.body ?? ''));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  /**
+   * Disappearing messages.
+   *
+   * Each message's clock starts when it is read, not when it is sent — a
+   * timer that runs while someone is asleep can destroy a message they never
+   * saw, which is loss rather than privacy. The picker says so, because
+   * "24 hours" alone does not tell you from when.
+   */
+  const [disappearSeconds, setDisappearSeconds] = useState(0);
+  useEffect(() => {
+    setDisappearSeconds(apiChat?.disappear_seconds ?? 0);
+  }, [apiChat?.disappear_seconds]);
+
+  const disappearLabel = (sec: number) =>
+    sec === 0 ? t('chat_info.off') : t(`chat_info.disappear_${sec}` as never);
+
+  const pickDisappearing = () => {
+    if (!id) return;
+    appAlert(
+      t('chat_info.disappearing'),
+      t('chat_info.disappearing_hint'),
+      DISAPPEAR_OPTIONS.map((sec) => ({
+        text: disappearLabel(sec) + (sec === disappearSeconds ? '  ✓' : ''),
+        onPress: () => {
+          const previous = disappearSeconds;
+          setDisappearSeconds(sec);
+          setDisappearing(id, sec).catch(() => {
+            setDisappearSeconds(previous);
+            failed();
+          });
+        },
+      })).concat([{ text: t('common.cancel'), onPress: () => {} }]),
+    );
+  };
+
+  /**
+   * Managing a group's people.
+   *
+   * addGroupMembers, removeGroupMember and setGroupMemberRole all existed in
+   * the API layer and none of them was ever called: a group could be created
+   * and then never changed.
+   */
+  const meId = getCurrentUser()?.id;
+  const isGroupAdmin =
+    isGroup && (group?.members ?? []).some((m) => m.id === meId && m.role === 'admin');
+  const [addingMembers, setAddingMembers] = useState(false);
+
+  const manageMember = (m: { id: string; name: string; role?: string }) => {
+    if (!id || !isGroupAdmin || m.id === meId) return;
+    const isAdmin = m.role === 'admin';
+    appAlert(m.name, t('chat_info.manage_member_hint'), [
+      {
+        text: isAdmin ? t('chat_info.demote_member') : t('chat_info.promote_member'),
+        onPress: () => {
+          setGroupMemberRole(id, m.id, isAdmin ? 'member' : 'admin')
+            .then(() => refreshGroup(id))
+            .catch(failed);
+        },
+      },
+      {
+        text: t('chat_info.remove_member'),
+        style: 'destructive',
+        onPress: () => {
+          removeGroupMember(id, m.id)
+            .then(() => {
+              // The server has rotated the key epoch. Forgetting the cached
+              // one is what makes the removal bite: keep using the old
+              // generation and the person just removed can still read every
+              // message sent after leaving.
+              invalidateGroupEpoch(id);
+              return refreshGroup(id);
+            })
+            .catch(failed);
+        },
+      },
+      { text: t('common.cancel'), style: 'cancel' },
+    ]);
+  };
+
+  const failed = () =>
+    appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+
+  const confirmBlock = () =>
+    appAlert(t('chat_info.block', { name: chat?.name ?? '' }), t('chat_info.block_confirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('chat_info.block_confirm_action'),
+        style: 'destructive',
+        onPress: () => {
+          if (!id) return;
+          blockChat(id)
+            .then(() => {
+              void refreshChats();
+              router.back();
+            })
+            .catch(failed);
+        },
+      },
+    ]);
+
+  const confirmReport = () =>
+    appAlert(t('chat_info.report', { name: chat?.name ?? '' }), t('chat_info.report_reason'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('chat_info.report_spam'), onPress: () => submitReport('spam') },
+      { text: t('chat_info.report_abuse'), onPress: () => submitReport('abuse') },
+      { text: t('chat_info.report_scam'), onPress: () => submitReport('scam') },
+    ]);
+
+  // Reporting blocks as well. Leaving the conversation open to someone you
+  // just reported is the outcome the report was meant to end.
+  const submitReport = (reason: ReportReason) => {
+    if (!id) return;
+    reportChat(id, reason, { block: true })
+      .then(() => {
+        void refreshChats();
+        appAlert(t('chat_info.report_sent'), t('chat_info.report_sent_body'));
+        router.back();
+      })
+      .catch(failed);
+  };
+
+  const confirmLeaveGroup = () =>
+    appAlert(t('chat_info.leave_group'), t('chat_info.leave_group_confirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('chat_info.leave_group'),
+        style: 'destructive',
+        onPress: () => {
+          if (!id) return;
+          leaveGroup(id)
+            .then(() => {
+              void refreshChats();
+              router.replace('/(tabs)');
+            })
+            .catch(failed);
+        },
+      },
+    ]);
+
+  const showSafetyNumber = () => {
+    if (!safetyDigits) {
+      appAlert(t('chat_info.encryption_title'), t('chat_info.encryption_hint'));
+      return;
+    }
+    appAlert(t('chat_info.encryption_title'), safetyDigits);
+  };
 
   if (!chat) {
     return (
@@ -84,13 +435,23 @@ export default function ChatInfoScreen() {
     );
   }
 
-  const isWA = chat.source === 'whatsapp';
   const memberCount = group?.members.length ?? chat.memberCount ?? 0;
-  const mediaItems = (MESSAGES[chat.id] ?? [])
+  const mediaItems = (fileVisible ? messages : [])
     .filter((m) => m.media?.uri || m.attachment?.kind === 'sticker')
     .slice(-MAX_MEDIA_PREVIEW)
     .reverse();
-  const commonGroups = !isGroup ? CHATS.filter((c) => c.isGroup).slice(0, 3) : [];
+  // Groups the caller is actually in, from the same store the list uses.
+  const commonGroups = !isGroup
+    ? chats
+        .filter((c) => c.type === 'group')
+        .slice(0, 3)
+        .map((c) => ({
+          id: c.id,
+          name: c.title ?? 'Group',
+          avatarUri: c.avatar_url ?? '',
+          memberCount: undefined as number | undefined,
+        }))
+    : [];
 
   return (
     <SafeAreaView
@@ -132,7 +493,6 @@ export default function ChatInfoScreen() {
             <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
               {chat.name}
             </Text>
-            {isWA ? <Ionicons name="logo-whatsapp" size={18} color="#25D366" /> : null}
           </View>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]} numberOfLines={1}>
             {isGroup
@@ -208,14 +568,39 @@ export default function ChatInfoScreen() {
         {/* 1:1 add to lists / notes */}
         {!isGroup ? (
           <Section colors={colors}>
-            <Row icon="list-outline" label={t('chat_info.add_to_lists')} colors={colors} />
+            <Row
+              icon="list-outline"
+              label={t('chat_info.add_to_lists')}
+              subtitle={
+                memberOf.length > 0
+                  ? memberOf.map((f) => f.name).join(' · ')
+                  : t('lists.none_yet')
+              }
+              colors={colors}
+              onPress={() => setShowLists(true)}
+            />
             <Divider colors={colors} />
-            <Row icon="reader-outline" label={t('chat_info.add_notes')} colors={colors} />
+            <Row
+              icon="reader-outline"
+              label={t('chat_info.add_notes')}
+              // The first line of the note, so the row says what is in there
+              // instead of making the user open it to find out.
+              subtitle={notePreview || t('notes.none_yet')}
+              colors={colors}
+              onPress={() => setShowNote(true)}
+            />
           </Section>
         ) : null}
 
         {/* Media preview */}
-        <SectionTitle colors={colors}>{t('chat_info.files_links_documents')}</SectionTitle>
+        <Pressable
+          onPress={() => id && router.push(`/chat-media/${id}`)}
+          style={styles.sectionTitleRow}
+          accessibilityRole="button"
+        >
+          <SectionTitle colors={colors}>{t('chat_info.files_links_documents')}</SectionTitle>
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+        </Pressable>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {mediaItems.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mediaRow}>
@@ -234,15 +619,16 @@ export default function ChatInfoScreen() {
           <Row
             icon="folder-outline"
             label={t('chat_info.manage_storage')}
-            subtitle={estimateStorage(MESSAGES[chat.id])}
+            subtitle={formatBytes(cacheBytes)}
             colors={colors}
+            onPress={confirmClearCache}
           />
           <Divider colors={colors} />
           <RowToggle
             icon="notifications-outline"
             label={t('chat_info.notifications')}
             value={!muted}
-            onValueChange={(v) => setMuted(!v)}
+            onValueChange={(v) => void applySetting({ muted: !v })}
             colors={colors}
           />
           <Divider colors={colors} />
@@ -250,7 +636,7 @@ export default function ChatInfoScreen() {
             icon="images-outline"
             label={t('chat_info.file_visibility')}
             value={fileVisible}
-            onValueChange={setFileVisible}
+            onValueChange={(v) => id && setChatPref(id, 'filesVisible', v)}
             colors={colors}
           />
         </Section>
@@ -258,18 +644,21 @@ export default function ChatInfoScreen() {
         {/* Encryption */}
         <Section colors={colors}>
           <Row
-            icon={isWA ? 'logo-whatsapp' : 'lock-closed-outline'}
-            iconColor={isWA ? '#25D366' : undefined}
+            icon="lock-closed-outline"
             label={t('chat_info.encryption_title')}
-            subtitle={isWA ? t('chat_info.encryption_wa_hint') : t('chat_info.encryption_hint')}
+            subtitle={
+              safetyDigits ? safetyDigits.slice(0, 24) + '…' : t('chat_info.encryption_hint')
+            }
             colors={colors}
+            onPress={showSafetyNumber}
           />
           <Divider colors={colors} />
           <Row
             icon="timer-outline"
             label={t('chat_info.disappearing')}
-            value={t('chat_info.off')}
+            value={disappearLabel(disappearSeconds)}
             colors={colors}
+            onPress={pickDisappearing}
           />
           <Divider colors={colors} />
           <RowToggle
@@ -277,7 +666,7 @@ export default function ChatInfoScreen() {
             label={t('chat_info.lock_chat')}
             subtitle={t('chat_info.lock_chat_hint')}
             value={locked}
-            onValueChange={setLocked}
+            onValueChange={onToggleLock}
             colors={colors}
           />
           <Divider colors={colors} />
@@ -345,17 +734,27 @@ export default function ChatInfoScreen() {
               {t('chat_info.members_count', { count: memberCount })}
             </SectionTitle>
             <Section colors={colors}>
-              <Row icon="person-add-outline" label={t('chat_info.add_members')} colors={colors} />
-              <Divider colors={colors} />
-              <Row
-                icon="bookmark-outline"
-                label={t('chat_info.add_to_contacts')}
-                colors={colors}
-              />
+              {/* Only for admins: the server refuses anyone else, and a row
+                  that opens onto a refusal is worse than one that is absent. */}
+              {isGroupAdmin ? (
+                <Row
+                  icon="person-add-outline"
+                  label={t('chat_info.add_members')}
+                  colors={colors}
+                  onPress={() => setAddingMembers(true)}
+                />
+              ) : null}
               {(group?.members ?? []).slice(0, 8).map((m) => (
                 <View key={m.id}>
                   <Divider colors={colors} />
-                  <View style={styles.row}>
+                  <Pressable
+                    onPress={() => manageMember(m)}
+                    disabled={!isGroupAdmin || m.id === meId}
+                    style={({ pressed }) => [
+                      styles.row,
+                      pressed && isGroupAdmin && { backgroundColor: colors.surfaceMuted },
+                    ]}
+                  >
                     <Image
                       source={{ uri: m.avatarUri }}
                       style={[styles.rowAvatar, { backgroundColor: colors.surfaceMuted }]}
@@ -378,7 +777,7 @@ export default function ChatInfoScreen() {
                         </Text>
                       </View>
                     ) : null}
-                  </View>
+                  </Pressable>
                 </View>
               ))}
             </Section>
@@ -391,8 +790,18 @@ export default function ChatInfoScreen() {
             icon="heart-outline"
             label={t('chat_info.add_to_favorites')}
             value={favorite}
-            onValueChange={setFavorite}
+            onValueChange={(v) => void applySetting({ pinned: v })}
             colors={colors}
+          />
+          <Divider colors={colors} />
+          <Row
+            icon="archive-outline"
+            label={t('chats.archive')}
+            colors={colors}
+            onPress={() => {
+              void applySetting({ archived: true });
+              router.back();
+            }}
           />
           <Divider colors={colors} />
           <Row
@@ -400,13 +809,36 @@ export default function ChatInfoScreen() {
             label={t('chat_info.clear_chat')}
             colors={colors}
             destructive
+            onPress={() =>
+              appAlert(t('chat_info.clear_chat'), t('chat_info.clear_chat_confirm'), [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                  text: t('chat_info.clear_chat'),
+                  style: 'destructive',
+                  onPress: () => {
+                    if (!id) return;
+                    clearChat(id)
+                      .then(() => setMessages([]))
+                      .catch(() =>
+                        appAlert(t('chats.action_failed_title'), t('chats.action_failed_body')),
+                      );
+                  },
+                },
+              ])
+            }
           />
         </Section>
 
         {/* Destructive actions */}
         <Section colors={colors}>
           {isGroup ? (
-            <Row icon="exit-outline" label={t('chat_info.leave_group')} colors={colors} destructive />
+            <Row
+              icon="exit-outline"
+              label={t('chat_info.leave_group')}
+              colors={colors}
+              destructive
+              onPress={confirmLeaveGroup}
+            />
           ) : (
             <>
               <Row
@@ -414,6 +846,7 @@ export default function ChatInfoScreen() {
                 label={t('chat_info.block', { name: chat.name })}
                 colors={colors}
                 destructive
+                onPress={confirmBlock}
               />
               <Divider colors={colors} />
               <Row
@@ -421,13 +854,74 @@ export default function ChatInfoScreen() {
                 label={t('chat_info.report', { name: chat.name })}
                 colors={colors}
                 destructive
+                onPress={confirmReport}
               />
             </>
           )}
+          <Divider colors={colors} />
+          <Row
+            icon="trash-bin-outline"
+            label={t('chats.delete')}
+            colors={colors}
+            destructive
+            onPress={() =>
+              appAlert(t('chats.delete'), t('chat_info.delete_chat_confirm'), [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                  text: t('chats.delete'),
+                  style: 'destructive',
+                  onPress: () => {
+                    if (!id) return;
+                    removeChat(id)
+                      .then(() => {
+                        forgetChatPrefs(id);
+                        router.replace('/(tabs)');
+                      })
+                      .catch(() =>
+                        appAlert(t('chats.action_failed_title'), t('chats.action_failed_body')),
+                      );
+                  },
+                },
+              ])
+            }
+          />
         </Section>
 
         <View style={{ height: Spacing.xl }} />
       </ScrollView>
+
+      {id ? (
+        <>
+          <PeoplePicker
+            visible={addingMembers}
+            title={t('chat_info.add_members')}
+            confirmLabel={t('common.done')}
+            excludeIds={(group?.members ?? []).map((m) => m.id)}
+            onClose={() => setAddingMembers(false)}
+            onConfirm={(people) => {
+              if (people.length === 0) return;
+              addGroupMembers(id, people.map((p) => p.id))
+                .then(() => {
+                  // Joining rotates too, so the new members' keys only open
+                  // what is written from now on.
+                  invalidateGroupEpoch(id);
+                  return refreshGroup(id);
+                })
+                .catch(failed);
+            }}
+          />
+          <ListPicker visible={showLists} chatId={id} onClose={() => setShowLists(false)} />
+          <NoteEditor
+            visible={showNote}
+            chatId={id}
+            onClose={(saved) => {
+              setShowNote(false);
+              setNotePreview(firstLine(saved));
+            }}
+          />
+        </>
+      ) : null}
+
     </SafeAreaView>
   );
 }
@@ -575,13 +1069,6 @@ function MediaTile({ msg, colors }: { msg: Message; colors: Colors }) {
 }
 
 // Rough storage estimate from message count — for the demo only.
-function estimateStorage(messages?: Message[]): string {
-  const n = messages?.length ?? 0;
-  if (n === 0) return '0 KB';
-  const kb = Math.max(50, n * 28);
-  if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
-  return `${kb} KB`;
-}
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
@@ -643,6 +1130,7 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.sm,
   },
 
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: Spacing.lg },
   card: {
     borderRadius: Radii.lg,
     borderWidth: 1,
@@ -681,3 +1169,9 @@ const styles = StyleSheet.create({
   mediaImg: { width: '100%', height: '100%' },
   emptyText: { ...Typography.caption, padding: Spacing.md },
 });
+
+/** First non-empty line, trimmed for a one-line subtitle. */
+function firstLine(text: string): string {
+  const line = text.split('\n').find((l) => l.trim().length > 0) ?? '';
+  return line.trim().slice(0, 60);
+}

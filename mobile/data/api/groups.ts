@@ -72,3 +72,27 @@ export function setGroupMemberRole(id: string, userId: string, role: MemberRole)
 export function leaveGroup(id: string) {
   return api.post<void>(`/api/groups/${id}/leave`);
 }
+
+/**
+ * A sender key sealed for one member.
+ *
+ * `user_id` is the recipient when publishing and the sender when fetching —
+ * whichever end the caller is not.
+ */
+export type SenderKeyEntry = {
+  user_id: string;
+  ciphertext: string;
+  epoch: number;
+};
+
+export function publishSenderKeys(
+  id: string,
+  epoch: number,
+  entries: { user_id: string; ciphertext: string }[],
+) {
+  return api.post<void>(`/api/groups/${id}/sender-keys`, { epoch, entries });
+}
+
+export function fetchSenderKeys(id: string) {
+  return api.get<{ epoch: number; keys: SenderKeyEntry[] }>(`/api/groups/${id}/sender-keys`);
+}

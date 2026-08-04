@@ -1261,12 +1261,12 @@ export const SYSTEM_STYLES: SystemMsgStyle[] = ['pill', 'plain', 'banner'];
 
 export const CSS_THEME_TEMPLATE = `/* Socialize theme CSS — custom properties */
 :root {
-  --primary: #2D5BFF;
+  --primary: #4F46E5;
   --background: #0E0F13;
   --surface: #191A21;
   --text: #ECEDF2;
   --wallpaper: #131419;
-  --bubble-mine: #2D5BFF;
+  --bubble-mine: #4F46E5;
   --bubble-theirs: #191A21;
   --text-mine: #FFFFFF;
   --text-theirs: #ECEDF2;
@@ -1462,7 +1462,7 @@ export function generateThemeFromAiPrompt(prompt: string): AiThemeDraft {
     !/\b(light|claro|day|dia)\b/.test(p);
   const light = /\b(light|claro|pastel|cream|soft|dia)\b/.test(p);
 
-  let primary = '#2D5BFF';
+  let primary = '#4F46E5';
   let background = dark ? '#0E0F13' : '#F7F9FC';
   let surface = dark ? '#191A21' : '#FFFFFF';
   let text = dark ? '#ECEDF2' : '#111827';

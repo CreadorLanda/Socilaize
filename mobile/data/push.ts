@@ -3,7 +3,11 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { registerPushDevice, type NotifPlatform } from '@/data/api/notifications';
+import {
+  registerPushDevice,
+  unregisterPushDevice,
+  type NotifPlatform,
+} from '@/data/api/notifications';
 
 /**
  * Foreground presentation — show banner/sound when the app is open.
@@ -90,4 +94,31 @@ export async function registerPushWithServer(): Promise<string | null> {
   if (!token) return null;
   await registerPushDevice(token, platformForDevice());
   return token;
+}
+
+/**
+ * Drop this device's push token on sign-out.
+ *
+ * Without it the server keeps a token for a device where nobody is signed
+ * in, and the next person to use that phone gets notifications for an
+ * account that is not theirs.
+ */
+export async function unregisterPushWithServer(): Promise<void> {
+  try {
+    // The server identifies the device from the session, not from a token we
+    // hand it: it deletes the row for this user_id + device_id pair.
+    //
+    // Bounded, because this runs before the session is torn down and a
+    // request with no deadline would leave someone stuck on a screen they
+    // asked to leave. Three seconds is long enough for a real network and
+    // short enough not to be felt.
+    await Promise.race([
+      unregisterPushDevice(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
+  } catch {
+    // Offline, revoked, slow — sign-out continues regardless. The cost of
+    // failing here is a stale token, which the server drops on its first
+    // `Unregistered` response from FCM anyway.
+  }
 }

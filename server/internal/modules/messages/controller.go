@@ -54,9 +54,16 @@ func (c *Controller) PostChat(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, CreateChatResponse{ChatID: chat.ID, Chat: chat})
 }
 
-// GetChats — GET /chats
+// GetChats — GET /chats?limit=&offset=&archived=
 func (c *Controller) GetChats(ctx *gin.Context) {
-	chats, err := c.svc.ListChats(ctx.Request.Context(), middleware.UserIDFrom(ctx))
+	limit, _ := strconv.Atoi(ctx.Query("limit"))
+	offset, _ := strconv.Atoi(ctx.Query("offset"))
+	opts := ListChatsOptions{
+		Limit:    limit,
+		Offset:   offset,
+		Archived: ctx.Query("archived") == "true",
+	}
+	chats, err := c.svc.ListChats(ctx.Request.Context(), middleware.UserIDFrom(ctx), opts)
 	if err != nil {
 		writeErr(ctx, err)
 		return
@@ -215,6 +222,102 @@ func (c *Controller) DeleteReact(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, list)
 }
 
+// PostMessageOpen — POST /chats/:id/messages/:mid/open
+//
+// Consumes one view of a limited-view message. Separate from listing so
+// scrolling past a message never burns a view.
+func (c *Controller) PostMessageOpen(ctx *gin.Context) {
+	chatID, msgID, ok := parseChatMsg(ctx)
+	if !ok {
+		return
+	}
+	limit, left, err := c.svc.OpenLimitedMessage(ctx.Request.Context(), chatID, msgID, middleware.UserIDFrom(ctx))
+	if err != nil {
+		if errors.Is(err, ErrViewsExhausted) {
+			ctx.JSON(http.StatusGone, gin.H{
+				"error":      ErrViewsExhausted.Error(),
+				"view_limit": limit,
+				"views_left": 0,
+			})
+			return
+		}
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"view_limit": limit, "views_left": left})
+}
+
+// GetMessageInfo — GET /chats/:id/messages/:mid/info
+func (c *Controller) GetMessageInfo(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	mid, err := strconv.ParseInt(ctx.Param("mid"), 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_message_id"})
+		return
+	}
+	list, err := c.svc.MessageInfo(ctx.Request.Context(), chatID, mid, middleware.UserIDFrom(ctx))
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	if list == nil {
+		list = []ReceiptDetail{}
+	}
+	ctx.JSON(http.StatusOK, list)
+}
+
+// PatchChatSettings — PATCH /chats/:id/settings
+func (c *Controller) PatchChatSettings(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	var req ChatSettingsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		return
+	}
+	chat, err := c.svc.UpdateChatSettings(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx), req)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, chat)
+}
+
+// PostClearChat — POST /chats/:id/clear
+func (c *Controller) PostClearChat(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	if err := c.svc.ClearChatHistory(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx)); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+// DeleteChat — DELETE /chats/:id
+func (c *Controller) DeleteChat(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	if err := c.svc.DeleteChat(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx)); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 // PostAcceptChat — POST /chats/:id/accept
 func (c *Controller) PostAcceptChat(ctx *gin.Context) {
 	chatID, err := uuid.Parse(ctx.Param("id"))
@@ -325,9 +428,80 @@ func writeErr(ctx *gin.Context, err error) {
 		ctx.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrPendingChatLimit), errors.Is(err, ErrChatNotPending):
 		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-	case errors.Is(err, ErrInvalidReceipt):
+	case errors.Is(err, ErrInvalidReceipt), errors.Is(err, ErrInvalidReport),
+		errors.Is(err, ErrInvalidTTL):
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 	}
+}
+
+type votePollRequest struct {
+	OptionIDs []string `json:"option_ids"`
+}
+
+func (c *Controller) PostPollVote(ctx *gin.Context) {
+	chatID, msgID, ok := parseChatMsg(ctx)
+	if !ok {
+		return
+	}
+	var req votePollRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	tally, err := c.svc.VotePoll(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx), msgID, req.OptionIDs)
+	if err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, tally)
+}
+
+type reportChatRequest struct {
+	Reason string `json:"reason"`
+	Note   string `json:"note"`
+	Block  bool   `json:"block"`
+}
+
+func (c *Controller) PostReportChat(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	var req reportChatRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	if err := c.svc.ReportChat(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx),
+		req.Reason, req.Note, req.Block); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
+type disappearingRequest struct {
+	Seconds int `json:"disappear_seconds"`
+}
+
+func (c *Controller) PutDisappearing(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
+		return
+	}
+	var req disappearingRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_payload"})
+		return
+	}
+	if err := c.svc.SetDisappearing(ctx.Request.Context(), chatID,
+		middleware.UserIDFrom(ctx), req.Seconds); err != nil {
+		writeErr(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
 }

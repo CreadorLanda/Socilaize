@@ -17,7 +17,6 @@
 | Validation     | `go-playground/validator/v10`             | Struct-tag based                        |
 | Auth           | JWT (`golang-jwt/jwt/v5`) + refresh       | Short-lived access, rotating refresh    |
 | E2E            | libsignal (CGO bindings) **or** `crossle/libsignal-protocol-go` | Decision in `backend/auth` PR |
-| WhatsApp       | mautrix-whatsapp sidecar (uses whatsmeow) | Separate process per linked user        |
 | Object storage | S3-compatible (MinIO in dev)              | Server-side envelope encryption         |
 | Logging        | `rs/zerolog`                              | JSON in prod, console in dev            |
 | Telemetry      | OpenTelemetry (traces + metrics)          |                                         |
@@ -49,9 +48,7 @@ server/
 │   │   ├── media/
 │   │   ├── badges/
 │   │   ├── notifications/
-│   │   ├── ai/                  # Dandara endpoints
-│   │   └── bridges/
-│   │       └── whatsapp/
+│   │   └── ai/                  # Dandara endpoints
 │   ├── middleware/              # auth, rate-limit, request-id, recovery
 │   ├── realtime/                # WebSocket hub + Redis fan-out
 │   ├── platform/
@@ -68,7 +65,7 @@ server/
 ├── deploy/
 │   ├── docker/
 │   │   ├── Dockerfile
-│   │   └── docker-compose.yml   # api + postgres + redis + mautrix
+│   │   └── docker-compose.yml   # api + postgres + redis
 │   └── k8s/                     # Helm chart later
 ├── scripts/
 └── go.mod

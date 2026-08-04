@@ -1,14 +1,13 @@
 # 🏗️ Arquitetura
 
-> Como o Socialize é desenhado: uma plataforma de mensagens focada em segurança, com armazenamento no dispositivo, um servidor fino e uma ponte para o WhatsApp.
+> Como o Socialize é desenhado: uma plataforma de mensagens focada em segurança, com armazenamento no dispositivo e um servidor fino.
 
 ---
 
 ## Objetivos
 
 1. **Encriptação ponta-a-ponta por defeito.** O servidor não pode ler o conteúdo do utilizador.
-2. **As mensagens vivem no dispositivo** — abordagem WhatsApp. O servidor é apenas um relay de envelopes cifrados e metadados autoritativos.
-3. **Uma única caixa de entrada coerente** para conversas Socialize e WhatsApp ligado por ponte, com identificação visual clara.
+2. **As mensagens vivem no dispositivo.** O servidor é apenas um relay de envelopes cifrados e metadados autoritativos.
 4. **Monólito modular** em Go organizado como módulos MVC — fácil de dividir mais tarde, rápido de construir já.
 5. **Operação simples.** Apenas PostgreSQL + Redis. Sem MongoDB.
 
@@ -43,9 +42,6 @@
        │ gRPC interno
        │
 ┌──────┴─────────────────┐
-│  Ponte WhatsApp        │
-│  (mautrix-whatsapp)    │── whatsmeow ──► servidores WhatsApp
-│  um worker por conta   │
 │  ligada                │
 └────────────────────────┘
 ```
@@ -61,7 +57,7 @@
 - A chave da base de dados fica na **keychain do sistema** (iOS Keychain / Android Keystore); desbloqueio biométrico opcional na abertura.
 
 ### Servidor API (Go, monólito modular)
-- Um processo, organizado como módulos MVC por funcionalidade (`auth`, `users`, `messages`, `groups`, `channels`, `stories`, `media`, `badges`, `notifications`, `ai`, `bridges/whatsapp`).
+- Um processo, organizado como módulos MVC por funcionalidade (`auth`, `users`, `messages`, `groups`, `channels`, `stories`, `media`, `badges`, `notifications`, `ai`).
 - HTTP via Gin/Echo, tempo real via hub WebSocket com fan-out por Redis pub/sub (escala horizontalmente).
 - Autoritativo para **metadados** (utilizadores, dispositivos, grupos, canais, stories públicos, badges, push tokens, key bundles) — não para conteúdo de mensagens.
 
@@ -70,7 +66,6 @@
 - Mantém apenas **ciphertext** para envelopes pendentes de entrega (eliminados após entrega).
 
 ### Redis
-- **Filas** (Redis Streams): entrega de mensagens, push notifications, ponte WhatsApp in/out, processamento de média.
 - **Cache**: tokens de sessão, contadores de rate limit.
 - **Presença**: `presence:{user_id}` com TTL curto.
 - **A escrever**: `typing:{chat_id}` (TTL 5 s).
@@ -80,24 +75,6 @@
 - Média cifrada (imagens, vídeo, voz, documentos).
 - Cada ficheiro tem uma DEK (Data Encryption Key) embrulhada por uma KEK (Key Encryption Key) em KMS/Vault.
 - O servidor nunca tem média em claro.
-
-### Ponte WhatsApp (processo separado)
-- **mautrix-whatsapp** como sidecar, um worker por conta ligada, conectado ao WhatsApp via **whatsmeow**.
-- Mostra conversas, mensagens, estados, contactos e grupos do WhatsApp dentro do Socialize.
-- Conversas com ponte são claramente marcadas (`source: 'whatsapp'`) — ver [whatsapp-bridge.md](./whatsapp-bridge.md).
-
----
-
-## Identificar conversas Socialize vs WhatsApp
-
-Cada conversa tem um campo `source`:
-
-| Source     | Prefixo ID     | Marca na UI                              | E2E                                       |
-|------------|----------------|------------------------------------------|-------------------------------------------|
-| `native`   | `s:<uuid>`     | nenhuma                                  | Signal (E2E real)                         |
-| `whatsapp` | `wa:<wa_jid>`  | etiqueta WhatsApp na linha + cabeçalho   | E2E WA até à ponte, depois ponte↔servidor |
-
-Conversas com ponte começam só de leitura e tornam-se editáveis quando a ponte estiver saudável e o envio para fora ativo. O compromisso — a ponte vê texto em claro nesse hop — está documentado e é mostrado ao utilizador antes da ligação.
 
 ---
 
@@ -139,6 +116,5 @@ A versão antiga deste documento mostrava cinco serviços. Começamos com **um**
 - [Database](./database.md) — schema Postgres + Redis, SQLite no dispositivo.
 - [Backend (Go, MVC)](./backend-go.md) — layout do código e convenções.
 - [Armazenamento local](./local-storage.md) — SQLite + SQLCipher no dispositivo.
-- [Ponte WhatsApp](./whatsapp-bridge.md) — integração via mautrix.
 - [Serviços & branches](./services-and-branches.md) — mapa funcionalidade → branch → issue.
 - [Encriptação](../security/encryption.md) — Signal Protocol, em repouso, em trânsito.

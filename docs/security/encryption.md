@@ -9,7 +9,6 @@
 - TLS 1.3 only. TLS 1.2 disabled.
 - Certificate pinning on mobile clients (rotation handled via a signed update channel).
 - HSTS + Strict-Transport-Security with preload on web origins.
-- Internal traffic between API and bridge workers uses mTLS.
 
 ---
 
@@ -87,14 +86,10 @@ The server never holds:
 
 ## Bridges and E2E trade-offs
 
-Bridging WhatsApp via mautrix breaks WhatsApp's E2E *on the bridge hop*: the bridge worker is, by definition, a WhatsApp client and can read messages. We isolate this clearly:
-
 - Bridge data lives in separate tables and goes through a separate code path.
 - Session blobs are envelope-encrypted at rest.
 - The link flow forces the user to acknowledge the trade-off before completing the link.
 - Native Socialize chats are *not* affected — their Signal sessions remain end-to-end.
-
-Full disclosure text and operational details in [whatsapp-bridge.md](../tech/whatsapp-bridge.md#threat-model--user-disclosure).
 
 ---
 
@@ -119,6 +114,5 @@ We say this aloud so it doesn't surprise anyone:
 
 - **Metadata.** The server sees who messages whom and when. Sealed-sender style mitigations are tracked as a follow-up.
 - **A compromised device while unlocked.** Anyone holding the unlocked phone can read everything; SQLCipher cannot defend against that.
-- **Side channels on the bridge.** Anything that goes through the WhatsApp bridge is, on that hop, accessible to the bridge worker.
 
 Anything beyond this list should be reported as a bug, not a feature.

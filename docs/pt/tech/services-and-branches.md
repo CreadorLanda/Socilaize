@@ -16,7 +16,6 @@
 | `backend/media`              | #28   | `media`                                                | Upload, fila de transcoding, thumbnails, armazenamento com envelope encryption, packs de stickers   |
 | `backend/badges`             | #26   | `badges`                                               | Catálogo, pipeline de atribuição, fluxo de verificação                                              |
 | `backend/notifications`      | #29   | `notifications`, infra                                 | FCM/APNs, ciclo de vida do push token, filas, manifests Docker / K8s                                |
-| `backend/bridge-whatsapp`    | #30   | `bridges/whatsapp`                                     | Sidecar mautrix, link/unlink, filas in/out, superfície de estado, ver [whatsapp-bridge.md](./whatsapp-bridge.md) |
 | `backend/ai-dandara` *(mais tarde)* | #18 | `ai`                                              | `/ai/chat`, `/ai/summarize`, `/ai/reply-suggestions`, comandos de voz                               |
 
 `backend/ai-dandara` não está na lista de issues prioritárias mas há já implementação cliente na app móvel; a branch aterra quando os módulos fundacionais estiverem estáveis.
@@ -31,7 +30,6 @@ main
  │    ├── backend/auth            (PR → backend/base)
  │    ├── backend/messages        (PR → backend/base)
  │    ├── …
- │    └── backend/bridge-whatsapp (PR → backend/base)
  │
  └── main ◄── backend/base        (PR quando MVP estável)
 ```
@@ -67,7 +65,6 @@ backend/stories              │
   ↓                          │
 backend/badges (independente)│
                              │
-backend/bridge-whatsapp ◄────┘ (precisa de auth + messages + notifications)
 backend/ai-dandara              (precisa de auth + messages)
 ```
 

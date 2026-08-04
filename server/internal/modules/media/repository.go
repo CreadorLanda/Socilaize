@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -85,4 +86,84 @@ func (r *Repository) Delete(ctx context.Context, id, ownerID uuid.UUID) (objectR
 
 func IsNoRows(err error) bool {
 	return err != nil && err == pgx.ErrNoRows
+}
+
+// ── Retention ───────────────────────────────────────────────────────────────
+
+// SetExpiry stamps the deadline and how many recipients must fetch the blob
+// before it can be removed early.
+func (r *Repository) SetExpiry(ctx context.Context, id uuid.UUID, expiresAt time.Time, recipients int) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE media_objects
+		SET expires_at = $2, expected_recipients = $3
+		WHERE id = $1
+	`, id, expiresAt, recipients)
+	return err
+}
+
+// MarkFetched records that a recipient downloaded the bytes. Re-fetching is
+// idempotent so a retry does not skew the count.
+func (r *Repository) MarkFetched(ctx context.Context, id, userID uuid.UUID) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO media_fetches (media_id, user_id) VALUES ($1, $2)
+		ON CONFLICT (media_id, user_id) DO NOTHING
+	`, id, userID)
+	return err
+}
+
+// SetKeepForever exempts a blob from the sweep (server backup enabled).
+func (r *Repository) SetKeepForever(ctx context.Context, id uuid.UUID, keep bool) error {
+	_, err := r.db.Exec(ctx, `UPDATE media_objects SET keep_forever = $2 WHERE id = $1`, id, keep)
+	return err
+}
+
+// purgeCandidate is a row whose bytes are due for deletion.
+type purgeCandidate struct {
+	ID          uuid.UUID
+	StoragePath string
+}
+
+// DuePurge lists blobs that are past their deadline, or that every expected
+// recipient has already fetched. Rows already purged and rows the uploader
+// keeps are skipped.
+func (r *Repository) DuePurge(ctx context.Context, limit int) ([]purgeCandidate, error) {
+	const q = `
+		SELECT m.id, m.storage_path
+		FROM media_objects m
+		WHERE m.purged_at IS NULL
+		  AND NOT m.keep_forever
+		  AND (
+		        (m.expires_at IS NOT NULL AND m.expires_at <= NOW())
+		     OR (
+		          m.expected_recipients > 0
+		          AND (SELECT COUNT(*) FROM media_fetches f WHERE f.media_id = m.id)
+		              >= m.expected_recipients
+		        )
+		      )
+		ORDER BY m.created_at
+		LIMIT $1
+	`
+	rows, err := r.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []purgeCandidate
+	for rows.Next() {
+		var c purgeCandidate
+		if err := rows.Scan(&c.ID, &c.StoragePath); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// MarkPurged leaves the row as a tombstone so the message can still show
+// "media expired" instead of a broken reference.
+func (r *Repository) MarkPurged(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE media_objects SET purged_at = NOW() WHERE id = $1`, id)
+	return err
 }

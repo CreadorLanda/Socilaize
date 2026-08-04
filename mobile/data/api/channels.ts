@@ -148,6 +148,9 @@ export function mapPostDTO(p: ChannelPostDTO): ChannelPost {
     reactions,
     myReaction: p.my_emoji || null,
     type: (p.post_type as ChannelPost['type']) || 'text',
+    // Needed to decide who may edit or delete it. Dropping it here meant the
+    // screen had no way to tell your own post from anyone else's.
+    authorId: p.author_id,
     comments: [],
   };
 }
@@ -192,4 +195,96 @@ function relative(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
+}
+
+// ── Members ─────────────────────────────────────────────────────────────────
+
+export type ChannelMemberRole = 'owner' | 'admin' | 'publisher' | 'member';
+
+export type ChannelMember = {
+  user_id: string;
+  username: string;
+  display_name?: string;
+  avatar_uri?: string;
+  role: ChannelMemberRole;
+  joined_at: string;
+};
+
+/** Everyone in a channel, most privileged first. */
+export function listChannelMembers(channelId: string) {
+  return api.get<ChannelMember[]>(`/api/channels/${channelId}/members`);
+}
+
+/**
+ * Promote or demote someone. Owners and admins only.
+ *
+ * 'owner' is not accepted: transferring a channel is a separate act, not one
+ * tap inside a role picker.
+ */
+export function setChannelMemberRole(
+  channelId: string,
+  userId: string,
+  role: Exclude<ChannelMemberRole, 'owner'>,
+) {
+  return api.patch<void>(`/api/channels/${channelId}/members/${userId}`, { role });
+}
+
+export function removeChannelMember(channelId: string, userId: string) {
+  return api.del<void>(`/api/channels/${channelId}/members/${userId}`);
+}
+
+// ── Post mutations ──────────────────────────────────────────────────────────
+
+/** Author, or the channel's owner/admins. Text only. */
+export function editChannelPost(postId: string, text: string) {
+  return api.patch<void>(`/api/channel-posts/${postId}`, { text });
+}
+
+export function deleteChannelPost(postId: string) {
+  return api.del<void>(`/api/channel-posts/${postId}`);
+}
+
+/**
+ * Add someone to a channel with a role, by handle.
+ *
+ * By username rather than from a list — the follower list is not shown, and
+ * choosing who may publish is a decision about a person you already have in
+ * mind. Naming someone already in the channel changes their role.
+ */
+export function addChannelMember(
+  channelId: string,
+  username: string,
+  role: Exclude<ChannelMemberRole, 'owner'>,
+) {
+  return api.post<ChannelMember>(`/api/channels/${channelId}/members`, { username, role });
+}
+
+// ── Role invitations ────────────────────────────────────────────────────────
+
+export type ChannelRoleInvite = {
+  id: string;
+  channel_id: string;
+  channel_name: string;
+  channel_handle: string;
+  channel_avatar?: string;
+  role: 'admin' | 'publisher';
+  /** Named on purpose: "someone made you an admin" is not a decision anyone
+   *  can weigh. */
+  invited_by_name: string;
+  invited_by_username: string;
+  created_at: string;
+};
+
+/** Requests waiting on the signed-in user. */
+export function listChannelInvites() {
+  return api.get<ChannelRoleInvite[]>('/api/channel-invites');
+}
+
+export function acceptChannelInvite(inviteId: string) {
+  return api.post<{ channel_id: string }>(`/api/channel-invites/${inviteId}/accept`, {});
+}
+
+/** The channel is not told, and nothing is recorded. */
+export function declineChannelInvite(inviteId: string) {
+  return api.post<void>(`/api/channel-invites/${inviteId}/decline`, {});
 }

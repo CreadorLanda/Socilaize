@@ -30,9 +30,6 @@ func main() {
 
 	srv.ListenAndServe()
 	log.Info().Str("addr", cfg.HTTP.Addr).Msg("listening (public)")
-	if cfg.WA.InternalAddr != "" {
-		log.Info().Str("addr", cfg.WA.InternalAddr).Msg("listening (internal mTLS)")
-	}
 
 	// Graceful shutdown on SIGINT / SIGTERM.
 	stop := make(chan os.Signal, 1)
