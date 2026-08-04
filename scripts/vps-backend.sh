@@ -32,15 +32,25 @@ fi
 # 2. Instala o que faltar (Go, Docker, Docker Compose, golang-migrate)
 need_sudo_install=false
 
-if ! command -v go &>/dev/null; then
-  log "Instalando Go..."
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq golang-go || {
-    curl -fsSL https://go.dev/dl/go1.22.5.linux-amd64.tar.gz -o /tmp/go.tar.gz
-    sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-    export PATH="/usr/local/go/bin:$PATH"
-  }
+# Go: precisa de 1.24+ (golang-migrate atual exige). Instala do tarball oficial,
+# não do apt (o apt do Ubuntu traz 1.22, que quebra o migrate).
+GO_VERSION="1.24.5"
+GO_ARCH="amd64"
+case "$(uname -m)" in
+  aarch64|arm64) GO_ARCH="arm64" ;;
+esac
+go_ok() {
+  if ! command -v go &>/dev/null; then return 1; fi
+  local v
+  v="$(go version | sed -E 's/.*go([0-9]+)\.([0-9]+).*/\1.\2/')"
+  [[ "$(printf '%s\n%s\n' "$v" "$GO_VERSION" | sort -V | head -1)" == "$GO_VERSION" ]]
+}
+if ! go_ok; then
+  log "Instalando Go $GO_VERSION (linux-$GO_ARCH, tarball oficial)..."
+  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tar.gz
+  sudo rm -rf /usr/local/go
+  sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+  rm -f /tmp/go.tar.gz
 fi
 export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
 
