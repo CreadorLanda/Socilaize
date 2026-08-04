@@ -29,6 +29,13 @@ if ! sudo -v &>/dev/null; then
   exit 1
 fi
 
+# 1b. Instala make (usado para build e migrations)
+if ! command -v make &>/dev/null; then
+  log "Instalando make..."
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq make
+fi
+
 # 2. Instala o que faltar (Go, Docker, Docker Compose, golang-migrate)
 need_sudo_install=false
 
