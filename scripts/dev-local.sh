@@ -75,21 +75,16 @@ for svc in postgres redis; do
   done
 done
 
-# 4. Garante .env do server
+# 4. Garante .env do server (sempre sobrescreve URLs/placeholders)
+log "Configurando .env do server para Postgres local..."
 if [[ ! -f .env ]]; then
-  log "Criando .env do server a partir do .env.example..."
   cp .env.example .env
-  # Ajusta DATABASE_URL para o Postgres local
-  sed -i 's|DATABASE_URL=.*|DATABASE_URL=postgres://socialize:socialize@localhost:5432/socialize?sslmode=disable|' .env
-  # Gera secrets se não existirem
-  if ! grep -q '^JWT_SECRET=' .env || grep -q '^JWT_SECRET=$' .env; then
-    sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env
-  fi
-  if ! grep -q '^REFRESH_SECRET=' .env || grep -q '^REFRESH_SECRET=$' .env; then
-    sed -i "s/^REFRESH_SECRET=.*/REFRESH_SECRET=$(openssl rand -hex 32)/" .env
-  fi
-  log ".env configurado para Postgres local"
 fi
+sed -i "s|^POSTGRES_URL=.*|POSTGRES_URL=postgres://socialize:socialize@localhost:5432/socialize?sslmode=disable|" .env
+sed -i "s|^REDIS_URL=.*|REDIS_URL=redis://localhost:6379/0|" .env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
+sed -i "s|^MESSAGE_KEY=.*|MESSAGE_KEY=$(openssl rand -hex 32)|" .env
+log ".env configurado para Postgres local"
 
 # 5. Roda migrations (usa POSTGRES_URL do .env)
 log "Rodando migrations..."
