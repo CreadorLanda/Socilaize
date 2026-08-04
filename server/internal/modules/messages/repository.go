@@ -478,14 +478,29 @@ func (r *Repository) RegisterView(ctx context.Context, messageID int64, userID u
 		return nil, nil, tx.Commit(ctx)
 	}
 
+	// The limit is enforced by the statement, not by a check around it.
+	//
+	// Counting first and judging afterwards made the last permitted view
+	// look like one too many: a view_limit of 1 left zero remaining on the
+	// very first open, which the caller read as exhausted. A "view once"
+	// message could not be viewed once.
+	//
+	// Doing it in one statement also settles the race — two devices opening
+	// at the same moment cannot both pass a check and then both increment.
 	var used int
-	if err = tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO message_views (message_id, user_id, views)
-		VALUES ($1, $2, 1)
+		SELECT $1, $2, 1 WHERE $3 > 0
 		ON CONFLICT (message_id, user_id)
 		DO UPDATE SET views = message_views.views + 1, last_at = NOW()
+		WHERE message_views.views < $3
 		RETURNING views
-	`, messageID, userID).Scan(&used); err != nil {
+	`, messageID, userID, *limit).Scan(&used)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Nothing was written: the allowance was already spent.
+		return limit, new(int), ErrViewsExhausted
+	}
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -496,29 +511,6 @@ func (r *Repository) RegisterView(ctx context.Context, messageID int64, userID u
 	return limit, &remaining, tx.Commit(ctx)
 }
 
-// ViewsLeftFor reports remaining opens without consuming one, so listing a
-// thread does not burn a view.
-func (r *Repository) ViewsLeftFor(ctx context.Context, messageID int64, userID uuid.UUID) (*int, *int, error) {
-	var limit *int
-	var used int
-	err := r.db.QueryRow(ctx, `
-		SELECT m.view_limit, COALESCE(v.views, 0)
-		FROM messages m
-		LEFT JOIN message_views v ON v.message_id = m.id AND v.user_id = $2
-		WHERE m.id = $1
-	`, messageID, userID).Scan(&limit, &used)
-	if err != nil {
-		return nil, nil, err
-	}
-	if limit == nil {
-		return nil, nil, nil
-	}
-	remaining := *limit - used
-	if remaining < 0 {
-		remaining = 0
-	}
-	return limit, &remaining, nil
-}
 
 // ListMessages returns messages for a chat, newest first, with cursor-based
 // pagination. Content is decrypted on read. Sender display name/avatar are
@@ -535,15 +527,21 @@ func (r *Repository) ViewsLeftFor(ctx context.Context, messageID int64, userID u
 // was necessarily delivered, and the client's precedence check reads
 // read_by first, so leaving them disjoint would flicker a read message back
 // to one tick if the delivered receipt never arrived on its own.
+// $1 is the reader. Views are per-person, so a limited message cannot be
+// described without knowing who is asking.
 const messageSelectBase = `
 	SELECT m.id, m.chat_id, m.sender_id, m.content, m.message_type, m.reply_to_id,
 	       m.created_at, m.edited_at, m.deleted_at,
 	       COALESCE(u.display_name, ''), COALESCE(u.avatar_uri, ''),
 	       rc.delivered_to, rc.read_by,
 	       m.forward_count, m.source_channel_id::text, m.source_post_id::text,
-	       m.expires_at
+	       m.expires_at,
+	       m.view_limit, COALESCE(mv.views, 0)
 	FROM messages m
 	LEFT JOIN users u ON u.id = m.sender_id
+	-- Joined rather than queried per row: a page of fifty messages must not
+	-- become fifty-one round trips because one of them might be a view-once.
+	LEFT JOIN message_views mv ON mv.message_id = m.id AND mv.user_id = $1
 	LEFT JOIN LATERAL (
 	    SELECT count(*) FILTER (WHERE mr.status IN ('delivered', 'read')) AS delivered_to,
 	           count(*) FILTER (WHERE mr.status = 'read')                 AS read_by
@@ -557,7 +555,7 @@ const messageSelectBase = `
 // hideRead blanks the read counts, for a caller who has turned read receipts
 // off: the reciprocity is applied here so it cannot be skipped by a client
 // that would rather not.
-func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit int, before int64, hideRead bool) ([]Message, error) {
+func (r *Repository) ListMessages(ctx context.Context, chatID, viewerID uuid.UUID, limit int, before int64, hideRead bool) ([]Message, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -567,22 +565,22 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 
 	if before > 0 {
 		const q = messageSelectBase + `
-			WHERE m.chat_id = $1 AND m.id < $2 AND m.deleted_at IS NULL
+			WHERE m.chat_id = $2 AND m.id < $3 AND m.deleted_at IS NULL
 			  -- Past its deadline but not yet swept: hide it now rather
 			  -- than let the sweep interval decide how long it lingers.
 			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
 			ORDER BY m.id DESC
-			LIMIT $3
+			LIMIT $4
 		`
-		rows, err = r.db.Query(ctx, q, chatID, before, limit)
+		rows, err = r.db.Query(ctx, q, viewerID, chatID, before, limit)
 	} else {
 		const q = messageSelectBase + `
-			WHERE m.chat_id = $1 AND m.deleted_at IS NULL
+			WHERE m.chat_id = $2 AND m.deleted_at IS NULL
 			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
 			ORDER BY m.id DESC
-			LIMIT $2
+			LIMIT $3
 		`
-		rows, err = r.db.Query(ctx, q, chatID, limit)
+		rows, err = r.db.Query(ctx, q, viewerID, chatID, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -596,11 +594,24 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 		var deliveredTo, readBy, forwardCount int
 		var srcChannel, srcPost *string
 		var expiresAt *time.Time
+		var viewLimit *int
+		var viewsUsed int
 		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderID, &m.Content,
 			&m.MessageType, &m.ReplyToID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
 			&senderName, &senderAvatar, &deliveredTo, &readBy,
-			&forwardCount, &srcChannel, &srcPost, &expiresAt); err != nil {
+			&forwardCount, &srcChannel, &srcPost, &expiresAt,
+			&viewLimit, &viewsUsed); err != nil {
 			return nil, err
+		}
+		// Reported without consuming anything. Scrolling past a view-once
+		// must not spend it — only opening it does, through RegisterView.
+		var viewsLeft *int
+		if viewLimit != nil {
+			remaining := *viewLimit - viewsUsed
+			if remaining < 0 {
+				remaining = 0
+			}
+			viewsLeft = &remaining
 		}
 		out = append(out, Message{
 			ID:              m.ID,
@@ -617,6 +628,8 @@ func (r *Repository) ListMessages(ctx context.Context, chatID uuid.UUID, limit i
 			DeliveredTo:     deliveredTo,
 			ReadBy:          readByFor(readBy, hideRead),
 			ForwardCount:    forwardCount,
+			ViewLimit:       viewLimit,
+			ViewsLeft:       viewsLeft,
 			SourceChannelID: srcChannel,
 			SourcePostID:    srcPost,
 			ExpiresAt:       expiresAt,

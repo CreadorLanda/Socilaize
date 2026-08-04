@@ -33,6 +33,32 @@ yarn-error.*
 *.p12
 *.mobileprovision
 
+# Google / Firebase service accounts.
+#
+# A key like this landed in mobile/ once. It was never committed, but the only
+# reason is that nobody ran `git add .` in between. The private key inside
+# grants send access to the project's push notifications, and a key that
+# reaches a public repository is burnt — rotating it is the only fix.
+#
+# The real copy lives outside the repository entirely (~/.config/socialize/),
+# referenced by path from .env. These patterns are the second line of defence,
+# for the next time one gets dropped in here by accident.
+*-firebase-adminsdk-*.json
+*service-account*.json
+serviceAccountKey*.json
+
+# Deliberately NOT ignored: google-services.json and GoogleService-Info.plist.
+# They ship inside the app bundle, so anyone with the APK already has them —
+# ignoring them buys no secrecy and breaks EAS builds, which take the files
+# from git. The service-account key above is the opposite: it never leaves a
+# server, and it is the one that grants send access.
+
+# Go / Server
+server/bin/
+server/data/
+server/*.out
+server/coverage.txt
+
 # Editors / IDEs
 .idea/
 .vscode/*

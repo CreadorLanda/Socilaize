@@ -182,6 +182,12 @@ func (s *Service) AddMembers(ctx context.Context, groupID, actor uuid.UUID, user
 			return Group{}, err
 		}
 	}
+	// New members must not be able to read what was said before they
+	// arrived. Everyone's sender key is retired, so the keys they receive
+	// only ever open messages written from here on.
+	if err := s.repo.BumpKeyEpoch(ctx, groupID); err != nil {
+		return Group{}, err
+	}
 	_ = s.repo.InsertSystem(ctx, groupID, actor, "members_added")
 	return s.load(ctx, groupID)
 }
@@ -218,6 +224,12 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, actor, target uuid.
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Group{}, ErrNotMember
 		}
+		return Group{}, err
+	}
+	// The point of removal. Whoever left is holding every member's current
+	// sender key and nothing can take that back — so the keys stop being
+	// current instead. Members rotate on their next send.
+	if err := s.repo.BumpKeyEpoch(ctx, groupID); err != nil {
 		return Group{}, err
 	}
 	_ = s.repo.InsertSystem(ctx, groupID, actor, "member_removed")

@@ -84,7 +84,7 @@ func (s *Service) Verify(ctx context.Context, in VerifyRequest) (*Tokens, *User,
 
 	// Signal identity is supplied by the device on first registration; for now
 	// the skeleton inserts an empty placeholder so the row exists.
-	deviceID, err := s.repo.RegisterDevice(ctx, user.ID, in.Device, in.Platform, []byte{})
+	deviceID, err := s.repo.RegisterDevice(ctx, user.ID, in.Device, in.Platform, in.DeviceKey, []byte{})
 	if err != nil {
 		return nil, nil, fmt.Errorf("register device: %w", err)
 	}

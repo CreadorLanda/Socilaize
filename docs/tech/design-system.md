@@ -2,7 +2,7 @@
 
 > Single source of truth for visual language across mobile, web and desktop.
 
-The design language is **clean, playful and trustworthy**: airy backgrounds, a confident royal-blue primary action, and vivid accents reserved for avatars / status / reactions.
+The design language is **clean, playful and trustworthy**: airy backgrounds, a confident indigo primary action, and vivid accents reserved for avatars / status / reactions.
 
 Tokens live in [`mobile/constants/theme.ts`](../../mobile/constants/theme.ts). This document is the human-readable companion — keep them in sync.
 
@@ -20,12 +20,21 @@ The primary action color. Used for CTAs, links, focused inputs, the active tab i
 | `brand.100` | `#E0E7FF` | Soft chips, pressed-state highlights |
 | `brand.200` | `#C7D2FE` | Disabled primary, dividers in branded sections |
 | `brand.300` | `#A5B4FC` | Decorative accents |
-| `brand.400` | `#6F8BFF` | Dark-mode primary |
-| `brand.500` | `#2D5BFF` | **Primary action — CTA, links, focus ring** |
-| `brand.600` | `#1E40FF` | Hover / pressed primary |
-| `brand.700` | `#1E3AE0` | Active primary |
-| `brand.800` | `#1E3A8A` | Headings on tinted backgrounds |
-| `brand.900` | `#1E2C6E` | High-emphasis text on brand surfaces |
+| `brand.400` | `#818CF8` | **Dark-mode primary** |
+| `brand.500` | `#6366F1` | Decorative only — fails contrast as a primary |
+| `brand.600` | `#4F46E5` | **Light-mode primary — CTA, links, focus ring** |
+| `brand.700` | `#4338CA` | Hover / pressed primary |
+| `brand.800` | `#3730A3` | Headings on tinted backgrounds |
+| `brand.900` | `#312E81` | High-emphasis text on brand surfaces |
+
+The hue comes from the logo, whose bubble is `#566EF7`.
+
+Two shades carry the brand, not one, and neither is the bubble's own colour.
+Measured against WCAG, `#566EF7` scores 4.23:1 with white text and 4.53:1 on
+the dark background — it fails as an action colour in light mode and only
+scrapes through in dark. `600` gives 6.29:1 with white text and 5.96:1 on the
+light background; `400` gives 6.42:1 on dark. Same hue as the logo, moved for
+legibility.
 
 ### 1.2 Neutral (Greys)
 
@@ -85,25 +94,26 @@ Theme tokens map raw palette → semantic role. Components must consume **semant
 | Text | `neutral.900` | `#111827` |
 | Text secondary | `neutral.500` | `#6B7280` |
 | Text muted | `neutral.400` | `#9AA3B2` |
-| Primary | `brand.500` | `#2D5BFF` |
+| Primary | `brand.600` | `#4F46E5` |
 | On-primary | `neutral.0` | `#FFFFFF` |
 | Icon | `neutral.500` | `#6B7280` |
 | Tab icon (inactive) | `neutral.400` | `#9AA3B2` |
-| Tab icon (active) | `brand.500` | `#2D5BFF` |
+| Tab icon (active) | `brand.600` | `#4F46E5` |
 
 ### Dark
 
 | Role | Hex |
 |---|---|
-| Background | `#0B1020` |
-| Surface | `#131A2E` |
-| Surface elevated | `#1B2340` |
-| Border | `#1E2C4F` |
-| Divider | `#162042` |
-| Text | `#E5E9F0` |
-| Text secondary | `#9AA3B2` |
-| Text muted | `#6B7280` |
-| Primary | `#6F8BFF` |
+| Background | `#0E0F13` |
+| Surface | `#191A21` |
+| Surface elevated | `#23242D` |
+| Surface muted | `#131419` |
+| Border | `#2C2E38` |
+| Divider | `#202129` |
+| Text | `#ECEDF2` |
+| Text secondary | `#9A9CA8` |
+| Text muted | `#6C6E7A` |
+| Primary | `#818CF8` |
 | On-primary | `#FFFFFF` |
 
 Brand is lightened in dark mode (`brand.400`) so contrast against the dark surface stays comfortable.
@@ -165,7 +175,7 @@ These are *examples* showing how tokens compose. Implement once in `mobile/compo
 ### Primary CTA (from reference design)
 
 ```tsx
-backgroundColor: Colors.light.primary,    // #2D5BFF
+backgroundColor: Colors.light.primary,    // #4F46E5
 color:           Colors.light.onPrimary,  // #FFFFFF
 borderRadius:    Radii.xl,                // 20
 paddingVertical: Spacing.lg,              // 16

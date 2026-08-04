@@ -153,15 +153,44 @@ func (r *Repository) RevokeFamily(ctx context.Context, familyID uuid.UUID) error
 	return err
 }
 
-// RegisterDevice inserts or updates a device row, returning its id.
-func (r *Repository) RegisterDevice(ctx context.Context, userID uuid.UUID, name, platform string, signalIdentity []byte) (uuid.UUID, error) {
-	id := uuid.New()
+// RegisterDevice returns the id of the caller's device, reusing the row for a
+// device that has signed in before.
+//
+// The comment here used to claim it inserted or updated; it only ever
+// inserted, with a fresh uuid every time. Combined with a client that sent
+// the constant "mobile" as its name, one handset ended up with 23 rows —
+// each publishing its own pre-key bundle, of which only the most recently
+// seen is ever handed out.
+//
+// deviceKey empty means an older client that cannot identify itself. Those
+// still get a new row, because the alternative — guessing which existing row
+// belongs to them — would hand someone else's device id to whoever asked.
+func (r *Repository) RegisterDevice(ctx context.Context, userID uuid.UUID, name, platform, deviceKey string, signalIdentity []byte) (uuid.UUID, error) {
+	if deviceKey != "" {
+		const upsert = `
+			INSERT INTO devices (id, user_id, name, platform, device_key, signal_identity)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (user_id, device_key) WHERE device_key IS NOT NULL
+			DO UPDATE SET name = excluded.name,
+			              platform = excluded.platform,
+			              last_seen_at = NOW()
+			RETURNING id
+		`
+		var out uuid.UUID
+		err := r.db.QueryRow(ctx, upsert,
+			uuid.New(), userID, name, platform, deviceKey, signalIdentity).Scan(&out)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		return out, nil
+	}
+
 	const q = `
 		INSERT INTO devices (id, user_id, name, platform, signal_identity)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
 	`
-	row := r.db.QueryRow(ctx, q, id, userID, name, platform, signalIdentity)
+	row := r.db.QueryRow(ctx, q, uuid.New(), userID, name, platform, signalIdentity)
 	var out uuid.UUID
 	if err := row.Scan(&out); err != nil {
 		return uuid.Nil, err

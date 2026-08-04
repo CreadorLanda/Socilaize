@@ -41,6 +41,10 @@ type VerifyRequest struct {
 	Code     string `json:"code"  binding:"required,len=6"`
 	Device   string `json:"device" binding:"required"`
 	Platform string `json:"platform" binding:"required,oneof=ios android web desktop"`
+	// DeviceKey is generated once per installation and kept by the client, so
+	// signing in again reuses that device row instead of creating another.
+	// Optional: an older client that does not send one still gets a new row.
+	DeviceKey string `json:"device_key" binding:"omitempty,max=64"`
 }
 
 // RefreshRequest exchanges a refresh token for a new access token.
