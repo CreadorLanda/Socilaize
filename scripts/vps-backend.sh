@@ -90,6 +90,12 @@ if ! docker info &>/dev/null; then
   sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
 fi
 
+# Garante que o repo é gravável pelo usuário atual (clone via root deixa root)
+if [[ ! -w "$SERVER_DIR" ]]; then
+  warn "Diretório sem permissão de escrita. Corrigindo dono para $USER..."
+  sudo chown -R "$USER":"$USER" "$ROOT_DIR"
+fi
+
 # 3. Sobe Postgres + Redis (perfil local-pg = tudo rodando na VPS)
 COMPOSE_FILE="deploy/docker/docker-compose.yml"
 log "Subindo Postgres + Redis..."
