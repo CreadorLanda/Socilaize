@@ -1,5 +1,6 @@
 import { resetChatPrefsCache } from './chat-prefs';
 import { resetChatStore } from './chat-store';
+import { unregisterPushWithServer } from './push';
 import { resetDialogs } from './dialog-store';
 import { relockAll } from './chat-lock';
 import { clearE2EEState } from './crypto';
@@ -29,6 +30,8 @@ import { resetStoryStore } from './story-store';
  */
 export async function resetAllStores(): Promise<void> {
   const steps: [string, () => void | Promise<unknown>][] = [
+    // First: it needs the session that the rest of this is about to erase.
+    ['push token', unregisterPushWithServer],
     ['dialogs', resetDialogs],
     ['chats', resetChatStore],
     ['chat prefs', resetChatPrefsCache],

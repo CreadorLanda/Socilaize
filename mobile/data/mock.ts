@@ -79,7 +79,7 @@ export const CHATS: ChatPreview[] = [
     id: 'c4',
     name: 'Anthony (Web3.io)',
     username: '@anthony',
-    avatarUri: dicebear('adventurer', 'Anthony', 'A78BFA'),
+    avatarUri: dicebear('adventurer', 'Anthony', '818CF8'),
     lastMessage: 'voice message · 0:24',
     timestamp: 'Yesterday',
     unreadCount: 0,
@@ -109,7 +109,7 @@ export const CHATS: ChatPreview[] = [
     id: 'c7',
     name: 'Joe Felix',
     username: '@joefelix',
-    avatarUri: dicebear('pixel-art', 'Joe Felix', '6F8BFF'),
+    avatarUri: dicebear('pixel-art', 'Joe Felix', '818CF8'),
     lastMessage: 'Aloha y’all',
     timestamp: 'Mon',
     unreadCount: 0,
@@ -119,7 +119,7 @@ export const CHATS: ChatPreview[] = [
     id: 'g1',
     name: 'Web3 Builders',
     username: '@web3builders',
-    avatarUri: dicebear('shapes', 'Web3 Builders', '6F8BFF'),
+    avatarUri: dicebear('shapes', 'Web3 Builders', '818CF8'),
     lastMessage: 'Welcome aboard — scroll up to catch the thread.',
     timestamp: '08:55',
     unreadCount: 3,
@@ -225,6 +225,8 @@ export type Message = {
   deletedAt?: string;
   /** When true, the message content is consumed on first view. */
   viewOnce?: boolean;
+  /** Opens the reader has left. Undefined when there is no limit. */
+  viewsLeft?: number;
   /** True once a view-once message has been opened locally. */
   viewed?: boolean;
   /** Disappearing message — ISO timestamp when it should self-delete. */
@@ -305,12 +307,12 @@ export const MESSAGES: Record<string, Message[]> = {
     { id: 'm3', text: 'I can take the deploy if nobody else wants it', fromMe: false, timestamp: 'Mon 08:07', historical: true, senderName: 'Samuel Garu', senderAvatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80') },
     { id: 'm4', text: 'go for it Sam 🙌', fromMe: false, timestamp: 'Mon 08:08', historical: true, senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
     { id: 'm5', text: 'gas is wild this morning btw', fromMe: false, timestamp: 'Mon 08:15', historical: true, senderName: 'Dr7e7t', senderAvatarUri: robohash('Dr7e7t8696c7bb4', 'set1') },
-    { id: 'm6', text: 'yeah saw 80 gwei earlier', fromMe: false, timestamp: 'Mon 08:16', historical: true, senderName: 'Anthony', senderAvatarUri: dicebear('adventurer', 'Anthony', 'A78BFA') },
+    { id: 'm6', text: 'yeah saw 80 gwei earlier', fromMe: false, timestamp: 'Mon 08:16', historical: true, senderName: 'Anthony', senderAvatarUri: dicebear('adventurer', 'Anthony', '818CF8') },
     { id: 'm7', text: 'lets wait till it cools down before deploying', fromMe: false, timestamp: 'Mon 08:17', historical: true, senderName: 'Samuel Garu', senderAvatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80') },
     { id: 'm8', text: 'grant review doc is ready for eyes 👀', fromMe: false, timestamp: 'Yesterday 19:40', historical: true, senderName: 'k&8.eth', senderAvatarUri: dicebear('lorelei', 'k8eth', 'FF6FB5') },
     { id: 'm9', text: 'looks solid, left two comments', fromMe: false, timestamp: 'Yesterday 21:02', historical: true, senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
     { id: 'm10', text: 'deploy went through ✅ 0x9f3a…c7', fromMe: false, timestamp: 'Yesterday 22:18', historical: true, senderName: 'Samuel Garu', senderAvatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80') },
-    { id: 'm11', text: 'huge, nice work', fromMe: false, timestamp: 'Yesterday 22:20', historical: true, senderName: 'Anthony', senderAvatarUri: dicebear('adventurer', 'Anthony', 'A78BFA') },
+    { id: 'm11', text: 'huge, nice work', fromMe: false, timestamp: 'Yesterday 22:20', historical: true, senderName: 'Anthony', senderAvatarUri: dicebear('adventurer', 'Anthony', '818CF8') },
     { id: 'm12', text: 'adding a couple of new builders to the group today', fromMe: false, timestamp: '08:50', historical: true, senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
     { id: 'm13', text: 'You joined the group', fromMe: false, timestamp: '08:54', system: true },
     { id: 'm14', text: 'Welcome aboard — scroll up to catch the thread.', fromMe: false, timestamp: '08:55', senderName: 'ninani.eth', senderAvatarUri: dicebear('avataaars', 'ninani', 'FFD93D') },
@@ -321,7 +323,7 @@ export const GROUPS: Record<string, GroupInfo> = {
   g1: {
     id: 'g1',
     name: 'Web3 Builders',
-    avatarUri: dicebear('shapes', 'Web3 Builders', '6F8BFF'),
+    avatarUri: dicebear('shapes', 'Web3 Builders', '818CF8'),
     description: 'Shipping open protocols together.',
     historyEnabled: true,
     historyMode: 'view-only',
@@ -330,7 +332,7 @@ export const GROUPS: Record<string, GroupInfo> = {
       { id: 'u1', name: 'ninani.eth', username: '@ninani', avatarUri: dicebear('avataaars', 'ninani', 'FFD93D'), role: 'admin' },
       { id: 'u2', name: 'Samuel Garu', username: '@samgaru', avatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80'), role: 'admin' },
       { id: 'u3', name: 'Dr7e7t', username: '@dr7e7t', avatarUri: robohash('Dr7e7t8696c7bb4', 'set1'), role: 'member' },
-      { id: 'u4', name: 'Anthony', username: '@anthony', avatarUri: dicebear('adventurer', 'Anthony', 'A78BFA'), role: 'member' },
+      { id: 'u4', name: 'Anthony', username: '@anthony', avatarUri: dicebear('adventurer', 'Anthony', '818CF8'), role: 'member' },
       { id: 'u5', name: 'k&8.eth', username: '@k8eth', avatarUri: dicebear('lorelei', 'k8eth', 'FF6FB5'), role: 'member' },
       { id: 'u6', name: 'You', username: '@you', avatarUri: dicebear('avataaars', 'you', 'EEF2FF'), role: 'member' },
     ],
@@ -349,6 +351,8 @@ export type StoryComment = {
   text: string;
   postedAt: string;
   isAnonymous?: boolean;
+  /** Yours, including your own anonymous ones — decided by the server. */
+  isMine?: boolean;
   /** Nested replies on the public comment thread. */
   replies?: StoryComment[];
 };
@@ -415,7 +419,7 @@ export const CURRENT_USER: UserProfile = {
 
 /** Thumbnails for the profile "Media" tab. */
 export const PROFILE_MEDIA: string[] = Array.from({ length: 9 }, (_, i) =>
-  dicebear('shapes', `media-${i}`, ['EEF2FF', 'FFD93D', 'A78BFA', '4ADE80', 'FF6FB5', '22D3EE'][i % 6]),
+  dicebear('shapes', `media-${i}`, ['EEF2FF', 'FFD93D', '818CF8', '4ADE80', 'FF6FB5', '22D3EE'][i % 6]),
 );
 
 export type ProfileNote = { id: string; text: string; timestamp: string };
@@ -439,10 +443,10 @@ export type CallRecord = {
 export const CALLS: CallRecord[] = [
   { id: 'call1', chatId: 'c1', name: 'ninani.eth', avatarUri: dicebear('avataaars', 'ninani', 'FFD93D'), type: 'video', direction: 'incoming', timestamp: 'Today, 09:42' },
   { id: 'call2', chatId: 'c2', name: 'Samuel Garu', avatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80'), type: 'voice', direction: 'outgoing', timestamp: 'Today, 08:15' },
-  { id: 'call3', chatId: 'c4', name: 'Anthony', avatarUri: dicebear('adventurer', 'Anthony', 'A78BFA'), type: 'voice', direction: 'missed', timestamp: 'Today, 07:50' },
+  { id: 'call3', chatId: 'c4', name: 'Anthony', avatarUri: dicebear('adventurer', 'Anthony', '818CF8'), type: 'voice', direction: 'missed', timestamp: 'Today, 07:50' },
   { id: 'call4', chatId: 'c5', name: 'k&8.eth', avatarUri: dicebear('lorelei', 'k8eth', 'FF6FB5'), type: 'video', direction: 'missed', timestamp: 'Yesterday, 22:03' },
   { id: 'call5', chatId: 'c6', name: 'Margareth Joanne C.', avatarUri: dicebear('micah', 'Margareth Joanne', '22D3EE'), type: 'voice', direction: 'incoming', timestamp: 'Yesterday, 18:30' },
-  { id: 'call6', chatId: 'c7', name: 'Joe Felix', avatarUri: dicebear('pixel-art', 'Joe Felix', '6F8BFF'), type: 'video', direction: 'outgoing', timestamp: 'Yesterday, 14:11' },
+  { id: 'call6', chatId: 'c7', name: 'Joe Felix', avatarUri: dicebear('pixel-art', 'Joe Felix', '818CF8'), type: 'video', direction: 'outgoing', timestamp: 'Yesterday, 14:11' },
   { id: 'call7', chatId: 'c3', name: 'Dr7e7t', avatarUri: robohash('Dr7e7t8696c7bb4', 'set1'), type: 'voice', direction: 'missed', timestamp: 'Mon, 20:47' },
   { id: 'call8', chatId: 'c2', name: 'Samuel Garu', avatarUri: dicebear('big-smile', 'Samuel Garu', '4ADE80'), type: 'voice', direction: 'incoming', timestamp: 'Mon, 11:25' },
 ];

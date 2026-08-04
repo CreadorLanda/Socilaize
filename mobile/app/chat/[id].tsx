@@ -81,6 +81,7 @@ import {
   deleteMessage as apiDeleteMessage,
   editMessage as apiEditMessage,
   listMessages,
+  openLimitedMessage,
   setDisappearing,
   DISAPPEAR_OPTIONS,
   votePoll,
@@ -114,14 +115,22 @@ import {
 import { ensureLocal, mediaIdFromURL, useCacheState } from '@/data/media-cache';
 import {
   loadCachedMessages,
+  markCachedMessageOpened,
   saveCachedMessages,
   trimCachedChat,
 } from '@/data/db/messages';
 import {
-  encryptForPeer,
+  E2EEUnavailable,
+  encryptForGroup,
+  encryptForPeerOrFail,
   ensureKeysPublished,
   ensurePeerIdentityCurrent,
+  groupEpoch,
+  isGroupEnvelope,
+  syncGroupKeys,
 } from '@/data/crypto';
+import { describeE2EEBlocked, reportE2EEBlocked } from '@/data/e2ee-blocked';
+import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
 import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
@@ -169,7 +178,22 @@ const ATTACH_ITEMS: { key: string; icon: keyof typeof Ionicons.glyphMap; color: 
  * Media sends were failing before any network call and the catch blocks
  * discarded the reason, so the only symptom was a bubble that disappeared.
  */
+/**
+ * Does this body have to be decrypted before it can be mapped?
+ *
+ * Both call sites tested `startsWith('soc1.')`, which silently excluded group
+ * envelopes — they carry the `soc1g.` prefix, so a group message would have
+ * been mapped straight from its ciphertext.
+ */
+function needsDecrypt(content?: string | null): boolean {
+  return !!content && (content.startsWith('soc1.') || isGroupEnvelope(content));
+}
+
 function describeError(err: unknown): string {
+  // Checked first: a refusal to encrypt is the one failure here that the
+  // reader can act on, and it would otherwise surface as a bare error name.
+  const blocked = describeE2EEBlocked(err);
+  if (blocked) return blocked;
   if (err instanceof ApiError) return `${err.code}${err.message ? ` — ${err.message}` : ''}`;
   if (err instanceof Error) return err.message;
   return t('chats.action_failed_body');
@@ -413,7 +437,7 @@ export default function ChatScreen() {
         const decrypted: { dto: MessageDTO; body: string; msg: Message }[] = [];
         for (const m of ordered) {
           const base = mapApiMessage(m, meId);
-          if (base.text === '🔒 …' || (m.content && m.content.startsWith('soc1.'))) {
+          if (base.text === '🔒 …' || needsDecrypt(m.content)) {
             const plain = await decryptMessageContent(m, meId, peerId);
             // Re-map from the decrypted body rather than patching `text`.
             // The cache replays mapApiMessage over exactly this plaintext,
@@ -501,9 +525,22 @@ export default function ChatScreen() {
         if (String(dto.chat_id) !== id && ev.chat_id !== id) return;
         const peerId = apiChatInfo?.peer_user_id;
         void (async () => {
-          const mapped = mapApiMessage(dto, meId);
-          if (mapped.text === '🔒 …' || (dto.content && dto.content.startsWith('soc1.'))) {
-            mapped.text = await decryptMessageContent(dto, meId, peerId);
+          // A system message in a group is how a membership change reaches
+          // us when someone else made it. The server has already rotated the
+          // key epoch; re-syncing here is what stops us carrying on with the
+          // generation the departing member still holds.
+          if (isGroup && dto.message_type === 'system') {
+            syncGroupKeys(id).catch(() => {});
+          }
+          let mapped = mapApiMessage(dto, meId);
+          if (mapped.text === '🔒 …' || needsDecrypt(dto.content)) {
+            // Re-mapped from the decrypted body, not patched. Assigning to
+            // `text` alone left everything else derived from the envelope, so
+            // an encrypted attachment arriving live rendered as a message
+            // with no attachment — while the same message rendered correctly
+            // after a reload, which is the history path a few lines up.
+            const plain = await decryptMessageContent(dto, meId, peerId);
+            mapped = mapApiMessage({ ...dto, content: plain }, meId);
           }
           setMessages((prev) => {
             if (prev.some((m) => m.id === mapped.id)) return prev;
@@ -648,7 +685,13 @@ export default function ChatScreen() {
 
   const isGroup = !!chat?.isGroup || apiChatInfo?.type === 'group';
   useEffect(() => {
-    if (isGroup && id) refreshGroup(id).catch(() => {});
+    if (!isGroup || !id) return;
+    refreshGroup(id).catch(() => {});
+    // Pull the sender keys other members sealed for us, and the current
+    // epoch, before anything needs them. The decrypt path can fetch on
+    // demand, but doing it here means the first message of a session opens
+    // immediately instead of after a round trip.
+    syncGroupKeys(id).catch(() => {});
   }, [isGroup, id]);
   const isPending = apiChatInfo?.status === 'pending';
   const isBlocked = apiChatInfo?.status === 'blocked';
@@ -823,7 +866,7 @@ export default function ChatScreen() {
               durationMs: duration * 1000,
             });
             const body = encodeMediaContent(uploaded.url, '', voiceKey);
-            const dto = await apiSendMessage(id, body, 'audio');
+            const dto = await apiSendMessage(id, await encryptBody(body), 'audio');
             const mapped = mapApiMessage(dto, meId);
             setMessages((prev) => {
               if (prev.some((m) => m.id === mapped.id)) {
@@ -1215,16 +1258,15 @@ export default function ChatScreen() {
 
     try {
       for (const msg of toSend) {
-        let payload = msg.text;
-        if (dest && dest.type !== 'group' && dest.peer_user_id) {
-          try {
-            await ensureKeysPublished();
-            payload = await encryptForPeer(dest.peer_user_id, msg.text, {
-              peerUsername: dest.peer_username,
-            });
-          } catch {
-            payload = msg.text; // peer has no bundle yet
-          }
+        // Forwarding is not exempt: a message that was encrypted in one
+        // conversation must not leave in the clear from another, and an
+        // unknown destination is not a licence to send in the clear.
+        let payload: string;
+        try {
+          payload = await encryptForChat(destChatId, dest, msg.text);
+        } catch (err) {
+          reportE2EEBlocked(err);
+          return;
         }
         // Carry the hop count and, for a forwarded channel post, the way
         // back to it. Without this the label never appears, because the
@@ -1310,18 +1352,30 @@ export default function ChatScreen() {
     if (id && !isAIChat) {
       const replyTo = reply ? serverMessageId(reply.id) ?? undefined : undefined;
       (async () => {
-        let payload = text;
-        // Client-side E2EE for direct chats when peer keys are available.
-        if (apiChatInfo?.type !== 'group' && apiChatInfo?.peer_user_id) {
-          try {
-            await ensureKeysPublished();
-            payload = await encryptForPeer(apiChatInfo.peer_user_id, text, {
-              peerUsername: apiChatInfo.peer_username,
-            });
-          } catch {
-            // Fall back to plaintext if peer has no bundle yet.
-            payload = text;
-          }
+        let payload: string;
+        // Direct chats are end-to-end encrypted or they do not send.
+        //
+        // This used to fall back to plaintext on any failure, silently: the
+        // sender's screen looked identical whether the message went out
+        // encrypted or in the clear, so the one promise the app makes about
+        // messages was broken precisely when nobody could tell. Groups are
+        // excluded because they have no E2EE yet — blocking there would stop
+        // group messaging outright, which is a different decision.
+        //
+        // One path for every chat and every message kind. This branch used
+        // to read `type !== 'group'`, so a group's text messages skipped
+        // encryption altogether — the most common message in the app was the
+        // one left in the clear, while its photos were sealed.
+        try {
+          payload = await encryptBody(text);
+        } catch (err) {
+          // Nothing goes to the server. The bubble comes back off the thread
+          // and the text returns to the box, so the message is not lost and
+          // the failure is not mistaken for a delivery.
+          setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          setDraft((d) => (d ? d : text));
+          reportE2EEBlocked(err);
+          return;
         }
         try {
           const dto = await apiSendMessage(id, payload, 'text', replyTo ?? undefined);
@@ -1381,7 +1435,11 @@ export default function ChatScreen() {
     ]);
 
     try {
-      const dto = await apiSendMessage(id, encodeMediaContent(sticker.url), 'sticker');
+      const dto = await apiSendMessage(
+        id,
+        await encryptBody(encodeMediaContent(sticker.url)),
+        'sticker',
+      );
       setMessages((prev) => {
         const mapped = mapApiMessage(dto, meId);
         mapped.attachment = { kind: 'sticker', uri, width: STICKER_BUBBLE_SIZE, height: STICKER_BUBBLE_SIZE };
@@ -1443,10 +1501,17 @@ export default function ChatScreen() {
             : m,
         ),
       );
-      // The key travels inside the message body, which is itself E2E
-      // encrypted for the peer below.
+      // The key travels inside the message body, which encryptBody then
+      // encrypts for the peer. It used to say the same thing and send the
+      // body in the clear, which handed the server the file key.
       const body = encodeMediaContent(uploaded.url, caption, mediaKey);
-      const dto = await apiSendMessage(id, body, kind, undefined, viewLimit);
+      const dto = await apiSendMessage(
+        id,
+        await encryptBody(body),
+        kind,
+        undefined,
+        viewLimit,
+      );
       const mapped = mapApiMessage(dto, meId);
       setMessages((prev) => {
         if (prev.some((m) => m.id === mapped.id)) {
@@ -1577,7 +1642,7 @@ export default function ChatScreen() {
       });
       const dto = await apiSendMessage(
         id,
-        encodeMediaContent(uploaded.url, asset.name, audioKey),
+        await encryptBody(encodeMediaContent(uploaded.url, asset.name, audioKey)),
         'audio',
       );
       setMessages((prev) => [...prev, mapApiMessage(dto, meId)]);
@@ -1654,7 +1719,7 @@ export default function ChatScreen() {
     try {
       await apiSendMessage(
         id,
-        JSON.stringify(attachment),
+        await encryptBody(JSON.stringify(attachment)),
         wireType,
         reply ? serverMessageId(reply.id) ?? undefined : undefined,
       );
@@ -1688,7 +1753,7 @@ export default function ChatScreen() {
           mimeType: asset.mimeType ?? 'application/octet-stream',
         });
         const body = encodeMediaContent(uploaded.url, asset.name, docKey);
-        await apiSendMessage(id, body, 'document');
+        await apiSendMessage(id, await encryptBody(body), 'document');
       } catch (err) {
         appAlert(t('chats.action_failed_title'), describeError(err));
       }
@@ -1779,8 +1844,106 @@ export default function ChatScreen() {
 
   // Mark a view-once message as opened. On a real backend this would also
   // fire an event to the bridge so the sender sees "Opened".
+  /**
+   * Open a limited-view message, consuming one of its opens.
+   *
+   * This used to flip a local flag and nothing else, so reopening the chat
+   * showed the message sealed again and the limit meant nothing. The server
+   * is the only place that can count: a client that tracks its own opens is
+   * a client that can decide not to.
+   */
+  /**
+   * Encrypt a message body for this conversation, or refuse to send it.
+   *
+   * Every kind of message goes through here, not just text. Media was the
+   * worse case: uploadEncryptedMedia encrypts the file bytes with a per-file
+   * key and that key travels inside the body — so a body sent in the clear
+   * handed the server the ciphertext and the key to it in the same request.
+   * Two comments in the codebase asserted the body was "itself E2E encrypted
+   * for the peer"; it was not, and 10 of 23 media messages in the database
+   * had a readable file key.
+   *
+   * Groups take the sender-key path: one symmetric key per member, sealed to
+   * the others over the pairwise session. See data/crypto/group-session.
+   */
+  const encryptForChat = async (
+    chatId: string,
+    chat: ChatDTO | null | undefined,
+    body: string,
+  ): Promise<string> => {
+    // Cheap after the first call: publishing is gated on when it last
+    // succeeded. It used to run in full on every send, which is where the
+    // delay before a direct message moved came from.
+    await ensureKeysPublished();
+
+    if (chat?.type === 'group') {
+      // Forwarding targets a chat other than the one on screen, so the
+      // members cannot be taken from the loaded group.
+      const members =
+        chatId === id && group?.members?.length
+          ? group.members.map((m) => ({
+              user_id: m.id,
+              username: m.username.replace(/^@/, ''),
+            }))
+          : ((await getGroup(chatId)).members ?? []).map((m: GroupMemberDTO) => ({
+              user_id: m.user_id,
+              username: m.username,
+            }));
+      if (members.length === 0) throw new E2EEUnavailable('peer_unknown');
+      return encryptForGroup(chatId, body, members, await groupEpoch(chatId));
+    }
+
+    if (!chat?.peer_user_id) throw new E2EEUnavailable('peer_unknown');
+    return encryptForPeerOrFail(chat.peer_user_id, body, {
+      peerUsername: chat.peer_username,
+    });
+  };
+
+  const encryptBody = (body: string): Promise<string> =>
+    encryptForChat(id ?? '', apiChatInfo, body);
+
+  /**
+   * Messages opened during this visit to the screen.
+   *
+   * Deliberately not persisted and deliberately not the same thing as the
+   * server's "spent". Spent says the allowance is gone; this says the
+   * content is on screen right now. Leaving the chat closes it again, which
+   * is what a view-once message is for.
+   */
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+
   const handleViewOnce = (msgId: string) => {
-    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, viewed: true } : m)));
+    const serverId = serverMessageId(msgId);
+    if (!id || serverId == null) {
+      setRevealed((prev) => new Set(prev).add(msgId));
+      return;
+    }
+    openLimitedMessage(id, serverId)
+      .then(({ views_left }) => {
+        // Revealed first, then marked spent: the tap has to show something.
+        setRevealed((prev) => new Set(prev).add(msgId));
+        void markCachedMessageOpened(msgId, views_left ?? 0);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? { ...m, viewed: (views_left ?? 0) <= 0, viewsLeft: views_left ?? 0 }
+              : m,
+          ),
+        );
+      })
+      .catch((err) => {
+        // 410 means it was already used up — show it as spent rather than
+        // as an error, because that is what happened.
+        const code = err instanceof ApiError ? err.code : '';
+        if (code === 'views_exhausted') {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msgId ? { ...m, viewed: true, viewsLeft: 0 } : m)),
+          );
+          appAlert(t('chat.view_once_spent_title'), t('chat.view_once_spent_body'));
+          return;
+        }
+        appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+      });
   };
 
   const hasDraft = draft.trim().length > 0;
@@ -2026,6 +2189,7 @@ export default function ChatScreen() {
                   onReply={replyFromSwipe}
                   onVote={handleVote}
                   onViewOnce={handleViewOnce}
+                  revealed={revealed}
                 />
               )
             }
@@ -3039,6 +3203,7 @@ function BubbleBody({
   query,
   onVote,
   onViewOnce,
+  revealed,
   onOpenMedia,
   onLongPressMedia,
 }: {
@@ -3048,6 +3213,8 @@ function BubbleBody({
   query: string;
   onVote?: (optionId: string) => void;
   onViewOnce?: (msgId: string) => void;
+  /** Ids opened during this visit — see the screen's `revealed`. */
+  revealed?: Set<string>;
   onOpenMedia?: (msg: Message) => void;
   onLongPressMedia?: () => void;
 }) {
@@ -3075,9 +3242,35 @@ function BubbleBody({
     );
   }
 
-  // View-once gate — until tapped, show sealed UI.
-  if (msg.viewOnce && !msg.viewed) {
+  // View-once gate.
+  //
+  // The content shows only while the message is open in this session. It used
+  // to be gated on `viewed` alone, which inverted the whole feature: once the
+  // view had been spent the flag stayed true, so the message displayed its
+  // contents from then on, on every reload, forever. A spent one is closed
+  // for good and says so.
+  if (msg.viewOnce && !revealed?.has(msg.id)) {
+    const spent = !!msg.viewed;
     const accent = mine ? colors.onPrimary : colors.primary;
+    const body = (
+      <>
+        <View style={[styles.viewOnceIcon, { borderColor: accent }, spent && styles.viewOnceSpent]}>
+          <Ionicons name={spent ? 'eye-off-outline' : 'eye-outline'} size={18} color={accent} />
+        </View>
+        <View style={styles.viewOnceText}>
+          <Text style={[styles.viewOnceTitle, { color: mine ? colors.onPrimary : colors.text }]}>
+            {spent ? t('chat.view_once_opened') : t('chat.view_once')}
+          </Text>
+          <Text style={[styles.viewOnceHint, { color: mine ? 'rgba(255,255,255,0.75)' : colors.textSecondary }]}>
+            {spent ? t('chat.view_once_opened_hint') : t('chat.view_once_tap')}
+          </Text>
+        </View>
+        <MetaRow msg={msg} />
+      </>
+    );
+    // Nothing to tap once it is spent: an affordance that only ever produces
+    // "already opened" is an invitation to be disappointed.
+    if (spent) return <View style={styles.viewOnceRow}>{body}</View>;
     return (
       <Pressable
         onPress={onViewOnce ? () => onViewOnce(msg.id) : undefined}
@@ -3085,18 +3278,7 @@ function BubbleBody({
         accessibilityRole="button"
         accessibilityLabel={t('chat.view_once_tap')}
       >
-        <View style={[styles.viewOnceIcon, { borderColor: accent }]}>
-          <Ionicons name="eye-outline" size={18} color={accent} />
-        </View>
-        <View style={styles.viewOnceText}>
-          <Text style={[styles.viewOnceTitle, { color: mine ? colors.onPrimary : colors.text }]}>
-            {t('chat.view_once')}
-          </Text>
-          <Text style={[styles.viewOnceHint, { color: mine ? 'rgba(255,255,255,0.75)' : colors.textSecondary }]}>
-            {t('chat.view_once_tap')}
-          </Text>
-        </View>
-        <MetaRow msg={msg} />
+        {body}
       </Pressable>
     );
   }
@@ -3278,6 +3460,7 @@ function Bubble({
   onReply,
   onVote,
   onViewOnce,
+  revealed,
   onOpenMedia,
 }: {
   msg: GroupedMessage;
@@ -3292,6 +3475,7 @@ function Bubble({
   onReply: (msg: GroupedMessage) => void;
   onVote: (msgId: string, optionId: string) => void;
   onViewOnce: (msgId: string) => void;
+  revealed: Set<string>;
   onOpenMedia: (msg: Message) => void;
 }) {
   const { colors, chat: chrome, layout, metrics } = useTheme();
@@ -3452,6 +3636,7 @@ function Bubble({
               query={query}
               onVote={(optId) => onVote(msg.id, optId)}
               onViewOnce={onViewOnce}
+              revealed={revealed}
               onOpenMedia={onOpenMedia}
               onLongPressMedia={handleLongPress}
             />
@@ -4143,6 +4328,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   viewOnceText: { flex: 1, gap: 1 },
+  // Spent: still legible, visibly no longer a thing you can open.
+  viewOnceSpent: { opacity: 0.45 },
   viewOnceTitle: { ...Typography.caption, fontWeight: '700' },
   viewOnceHint: { ...Typography.micro },
   metaOverlay: {

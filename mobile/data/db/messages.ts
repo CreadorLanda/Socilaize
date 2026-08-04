@@ -36,6 +36,8 @@ type Row = {
   source_channel_id: string | null;
   source_post_id: string | null;
   expires_at: string | null;
+  view_limit: number | null;
+  views_left: number | null;
 };
 
 function rowToDTO(r: Row): MessageDTO {
@@ -60,6 +62,8 @@ function rowToDTO(r: Row): MessageDTO {
     source_channel_id: r.source_channel_id ?? undefined,
     source_post_id: r.source_post_id ?? undefined,
     expires_at: r.expires_at ?? undefined,
+    view_limit: r.view_limit ?? undefined,
+    views_left: r.views_left ?? undefined,
   };
 }
 
@@ -81,7 +85,8 @@ export async function loadCachedMessages(
   const res = await db.execute(
     `SELECT server_id, chat_id, sender_id, sender_name, sender_avatar, body,
             message_type, reply_to_id, created_at, edited_at, deleted_at, status,
-            forward_count, source_channel_id, source_post_id, expires_at
+            forward_count, source_channel_id, source_post_id, expires_at,
+            view_limit, views_left
        FROM messages
       WHERE chat_id = ? AND server_id IS NOT NULL
       ORDER BY server_id DESC
@@ -114,8 +119,9 @@ export async function saveCachedMessages(
         `INSERT INTO messages
            (id, server_id, chat_id, sender_id, sender_name, sender_avatar, body,
             message_type, reply_to_id, created_at, edited_at, deleted_at, status, pending,
-            forward_count, source_channel_id, source_post_id, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+            forward_count, source_channel_id, source_post_id, expires_at,
+            view_limit, views_left)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            body        = excluded.body,
            sender_name = excluded.sender_name,
@@ -128,6 +134,9 @@ export async function saveCachedMessages(
            source_channel_id = excluded.source_channel_id,
            source_post_id    = excluded.source_post_id,
            expires_at        = excluded.expires_at,
+           view_limit        = excluded.view_limit,
+           -- Opens only ever go down, so never let a stale refresh restore one.
+           views_left        = MIN(COALESCE(messages.views_left, 999), COALESCE(excluded.views_left, 999)),
            -- Receipts only ever move forward. Without this guard a refresh
            -- that raced a websocket update could walk a read message back to
            -- delivered, flipping the ticks backwards on screen.
@@ -155,10 +164,28 @@ export async function saveCachedMessages(
           dto.source_channel_id ?? null,
           dto.source_post_id ?? null,
           dto.expires_at ?? null,
+          dto.view_limit ?? null,
+          dto.views_left ?? null,
         ],
       );
     }
   });
+}
+
+/**
+ * Record that a limited-view message was opened.
+ *
+ * Written straight through rather than waiting for the next fetch: the whole
+ * point of caching is that the chat can be reopened without the network, and
+ * a cached copy that still says "tap to view" would offer an open that no
+ * longer exists.
+ */
+export async function markCachedMessageOpened(
+  messageId: string,
+  viewsLeft: number,
+): Promise<void> {
+  const db = await getDB();
+  await db.execute(`UPDATE messages SET views_left = ? WHERE id = ?`, [viewsLeft, messageId]);
 }
 
 /** Drop a message locally — mirrors a delete the user made or received. */

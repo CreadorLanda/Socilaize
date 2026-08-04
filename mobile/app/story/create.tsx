@@ -52,7 +52,9 @@ type EditTool = 'text' | 'sticker' | 'draw' | 'music' | null;
 type StickerKind = 'poll' | 'question' | 'mention' | null;
 
 const { width: W, height: H } = Dimensions.get('window');
-const ACCENTS = ['#2D5BFF', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#A78BFA', '#EF4444', '#FFFFFF'];
+// The brand violet leads; the rest are the user's own choices, so blue
+// stays available as one of them rather than as the product's colour.
+const ACCENTS = ['#4F46E5', '#111827', '#10B981', '#FF6FB5', '#F59E0B', '#2D5BFF', '#EF4444', '#FFFFFF'];
 /** All creatable modes — live is listed but blocked until hangout ships. */
 const CAPTURE_MODES: CaptureMode[] = ['type', 'normal', 'boomerang', 'handsfree', 'audio', 'live'];
 
@@ -989,7 +991,7 @@ function ToggleRow({
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ false: 'rgba(255,255,255,0.18)', true: '#2D5BFF' }}
+        trackColor={{ false: 'rgba(255,255,255,0.18)', true: '#4F46E5' }}
         thumbColor="#FFF"
       />
     </View>
@@ -1109,7 +1111,7 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: 48,
-    backgroundColor: 'rgba(45,91,255,0.85)',
+    backgroundColor: 'rgba(79, 70, 229,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1204,7 +1206,7 @@ const styles = StyleSheet.create({
   },
   shutterBoomerang: { borderColor: '#F59E0B' },
   shutterHandsfree: { borderColor: '#EF4444' },
-  shutterAudio: { borderColor: '#2D5BFF', backgroundColor: '#FFF' },
+  shutterAudio: { borderColor: '#4F46E5', backgroundColor: '#FFF' },
   shutterRecording: { borderColor: '#EF4444' },
   shutterInner: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#FFF' },
   shutterInnerVideo: { width: 36, height: 36, borderRadius: 8, backgroundColor: '#EF4444' },

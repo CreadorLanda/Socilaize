@@ -40,6 +40,8 @@ export const authVerify = (input: {
   phone: string;
   code: string;
   device: string;
+  /** Stable per-installation id, so the server reuses this device's row. */
+  device_key?: string;
   platform: Platform;
 }) => api.post<VerifyResponse>('/api/auth/verify', input, { auth: false });
 

@@ -101,7 +101,7 @@ export function mapStoryDTO(s: StoryDTO): import('@/data/mock').Story {
     postedAt: relativeTime(s.created_at),
     expiresIn: leftH > 0 ? `${leftH}h left` : 'expiring',
     durationSec: s.duration_sec || 5,
-    accent: s.accent || '#2D5BFF',
+    accent: s.accent || '#4F46E5',
     // Absent means allowed: an older server that does not send these must
     // not read as "everything switched off".
     allowComments: s.allow_comments !== false,

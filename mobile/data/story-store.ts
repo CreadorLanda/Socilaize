@@ -181,7 +181,7 @@ export function queueStoryPublish(input: StoryPublishInput): string {
     postedAt: 'now',
     expiresIn: '24h left',
     durationSec: input.durationSec ?? 5,
-    accent: input.accent || '#2D5BFF',
+    accent: input.accent || '#4F46E5',
     viewers: 0,
     replies: 0,
     isViewed: false,

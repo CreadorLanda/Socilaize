@@ -486,7 +486,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: Radii.pill,
-    backgroundColor: 'rgba(45,91,255,0.85)',
+    backgroundColor: 'rgba(79, 70, 229,0.85)',
   },
   verifiedText: { ...Typography.micro, color: '#FFF', fontWeight: '700' },
   featuredBottom: {

@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 
 import { AppToast } from '@/components/ui/app-toast';
 import { DialogHost } from '@/components/ui/dialog-host';
+import { AnimatedSplash } from '@/components/ui/splash';
 import { bootstrapAuth } from '@/data/auth-store';
 import { ensureKeysPublished } from '@/data/crypto';
 import { registerPushWithServer } from '@/data/push';
@@ -25,6 +26,7 @@ export default function RootLayout() {
   // but cover it with a splash backstop until boot resolves — this hides the
   // brief onboarding flash that returning users would otherwise see.
   const [booted, setBooted] = useState(false);
+  const [splashGone, setSplashGone] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -169,18 +171,15 @@ export default function RootLayout() {
             />
             <Stack.Screen name="modal" options={{ presentation: 'modal', headerShown: false }} />
           </Stack>
-          {!booted ? (
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: palette.background,
-              }}
-            />
+          {/*
+            Covers the app until boot resolves, and says so while it does.
+            `booted` starts the exit; `splashGone` removes the cover once the
+            exit has actually finished, so the two are not the same flag —
+            unmounting on `booted` alone would cut the animation off at the
+            first frame.
+          */}
+          {!splashGone ? (
+            <AnimatedSplash done={booted} onDone={() => setSplashGone(true)} />
           ) : null}
           {/* Global toast for background story publish, etc. */}
           <AppToast />

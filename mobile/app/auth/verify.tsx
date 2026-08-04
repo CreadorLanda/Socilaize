@@ -20,6 +20,7 @@ import { authStart, authVerify, type Platform } from '@/data/api/auth';
 import { ApiError } from '@/data/api/client';
 import { setSession } from '@/data/auth-store';
 import { useTheme } from '@/hooks/use-theme';
+import { getInstallId } from '@/data/install-id';
 import { t } from '@/i18n';
 import { useRegistration } from '@/store/registration';
 
@@ -83,6 +84,9 @@ export default function VerifyScreen() {
         phone: e164,
         code,
         device: 'mobile',
+        // Without this the server cannot tell this phone from a new one and
+        // registers another device row on every sign-in.
+        device_key: await getInstallId(),
         platform: devicePlatform(),
       });
       await setSession(res.user, res.tokens, e164);

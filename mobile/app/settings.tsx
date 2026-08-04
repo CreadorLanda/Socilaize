@@ -205,16 +205,21 @@ export default function SettingsScreen() {
         text: t('settings.logout_confirm'),
         style: 'destructive',
         onPress: () => {
-          // Fire-and-forget: never let a stuck network keep the user on
-          // this screen. Navigate first; the SecureStore wipe and the
-          // server revocation race their own deadlines in the background.
-          clearSession().catch(() => {
-            /* swallowed — local SecureStore wipe is best-effort */
-          });
           // Every in-memory store, the encrypted database and the media
           // cache. Each one outlives the account that filled it, so the next
           // person to sign in inherits the last one's data — see data/reset.
-          void resetAllStores();
+          //
+          // Before clearSession, not alongside it: the first step unregisters
+          // this device for push, and that call needs the token the session
+          // is about to erase. Running both at once meant the DELETE went out
+          // authenticated-or-not depending on which promise won, so the
+          // device stayed subscribed to an account nobody was signed in to.
+          // resetAllStores never rejects and each step is bounded.
+          void resetAllStores().finally(() => {
+            clearSession().catch(() => {
+              /* swallowed — local SecureStore wipe is best-effort */
+            });
+          });
           // replace, not push — the user shouldn't be able to swipe back
           // into a screen that still thinks it's authenticated.
           router.replace('/onboarding');

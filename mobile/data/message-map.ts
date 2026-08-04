@@ -1,6 +1,12 @@
 import { decodeMediaContent, mediaFileURL } from '@/data/api/media';
 import type { MessageDTO, ReactionDTO } from '@/data/api/messages';
-import { decryptFromPeer, isEnvelope } from '@/data/crypto';
+import {
+  decryptFromGroup,
+  decryptFromPeer,
+  isEnvelope,
+  isGroupEnvelope,
+  syncGroupKeys,
+} from '@/data/crypto';
 import type { MediaAttachment, Message, MessageAttachment } from '@/data/mock';
 
 /**
@@ -31,6 +37,13 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     deletedAt: m.deleted_at,
     status: m.read_by && m.read_by > 0 ? 'read' : m.delivered_to && m.delivered_to > 0 ? 'delivered' : 'sent',
     expiresAt: m.expires_at,
+    // The whole limited-view feature was a UI flag nothing ever set: the
+    // server has tracked the limit from the start and the client read
+    // neither field, so a "view once" opened forever.
+    viewOnce: m.view_limit != null,
+    viewsLeft: m.views_left,
+    viewed: m.view_limit != null && (m.views_left ?? 1) <= 0,
+
     forwardCount: m.forward_count ?? 0,
     sourceChannelId: m.source_channel_id,
     sourcePostId: m.source_post_id,
@@ -162,6 +175,21 @@ export async function decryptMessageContent(
   meId?: string | null,
   peerUserId?: string | null,
 ): Promise<string> {
+  // A group envelope opens with a sender key, not a pairwise session. When
+  // the key has not arrived yet we fetch and retry once, rather than handing
+  // back the ciphertext to be rendered as gibberish.
+  if (isGroupEnvelope(m.content)) {
+    const chatId = String(m.chat_id);
+    const first = await decryptFromGroup(chatId, m.content);
+    if (first != null) return first;
+    try {
+      await syncGroupKeys(chatId);
+    } catch {
+      return '[encrypted]';
+    }
+    return (await decryptFromGroup(chatId, m.content)) ?? '[encrypted]';
+  }
+
   if (!isEnvelope(m.content)) return m.content;
   const peer =
     peerUserId ||

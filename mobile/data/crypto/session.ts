@@ -9,6 +9,7 @@ import {
   identityForUsername,
   type PreKeyBundle,
 } from '@/data/api/keys';
+import { ApiError } from '@/data/api/client';
 import { getCurrentUser } from '@/data/auth-store';
 
 import {
@@ -311,11 +312,11 @@ export async function establishSessionAsResponder(
   return session;
 }
 
-function messageKey(root: Uint8Array, n: number): Uint8Array {
+export function messageKey(root: Uint8Array, n: number): Uint8Array {
   return hkdfLike(root, `msg-${n}`);
 }
 
-function nonceFromCounter(n: number): Uint8Array {
+export function nonceFromCounter(n: number): Uint8Array {
   const nonce = new Uint8Array(24);
   const view = new DataView(nonce.buffer);
   view.setUint32(0, n, false);
@@ -506,4 +507,89 @@ export async function clearSession(peerUserId: string): Promise<void> {
   const k = sessionKey(peerUserId);
   await SecureStore.deleteItemAsync(k);
   sessionCache.delete(k);
+}
+
+/**
+ * Why a message could not be encrypted.
+ *
+ * The three send paths used to catch the failure and send the plaintext
+ * instead, each with a comment guessing that the peer had no bundle yet.
+ * Nobody had checked: the error was swallowed before it could be read, so
+ * the guess had never been either confirmed or contradicted. A reason that
+ * is never recorded is a reason nobody can act on.
+ */
+export class E2EEUnavailable extends Error {
+  constructor(
+    readonly reason:
+      | 'peer_has_no_keys'
+      | 'peer_unknown'
+      | 'offline'
+      | 'local_keys_missing'
+      // The endpoint answered in a way that means the server is wrong, not
+      // the peer — a missing route, a rejected body. Worth its own reason
+      // because the fix is on the server, not on anyone's phone.
+      | 'server'
+      | 'failed',
+    readonly cause?: unknown,
+  ) {
+    super(`e2ee_unavailable:${reason}`);
+  }
+}
+
+/**
+ * Encrypt for a peer, or refuse.
+ *
+ * There is no plaintext path out of here. A messenger that quietly downgrades
+ * when encryption fails offers a promise it does not keep — and the person
+ * affected is the one who never finds out, since the sender's screen looks
+ * identical either way.
+ */
+export async function encryptForPeerOrFail(
+  peerUserId: string,
+  plaintext: string,
+  opts?: { peerUsername?: string },
+): Promise<string> {
+  if (!opts?.peerUsername) {
+    // Without a username there is no bundle to fetch, so a first message to
+    // this peer can never be encrypted. Worth naming separately: it is a bug
+    // in whatever opened the chat, not a problem with the peer.
+    const existing = await loadSession(peerUserId);
+    if (!existing) throw new E2EEUnavailable('peer_unknown');
+  }
+  try {
+    return await encryptForPeer(peerUserId, plaintext, opts);
+  } catch (err) {
+    throw new E2EEUnavailable(classify(err), err);
+  }
+}
+
+/**
+ * Turn any failure into one that names itself.
+ *
+ * A group send that hit a missing endpoint reported `send blocked: failed
+ * [Error: http_404]` — the reason was the fallback, because the group path
+ * threw the raw API error and only the pairwise path was classified. "failed"
+ * says nothing, and a 404 on an endpoint is a very different problem from a
+ * peer without keys.
+ */
+export function asE2EEUnavailable(err: unknown): E2EEUnavailable {
+  if (err instanceof E2EEUnavailable) return err;
+  return new E2EEUnavailable(classify(err), err);
+}
+
+function classify(err: unknown): E2EEUnavailable['reason'] {
+  const msg = err instanceof Error ? err.message : '';
+  if (msg === 'local_keys_missing') return 'local_keys_missing';
+  if (msg === 'session_missing') return 'peer_unknown';
+  if (err instanceof ApiError) {
+    // 404 is the peer having published nothing yet — an old client, or an
+    // account that has not opened the app since key publishing existed.
+    if (err.status === 404) return 'peer_has_no_keys';
+    // 5xx and network-level codes are the server's problem, not the peer's.
+    if (err.status >= 500 || err.status === 0) return 'offline';
+    return 'server';
+  }
+  // fetch rejects rather than resolving when the request never left.
+  if (err instanceof TypeError) return 'offline';
+  return 'failed';
 }

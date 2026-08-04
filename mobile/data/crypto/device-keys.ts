@@ -224,11 +224,52 @@ export async function clearDeviceKeys(): Promise<void> {
  * Ensure identity + SPK + OTK pool exist and are published to the server.
  * Call after login / session restore.
  */
+/**
+ * Republish this often even when nothing changed, so a server that lost the
+ * bundle is not left without one forever. The keys themselves do not expire.
+ */
+const REPUBLISH_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/** Shared by concurrent callers, so two sends do not both upload. */
+let publishInFlight: Promise<DeviceKeyMaterial> | null = null;
+
+/**
+ * Make sure this device's public keys are on the server.
+ *
+ * Called before every direct send, and it used to do the full job every
+ * time: derive 40 public keys from their secrets — 40 scalar multiplications,
+ * measured at 53 ms on a laptop and several times that on a phone — read and
+ * rewrite the encrypted database, and POST the whole bundle. That was the
+ * delay between pressing send in a direct chat and the message moving, and
+ * it is why groups felt instant by comparison: the group path never called
+ * this at all.
+ *
+ * `uploadedAt` was already being written on every successful upload and had
+ * never been read. It is the gate.
+ */
 export async function ensureKeysPublished(): Promise<DeviceKeyMaterial> {
+  if (publishInFlight) return publishInFlight;
+  publishInFlight = publishKeys();
+  try {
+    return await publishInFlight;
+  } finally {
+    publishInFlight = null;
+  }
+}
+
+async function publishKeys(): Promise<DeviceKeyMaterial> {
   let material = await loadDeviceKeys();
   if (!material) {
     material = generateFresh();
     await persist(material);
+  } else if (
+    material.uploadedAt &&
+    Date.now() - Date.parse(material.uploadedAt) < REPUBLISH_AFTER_MS
+  ) {
+    // Already published and nothing has changed. A failed upload leaves
+    // uploadedAt untouched, so an offline attempt still retries on the next
+    // send rather than being remembered as done.
+    return material;
   }
 
   // Build public OTK list from secrets (derive public via nacl.box.keyPair.fromSecretKey)

@@ -34,7 +34,15 @@ import { deleteChannelPost, editChannelPost } from '@/data/api/channels';
 import { ForwardPicker } from '@/components/chat/forward-picker';
 import { sendMessage as apiSendMessage } from '@/data/api/messages';
 import { refreshChats, useChats } from '@/data/chat-store';
-import { encryptForPeer, ensureKeysPublished } from '@/data/crypto';
+import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
+import {
+  E2EEUnavailable,
+  encryptForGroup,
+  encryptForPeerOrFail,
+  ensureKeysPublished,
+  groupEpoch,
+} from '@/data/crypto';
+import { reportE2EEBlocked } from '@/data/e2ee-blocked';
 import { MediaViewer, type ViewerItem } from '@/components/chat/media-viewer';
 import { ChannelCover, ChannelLogo } from '@/components/ui/channel-art';
 import {
@@ -294,16 +302,27 @@ export default function ChannelScreen() {
         : encodeMediaContent(mediaPath!, post.text ?? '', null);
 
     try {
-      let payload = body;
-      if (dest && dest.type !== 'group' && dest.peer_user_id) {
-        try {
-          await ensureKeysPublished();
-          payload = await encryptForPeer(dest.peer_user_id, body, {
+      // Groups included. This branch read `type !== 'group'`, so forwarding a
+      // post into a group sent it in the clear while the same post sent to
+      // one person was sealed.
+      let payload: string;
+      try {
+        await ensureKeysPublished();
+        if (dest?.type === 'group') {
+          const members = ((await getGroup(destChatId)).members ?? []).map(
+            (m: GroupMemberDTO) => ({ user_id: m.user_id, username: m.username }),
+          );
+          if (members.length === 0) throw new E2EEUnavailable('peer_unknown');
+          payload = await encryptForGroup(destChatId, body, members, await groupEpoch(destChatId));
+        } else {
+          if (!dest?.peer_user_id) throw new E2EEUnavailable('peer_unknown');
+          payload = await encryptForPeerOrFail(dest.peer_user_id, body, {
             peerUsername: dest.peer_username,
           });
-        } catch {
-          payload = body; // peer has no bundle yet
         }
+      } catch (err) {
+        reportE2EEBlocked(err);
+        return;
       }
       await apiSendMessage(destChatId, payload, wireType, undefined, null, {
         // A channel post is first-hand where it stands, so it carries zero
@@ -717,7 +736,7 @@ export default function ChannelScreen() {
                       {channel.name}
                     </Text>
                     {channel.verified ? (
-                      <Ionicons name="checkmark-circle" size={16} color="#6F8BFF" />
+                      <Ionicons name="checkmark-circle" size={16} color="#818CF8" />
                     ) : null}
                   </View>
                   <Text style={styles.heroSub} numberOfLines={1}>
@@ -1239,7 +1258,7 @@ export default function ChannelScreen() {
                     style={[
                       styles.replyingBar,
                       {
-                        backgroundColor: isDark ? 'rgba(45,91,255,0.12)' : `${colors.primary}12`,
+                        backgroundColor: isDark ? 'rgba(79, 70, 229,0.12)' : `${colors.primary}12`,
                         borderColor: colors.primary,
                       },
                     ]}

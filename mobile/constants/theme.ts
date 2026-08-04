@@ -1,17 +1,27 @@
 import { Platform } from 'react-native';
 
 export const Palette = {
+  /**
+   * Indigo, taken from the logo — the bubble is #566EF7.
+   *
+   * Two shades are in use, not one: 600 on light surfaces and 400 on dark.
+   * A single hex cannot serve both. Measured against WCAG, 600 gives 6.29:1
+   * with white text but only 3.05:1 on the dark background, and 400 is the
+   * mirror image at 2.98:1 and 6.42:1. The logo's own #566EF7 fails as an
+   * action colour in both modes (4.23 and 4.53), which is why neither shade
+   * is the literal bubble colour — same hue, moved for legibility.
+   */
   brand: {
     50: '#EEF2FF',
     100: '#E0E7FF',
     200: '#C7D2FE',
     300: '#A5B4FC',
-    400: '#6F8BFF',
-    500: '#2D5BFF',
-    600: '#1E40FF',
-    700: '#1E3AE0',
-    800: '#1E3A8A',
-    900: '#1E2C6E',
+    400: '#818CF8',
+    500: '#6366F1',
+    600: '#4F46E5',
+    700: '#4338CA',
+    800: '#3730A3',
+    900: '#312E81',
   },
   neutral: {
     0: '#FFFFFF',
@@ -43,8 +53,9 @@ export const Palette = {
   },
 } as const;
 
-const tintColorLight = Palette.brand[500];
-const tintColorDark = '#6F8BFF';
+// 600 on light, 400 on dark — see the note on Palette.brand.
+const tintColorLight = Palette.brand[600];
+const tintColorDark = Palette.brand[400];
 
 export const Colors = {
   light: {
@@ -58,7 +69,7 @@ export const Colors = {
     border: Palette.neutral[200],
     divider: Palette.neutral[100],
     tint: tintColorLight,
-    primary: Palette.brand[500],
+    primary: Palette.brand[600],
     onPrimary: Palette.neutral[0],
     icon: Palette.neutral[500],
     tabIconDefault: Palette.neutral[400],
@@ -69,9 +80,10 @@ export const Colors = {
     info: Palette.semantic.info,
   },
   dark: {
-    // Cool-neutral charcoal ramp — only a whisper of the brand hue (low chroma)
-    // so the royal-blue primary reads as the one confident color, not as
-    // competing navy. Ordered by elevation: background < muted < surface < elevated.
+    // Cool-neutral charcoal ramp — only a whisper of the brand hue (low
+    // chroma) so the indigo primary reads as the one confident colour rather
+    // than competing with the surface. Ordered by elevation:
+    // background < muted < surface < elevated.
     text: '#ECEDF2',
     textSecondary: '#9A9CA8',
     textMuted: '#6C6E7A',

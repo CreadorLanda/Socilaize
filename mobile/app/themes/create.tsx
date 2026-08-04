@@ -48,7 +48,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
 const PRESET_PRIMARIES = [
-  '#2D5BFF', '#EF4444', '#F59E0B', '#10B981', '#06B6D4', '#8B5CF6',
+  '#4F46E5', '#EF4444', '#F59E0B', '#10B981', '#06B6D4', '#2D5BFF',
   '#EC4899', '#A3E635', '#F97316', '#171717', '#E879F9', '#FB8A7E',
 ];
 const PRESET_BACKGROUNDS_LIGHT = ['#F7F9FC', '#FFF8F5', '#F0FDFA', '#FDF4FF', '#FAFAFA', '#F7F6F1', '#EEF1F6'];
@@ -75,7 +75,7 @@ export default function ThemeCreatorScreen() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [designMode, setDesignMode] = useState<DesignMode>('both');
-  const [primary, setPrimary] = useState('#2D5BFF');
+  const [primary, setPrimary] = useState('#4F46E5');
   const [background, setBackground] = useState(isDark ? '#0E0F13' : '#F7F9FC');
   const [surface, setSurface] = useState(isDark ? '#191A21' : '#FFFFFF');
   const [text, setText] = useState(isDark ? '#ECEDF2' : '#111827');
@@ -897,7 +897,7 @@ function ColorRow({
               styles.colorDot,
               {
                 backgroundColor: c,
-                borderColor: active ? '#2D5BFF' : ring,
+                borderColor: active ? '#4F46E5' : ring,
                 borderWidth: active ? 3 : 1,
                 transform: [{ scale: active ? 1.08 : 1 }],
               },

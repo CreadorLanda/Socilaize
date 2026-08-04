@@ -375,7 +375,7 @@ function Ctrl({
         style={[
           styles.ctrlCircle,
           danger && { backgroundColor: 'rgba(239,68,68,0.85)' },
-          active && { backgroundColor: 'rgba(45,91,255,0.9)' },
+          active && { backgroundColor: 'rgba(79, 70, 229,0.9)' },
         ]}
       >
         <Ionicons name={icon} size={20} color="#FFF" />
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  roundBtnActive: { backgroundColor: 'rgba(45,91,255,0.85)' },
+  roundBtnActive: { backgroundColor: 'rgba(79, 70, 229,0.85)' },
   topCenter: { flex: 1, alignItems: 'center', gap: 2 },
   livePill: {
     flexDirection: 'row',
@@ -642,7 +642,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: Spacing.sm,
   },
-  wyrCardOn: { borderColor: '#6F8BFF', backgroundColor: 'rgba(45,91,255,0.35)' },
+  wyrCardOn: { borderColor: '#818CF8', backgroundColor: 'rgba(79, 70, 229,0.35)' },
   wyrText: { ...Typography.caption, color: '#FFF', fontWeight: '700', textAlign: 'center' },
   nextRound: {
     flexDirection: 'row',
@@ -698,7 +698,7 @@ const styles = StyleSheet.create({
     borderRadius: Radii.pill,
     backgroundColor: 'rgba(255,255,255,0.1)',
   },
-  modeChipOn: { backgroundColor: 'rgba(45,91,255,0.85)' },
+  modeChipOn: { backgroundColor: 'rgba(79, 70, 229,0.85)' },
   modeChipText: { ...Typography.micro, color: '#FFF', fontWeight: '700' },
   ctrlRow: {
     flexDirection: 'row',

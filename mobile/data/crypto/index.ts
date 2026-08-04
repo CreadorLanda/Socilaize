@@ -15,15 +15,30 @@ export {
   clearSessionCache,
   decryptFromPeer,
   ensurePeerIdentityCurrent,
-  encryptForPeer,
+  // encryptForPeer is deliberately not exported. Its callers each wrapped it
+  // in a try/catch that sent the plaintext instead, three times over. The
+  // only encryption entry point outside this module is the one that refuses.
+  encryptForPeerOrFail,
+  E2EEUnavailable,
   establishSessionAsInitiator,
   isEnvelope,
   loadSession,
 } from './session';
 
+export {
+  clearGroupKeyCache,
+  decryptFromGroup,
+  encryptForGroup,
+  groupEpoch,
+  invalidateGroupEpoch,
+  isGroupEnvelope,
+  syncGroupKeys,
+} from './group-session';
+
 export { assertPRNG, installPRNG } from './prng';
 
 import { clearDeviceKeys } from './device-keys';
+import { clearGroupKeyCache } from './group-session';
 import { clearSessionCache } from './session';
 
 /**
@@ -41,4 +56,5 @@ export async function clearE2EEState(): Promise<void> {
   // message a peer sends while this account is signed out permanently
   // unreadable. Use clearDeviceKeys directly to erase an account for good.
   clearSessionCache();
+  clearGroupKeyCache();
 }

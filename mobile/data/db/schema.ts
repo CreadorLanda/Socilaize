@@ -219,4 +219,16 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE messages ADD COLUMN expires_at TEXT;
     `,
   },
+  {
+    name: '008_view_limit',
+    sql: `
+      -- How many opens a limited-view message has left.
+      --
+      -- Cached like the rest of the DTO: without it a cached read rebuilds
+      -- the message as unopened, which is the same bug the feature had
+      -- before the server was consulted at all.
+      ALTER TABLE messages ADD COLUMN view_limit INTEGER;
+      ALTER TABLE messages ADD COLUMN views_left INTEGER;
+    `,
+  },
 ];

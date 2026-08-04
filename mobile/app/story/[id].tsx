@@ -47,6 +47,7 @@ import {
   addComment,
   deleteStory,
   listComments,
+  deleteComment,
   reactStory,
   viewStory,
   writeAnon,
@@ -224,6 +225,9 @@ export default function StoryViewerScreen() {
       text: c.body,
       postedAt: relativeCommentTime(c.created_at),
       isAnonymous: c.is_anonymous,
+      // Comes from the server, which knows the author of an anonymous
+      // comment without telling anyone who it is.
+      isMine: c.is_mine,
     });
 
     // The server sends one flat list with parent_id; the sheet renders a
@@ -244,6 +248,26 @@ export default function StoryViewerScreen() {
     const extra = localComments[story.id] ?? [];
     return [...extra, ...Array.from(tops.values())];
   }, [story, serverComments, localComments]);
+
+  /**
+   * Remove a comment.
+   *
+   * The rule already existed on the server — author of the comment or author
+   * of the story — and no client ever called it, so nothing written under a
+   * story could be taken back by either of the two people entitled to.
+   *
+   * The row goes immediately and comes back if the request fails: a delete
+   * that appears to work and silently didn't is worse than one that visibly
+   * failed.
+   */
+  const removeComment = (commentId: number) => {
+    const snapshot = serverComments;
+    setServerComments((prev) => prev.filter((c) => c.id !== commentId && c.parent_id !== commentId));
+    deleteComment(commentId).catch(() => {
+      setServerComments(snapshot);
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    });
+  };
 
   // Warm the neighbours so a swipe lands on a picture, not a spinner.
   // Image.prefetch cannot do this any more: it fetches without credentials,
@@ -856,6 +880,10 @@ export default function StoryViewerScreen() {
         replyTo={replyTo}
         onCancelReplyTo={() => setReplyTo(null)}
         onReplyTo={(id, author) => setReplyTo({ id, author })}
+        // The story's author moderates their own thread; everyone else can
+        // only remove what they wrote.
+        canModerate={!!story.isOwn}
+        onDeleteComment={removeComment}
         onReply={(text, anonymous) => {
           if (!text.trim()) return;
           postComment(text, anonymous, replyTo?.id);
@@ -979,6 +1007,8 @@ function CommentsSheet({
   replyTo,
   onReplyTo,
   onCancelReplyTo,
+  canModerate,
+  onDeleteComment,
 }: {
   visible: boolean;
   story: Story;
@@ -990,6 +1020,9 @@ function CommentsSheet({
   replyTo: { id: number; author: string } | null;
   onReplyTo: (id: number, author: string) => void;
   onCancelReplyTo: () => void;
+  /** You are the story's author, so you may remove anyone's comment. */
+  canModerate: boolean;
+  onDeleteComment: (commentId: number) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [anon, setAnon] = useState(false);
@@ -1039,7 +1072,14 @@ function CommentsSheet({
                 <Text style={styles.commentEmpty}>{t('stories.no_comments')}</Text>
               </View>
             }
-            renderItem={({ item }) => <CommentRow comment={item} onReplyTo={onReplyTo} />}
+            renderItem={({ item }) => (
+              <CommentRow
+                comment={item}
+                onReplyTo={onReplyTo}
+                canModerate={canModerate}
+                onDelete={onDeleteComment}
+              />
+            )}
           />
 
           {story.allowComments !== false ? (
@@ -1133,18 +1173,48 @@ function CommentsSheet({
 function CommentRow({
   comment,
   onReplyTo,
+  canModerate,
+  onDelete,
 }: {
   comment: StoryComment;
   onReplyTo: (id: number, author: string) => void;
+  canModerate: boolean;
+  onDelete: (commentId: number) => void;
 }) {
   // Optimistic rows carry a `local-…` id the server has never seen; a reply
   // to one would be orphaned, so it cannot be a reply target until it lands.
   const numericId = /^\d+$/.test(comment.id) ? Number(comment.id) : null;
+
+  /**
+   * Long press to delete — the same gesture as a message, and out of the way
+   * of a thread people are reading rather than managing.
+   *
+   * Deleting your own is one confirmation; deleting someone else's from your
+   * own story is worded as moderation, because the person who wrote it will
+   * simply find it gone.
+   */
+  const askDelete = (id: number, mine?: boolean) => {
+    if (!mine && !canModerate) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    appAlert(
+      mine ? t('stories.delete_comment_title') : t('stories.remove_comment_title'),
+      mine ? t('stories.delete_comment_body') : t('stories.remove_comment_body'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: () => onDelete(id) },
+      ],
+    );
+  };
+
   return (
     <View style={styles.commentRow}>
       <Image source={{ uri: comment.avatarUri }} style={styles.commentAvatar} contentFit="cover" />
       <View style={styles.commentBody}>
-        <View style={styles.commentBubble}>
+        <Pressable
+          onLongPress={() => (numericId != null ? askDelete(numericId, comment.isMine) : undefined)}
+          disabled={numericId == null || (!comment.isMine && !canModerate)}
+          style={styles.commentBubble}
+        >
           <View style={styles.commentMeta}>
             <Text style={styles.commentAuthor}>
               {comment.isAnonymous ? t('stories.anonymous_author') : comment.author}
@@ -1152,7 +1222,7 @@ function CommentRow({
             <Text style={styles.commentTime}>{comment.postedAt}</Text>
           </View>
           <Text style={styles.commentText}>{comment.text}</Text>
-        </View>
+        </Pressable>
         {numericId != null ? (
           <Pressable
             onPress={() =>
@@ -1171,13 +1241,19 @@ function CommentRow({
         {comment.replies?.map((r) => (
           <View key={r.id} style={styles.nestedReply}>
             <Image source={{ uri: r.avatarUri }} style={styles.nestedAvatar} contentFit="cover" />
-            <View style={styles.commentBubble}>
+            <Pressable
+              onLongPress={() =>
+                /^\d+$/.test(r.id) ? askDelete(Number(r.id), r.isMine) : undefined
+              }
+              disabled={!/^\d+$/.test(r.id) || (!r.isMine && !canModerate)}
+              style={styles.commentBubble}
+            >
               <Text style={styles.commentAuthor}>
                 {r.isAnonymous ? t('stories.anonymous_author') : r.author}
                 <Text style={styles.commentTime}> · {r.postedAt}</Text>
               </Text>
               <Text style={styles.commentText}>{r.text}</Text>
-            </View>
+            </Pressable>
           </View>
         ))}
       </View>
@@ -1326,7 +1402,7 @@ const styles = StyleSheet.create({
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: 'rgba(45,91,255,0.85)',
+    backgroundColor: 'rgba(79, 70, 229,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
   },

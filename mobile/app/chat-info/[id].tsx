@@ -20,6 +20,7 @@ import {
   type ReportReason,
 } from '@/data/api/messages';
 import { appAlert, appPrompt } from '@/data/dialog-store';
+import { invalidateGroupEpoch } from '@/data/crypto';
 import {
   addGroupMembers,
   leaveGroup,
@@ -343,7 +344,14 @@ export default function ChatInfoScreen() {
         style: 'destructive',
         onPress: () => {
           removeGroupMember(id, m.id)
-            .then(() => refreshGroup(id))
+            .then(() => {
+              // The server has rotated the key epoch. Forgetting the cached
+              // one is what makes the removal bite: keep using the old
+              // generation and the person just removed can still read every
+              // message sent after leaving.
+              invalidateGroupEpoch(id);
+              return refreshGroup(id);
+            })
             .catch(failed);
         },
       },
@@ -893,7 +901,12 @@ export default function ChatInfoScreen() {
             onConfirm={(people) => {
               if (people.length === 0) return;
               addGroupMembers(id, people.map((p) => p.id))
-                .then(() => refreshGroup(id))
+                .then(() => {
+                  // Joining rotates too, so the new members' keys only open
+                  // what is written from now on.
+                  invalidateGroupEpoch(id);
+                  return refreshGroup(id);
+                })
                 .catch(failed);
             }}
           />
