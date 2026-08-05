@@ -112,7 +112,7 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
   }
 
   // Rich attachments round-trip as JSON in the body.
-  if (mt === 'location' || mt === 'contact' || mt === 'poll' || mt === 'event') {
+  if (mt === 'location' || mt === 'contact' || mt === 'poll' || mt === 'event' || mt === 'game') {
     try {
       const parsed = JSON.parse(m.content) as MessageAttachment;
       if (parsed?.kind === 'poll' && m.poll_votes) {

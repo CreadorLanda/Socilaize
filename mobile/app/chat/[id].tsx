@@ -57,6 +57,8 @@ import { MessageInfoSheet } from '@/components/chat/message-info';
 import { formatSpeed, nextSpeed } from '@/components/chat/speed-control';
 import { StickerPicker } from '@/components/chat/sticker-picker';
 import { AttachmentComposer } from '@/components/chat/attachment-composer';
+import { GameRoom, type GamePlayer } from '@/components/game/game-room';
+import { extractGamePayloads, MAX_ROUNDS, type GameMessagePayload } from '@/data/game';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
@@ -155,7 +157,7 @@ const ATTACHMENT_WIRE_TYPE: Record<string, string | undefined> = {
   poll: 'poll',
   event: 'event',
   sticker: 'sticker',
-  game: undefined, // no schema type yet
+  game: 'game', // truth-or-dare; server schema accepts it (migration 0033)
 };
 
 const ATTACH_ITEMS: { key: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
@@ -1842,6 +1844,43 @@ export default function ChatScreen() {
     );
   };
 
+  // ── Truth or Dare room ───────────────────────────────────────────────────
+  const [gameOpen, setGameOpen] = useState(false);
+
+  const gamePlayers = useMemo<GamePlayer[]>(() => {
+    if (!isGroup || !group?.members?.length) return [];
+    return group.members.map((m) => ({
+      id: m.id,
+      name: m.name || m.username,
+      avatarUri: m.avatarUri,
+    }));
+  }, [isGroup, group]);
+
+  const gamePayloads = useMemo<GameMessagePayload[]>(
+    () => extractGamePayloads(messages),
+    [messages],
+  );
+
+  const sendGame = (payload: GameMessagePayload) => {
+    // The invite bubble and the engine share the same message shape; the
+    // engine payload already carries kind/game plus its action fields.
+    sendAttachment({
+      ...payload,
+      name: t('game.title'),
+      tagline: t('game.round_of', { round: 1, max: MAX_ROUNDS }),
+      color: '#6366F1',
+      icon: 'dice',
+    });
+  };
+
+  const handlePlayGame = () => {
+    if (gamePlayers.length < 2) {
+      appAlert(t('game.title'), t('game.need_two'));
+      return;
+    }
+    setGameOpen(true);
+  };
+
   // Mark a view-once message as opened. On a real backend this would also
   // fire an event to the bridge so the sender sees "Opened".
   /**
@@ -2188,6 +2227,7 @@ export default function ChatScreen() {
                   onReact={handleReact}
                   onReply={replyFromSwipe}
                   onVote={handleVote}
+                  onPlay={handlePlayGame}
                   onViewOnce={handleViewOnce}
                   revealed={revealed}
                 />
@@ -2560,6 +2600,18 @@ export default function ChatScreen() {
           onClose={() => setInfoMessageId(null)}
         />
       ) : null}
+
+      {/* Truth or Dare room — fullscreen game layered over the chat */}
+      {isGroup && (
+        <GameRoom
+          visible={gameOpen}
+          onClose={() => setGameOpen(false)}
+          players={gamePlayers}
+          payloads={gamePayloads}
+          meId={meId ?? null}
+          onSend={sendGame}
+        />
+      )}
 
       {/* Delete confirmation */}
       <DeleteMessageModal
@@ -3202,6 +3254,7 @@ function BubbleBody({
   isGroup,
   query,
   onVote,
+  onPlay,
   onViewOnce,
   revealed,
   onOpenMedia,
@@ -3212,6 +3265,7 @@ function BubbleBody({
   isGroup: boolean;
   query: string;
   onVote?: (optionId: string) => void;
+  onPlay?: () => void;
   onViewOnce?: (msgId: string) => void;
   /** Ids opened during this visit — see the screen's `revealed`. */
   revealed?: Set<string>;
@@ -3413,6 +3467,7 @@ function BubbleBody({
           attachment={msg.attachment}
           mine={mine}
           onVote={onVote}
+          onPlay={onPlay}
           onLongPress={onLongPressMedia}
         />
       ) : null}
@@ -3459,6 +3514,7 @@ function Bubble({
   onReact,
   onReply,
   onVote,
+  onPlay,
   onViewOnce,
   revealed,
   onOpenMedia,
@@ -3474,6 +3530,7 @@ function Bubble({
   onReact: (msgId: string, emoji: string) => void;
   onReply: (msg: GroupedMessage) => void;
   onVote: (msgId: string, optionId: string) => void;
+  onPlay?: () => void;
   onViewOnce: (msgId: string) => void;
   revealed: Set<string>;
   onOpenMedia: (msg: Message) => void;
@@ -3635,6 +3692,7 @@ function Bubble({
               isGroup={isGroup}
               query={query}
               onVote={(optId) => onVote(msg.id, optId)}
+              onPlay={onPlay}
               onViewOnce={onViewOnce}
               revealed={revealed}
               onOpenMedia={onOpenMedia}

@@ -185,7 +185,22 @@ export type MessageAttachment =
       time: string;
       location?: string;
     }
-  | { kind: 'game'; name: string; tagline: string; color: string; icon: string };
+  | {
+      kind: 'game';
+      name: string;
+      tagline: string;
+      color: string;
+      icon: string;
+      /** Truth or Dare engine payload — present on real game messages. */
+      game?: 'truth-or-dare';
+      action?: 'start' | 'choose' | 'challenge' | 'done' | 'end';
+      seed?: string;
+      maxRounds?: number;
+      playerId?: string;
+      choice?: 'truth' | 'dare';
+      text?: string;
+      winnerId?: string;
+    };
 
 export type Message = {
   /** 0 when written here; 1+ once passed along. Drives the forwarded label. */

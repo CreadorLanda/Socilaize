@@ -29,11 +29,14 @@ export function AttachmentBubble({
   attachment,
   mine,
   onVote,
+  onPlay,
   onLongPress,
 }: {
   attachment: MessageAttachment;
   mine: boolean;
   onVote?: (optionId: string) => void;
+  /** Game invite — open the game room. */
+  onPlay?: () => void;
   /** Forwarded so a child Pressable does not swallow the bubble's menu. */
   onLongPress?: () => void;
 }) {
@@ -252,15 +255,19 @@ export function AttachmentBubble({
           </Text>
         </View>
       </View>
-      <View
+      <Pressable
         style={[
           styles.gamePlay,
           { backgroundColor: mine ? 'rgba(255,255,255,0.18)' : colors.primary },
         ]}
+        onPress={onPlay}
+        disabled={!onPlay}
+        accessibilityRole="button"
+        accessibilityLabel={t('chat.game_play')}
       >
-        <Ionicons name="play" size={14} color={mine ? colors.onPrimary : colors.onPrimary} />
+        <Ionicons name="play" size={14} color={colors.onPrimary} />
         <Text style={[styles.gamePlayText, { color: colors.onPrimary }]}>{t('chat.game_play')}</Text>
-      </View>
+      </Pressable>
     </View>
   );
 }
