@@ -36,7 +36,11 @@ export interface TruthOrDareState {
   /** Challenge text written by another member, pending resolution. */
   challenge: string | null;
   challengeBy: string | null;
-  /** Players who completed their turn this round. */
+  /**
+   * Players who have completed a turn. Not reset per round: with one player
+   * per round it reads as "has had a go", which is what the room's tiles
+   * show against each name.
+   */
   doneIds: string[];
   /** Rounds each player completed (for scoreboard). */
   scoreboard: Record<string, number>;
@@ -64,6 +68,27 @@ export function pickPlayer(seed: string, round: number, memberIds: string[]): nu
   if (memberIds.length === 0) return -1;
   const h = hashString(`${seed}:${round}`);
   return h % memberIds.length;
+}
+
+/**
+ * The next round's player, avoiding an immediate repeat.
+ *
+ * A wheel that lands on the same person twice in a row reads as broken even
+ * when it is honest chance. Stepping to the neighbour keeps every device in
+ * agreement, because the rule is as deterministic as the pick it corrects.
+ */
+export function nextPlayer(
+  seed: string,
+  round: number,
+  memberIds: string[],
+  previousId: string | null,
+): number {
+  if (memberIds.length === 0) return -1;
+  const idx = pickPlayer(seed, round, memberIds);
+  if (memberIds.length > 1 && memberIds[idx] === previousId) {
+    return (idx + 1) % memberIds.length;
+  }
+  return idx;
 }
 
 /** Initial state for a fresh game. */
@@ -133,26 +158,39 @@ export function replayGame(payloads: GameMessagePayload[], memberIds: string[]):
         break;
       }
       case 'done': {
+        // The round belongs to one player, and it ends when that player is
+        // done. It used to wait for every member to mark done — but the room
+        // only offers the button to whoever's turn it is, so the events that
+        // condition needed could never arrive. One player finished, nothing
+        // advanced, and the same name stayed on the wheel forever.
+        if (!state.active || state.ended) break;
+        if (p.playerId !== state.currentPlayerId) break;
+
+        // A second tap used to add a second point, so the winner was whoever
+        // pressed hardest. The turn check above is what stops that now: the
+        // round advances on the first `done`, so a repeat no longer matches
+        // the current player. Deduping on doneIds instead would have been
+        // wrong in the other direction — the wheel can land on the same
+        // person again later, and that turn deserves its point.
         if (!state.doneIds.includes(p.playerId)) state.doneIds.push(p.playerId);
         state.scoreboard[p.playerId] = (state.scoreboard[p.playerId] ?? 0) + 1;
-        // Next round unless everyone has gone or we hit maxRounds.
-        const everyoneDone = state.doneIds.length >= memberIds.length;
-        if (state.round >= state.maxRounds && everyoneDone) {
+
+        if (state.round >= state.maxRounds) {
           state.ended = true;
           const sorted = Object.entries(state.scoreboard).sort((a, b) => b[1] - a[1]);
           state.winnerId = sorted.length > 0 ? sorted[0][0] : null;
           state.currentPlayerId = null;
           state.currentIndex = null;
-        } else if (everyoneDone) {
-          state.round += 1;
-          state.doneIds = [];
-          state.choice = null;
-          state.challenge = null;
-          state.challengeBy = null;
-          const idx = pickPlayer(state.seed, state.round, memberIds);
-          state.currentIndex = idx;
-          state.currentPlayerId = idx >= 0 ? memberIds[idx] : null;
+          break;
         }
+
+        state.round += 1;
+        state.choice = null;
+        state.challenge = null;
+        state.challengeBy = null;
+        const idx = nextPlayer(state.seed, state.round, memberIds, state.currentPlayerId);
+        state.currentIndex = idx;
+        state.currentPlayerId = idx >= 0 ? memberIds[idx] : null;
         break;
       }
       case 'end': {

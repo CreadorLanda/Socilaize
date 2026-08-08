@@ -46,6 +46,28 @@ services:
       timeout: 3s
       retries: 10
 
+  # The SFU. Open source, self-hosted, and the only process that ever sees a
+  # media packet — encrypted ones, since the clients derive the key from the
+  # chat's own E2EE session and never send it here.
+  #
+  # Opt-in: calls are disabled until LIVEKIT_URL is set on the API.
+  livekit:
+    image: livekit/livekit-server:latest
+    profiles: ["calls"]
+    restart: unless-stopped
+    # LIVEKIT_NODE_IP must be the VPS public address, or clients are told to
+    # send media to an unroutable one and the call connects silently deaf.
+    # Not a `:?` guard: compose interpolates every service regardless of
+    # profile, so a required variable here broke `up -d redis` for everyone
+    # who never wanted calls. The deploy script checks it instead.
+    command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    # Host networking because the media ports are a wide UDP range and
+    # publishing them one by one through Docker's proxy is both slow and
+    # unreliable for real-time traffic.
+    network_mode: host
+
 volumes:
   postgres-data:
   redis-data:

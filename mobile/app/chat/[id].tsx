@@ -57,7 +57,11 @@ import { MessageInfoSheet } from '@/components/chat/message-info';
 import { formatSpeed, nextSpeed } from '@/components/chat/speed-control';
 import { StickerPicker } from '@/components/chat/sticker-picker';
 import { AttachmentComposer } from '@/components/chat/attachment-composer';
-import { GameRoom, type GamePlayer } from '@/components/game/game-room';
+import {
+  GameRoom,
+  type GameChatMessage,
+  type GamePlayer,
+} from '@/components/game/game-room';
 import { extractGamePayloads, MAX_ROUNDS, type GameMessagePayload } from '@/data/game';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StateTransition } from '@/components/ui/state-transition';
@@ -136,6 +140,7 @@ import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
 import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
+import { handleCallEvent } from '@/data/incoming-call';
 import { t } from '@/i18n';
 
 const CHAT_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
@@ -519,6 +524,8 @@ export default function ChatScreen() {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const handleEvent = (ev: RealtimeEvent) => {
+        // A call can arrive on any screen; the store decides what to show.
+        if (handleCallEvent(ev.type, ev.payload)) return;
       if (ev.chat_id && ev.chat_id !== id) return;
       const payload = ev.payload as Record<string, unknown> | null | undefined;
 
@@ -1852,6 +1859,8 @@ export default function ChatScreen() {
     return group.members.map((m) => ({
       id: m.id,
       name: m.name || m.username,
+      // The store keeps the handle with its @; the room adds its own.
+      username: m.username?.replace(/^@/, '') || undefined,
       avatarUri: m.avatarUri,
     }));
   }, [isGroup, group]);
@@ -1859,6 +1868,32 @@ export default function ChatScreen() {
   const gamePayloads = useMemo<GameMessagePayload[]>(
     () => extractGamePayloads(messages),
     [messages],
+  );
+
+  /**
+   * The group's ordinary conversation, for the room's chat strip.
+   *
+   * Game events and system notices are dropped: the room already renders the
+   * game, and repeating it as chat lines would be the same information twice.
+   * Everything here has been decrypted by the chat screen already — the room
+   * never sees ciphertext, and never sends any either.
+   */
+  const gameChat = useMemo<GameChatMessage[]>(
+    () =>
+      messages
+        .filter((m) => !m.system && !m.attachment && !m.deletedAt && m.text)
+        .slice(-60)
+        .map((m) => ({
+          id: m.id,
+          text: m.text,
+          fromMe: m.fromMe,
+          senderName: m.fromMe ? t('game.chat_you') : m.senderName ?? '',
+          // Matched by id, not by name: two members can share a display name,
+          // which in a game about whose turn it is would be the worst place
+          // to guess.
+          senderUsername: gamePlayers.find((p) => p.id === m.senderId)?.username,
+        })),
+    [messages, gamePlayers],
   );
 
   const sendGame = (payload: GameMessagePayload) => {
@@ -2319,7 +2354,13 @@ export default function ChatScreen() {
                 <Ionicons name="time-outline" size={18} color={colors.warning} />
                 <Text style={[styles.pendingText, { color: colors.textSecondary }]} numberOfLines={2}>
                   {iSentRequest
-                    ? t('friend_request.sent_waiting')
+                    ? hasMyIntro
+                      ? t('friend_request.sent_waiting')
+                      : // The chat row exists the moment it is opened, but
+                        // nothing has reached the other person until an intro
+                        // message is sent. Claiming "request sent" before that
+                        // announced something that had not happened.
+                        t('friend_request.write_intro')
                     : t('friend_request.pending_for_you')}
                 </Text>
                 {!iSentRequest ? (
@@ -2610,6 +2651,10 @@ export default function ChatScreen() {
           payloads={gamePayloads}
           meId={meId ?? null}
           onSend={sendGame}
+          chat={gameChat}
+          // The room's composer is the chat's composer. Same path, same
+          // encryption — the game adds no way to send anything in the clear.
+          onSendText={submitText}
         />
       )}
 

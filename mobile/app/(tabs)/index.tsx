@@ -47,6 +47,7 @@ import {
 } from '@/data/filter-store';
 import type { ChatPreview } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
+import { handleCallEvent } from '@/data/incoming-call';
 import { t } from '@/i18n';
 
 const BUILTIN_IDS = ['all', 'unread', 'read', 'groups', 'pending'];
@@ -110,7 +111,12 @@ export default function ChatsScreen() {
 
     const connect = () => {
       connectRealtime(
-        (evt) => applyRealtimeEvent(evt?.type),
+        (evt) => {
+          // A call can arrive while the chat list is on screen; the store
+          // decides what to show, this handler only forwards.
+          if (handleCallEvent(evt?.type, evt?.payload)) return;
+          applyRealtimeEvent(evt?.type);
+        },
         () => {
           if (closed) return;
           retry = setTimeout(connect, 2500);

@@ -146,6 +146,17 @@ async function saveSession(s: SessionRecord): Promise<void> {
  * message already encrypted under them — undecryptable. It stays as-is
  * regardless of what the product is called. DO NOT RENAME.
  */
+/**
+ * Derive a purpose-bound secret from an existing session root.
+ *
+ * Used for call media keys. The label separates purposes: a key derived for
+ * a call must not equal the one protecting messages, so that compromising
+ * one does not hand over the other.
+ */
+export function deriveSharedSecret(root: Uint8Array, label: string): Uint8Array {
+  return hkdfLike(root, label);
+}
+
 function hkdfLike(ikm: Uint8Array, info: string): Uint8Array {
   // Simple expand: hash(ikm || info) then hash again for 32 bytes.
   const infoBytes = utf8Encode(info);

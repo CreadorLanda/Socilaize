@@ -1,0 +1,200 @@
+// Package calls hands out join tokens for the self-hosted LiveKit SFU.
+//
+// The server does exactly one thing here: it decides who may join which room,
+// and signs a short-lived token saying so. It never touches audio or video,
+// and it never learns the key those streams are encrypted with — that is
+// derived on the devices from the chat's existing E2EE session.
+//
+// A room is a chat. Naming them after the chat id is what makes the
+// permission check possible at all: "may this user join room X" reduces to
+// "is this user a participant of chat X", which the chat module already
+// answers.
+package calls
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/livekit/protocol/auth"
+
+	"github.com/CreadorLanda/Socilaize/server/internal/middleware"
+)
+
+var (
+	// ErrCallsDisabled means no SFU is configured. Reported rather than
+	// papered over: a token for a room nobody can reach looks like a working
+	// call right up until the moment it silently fails to connect.
+	ErrCallsDisabled = errors.New("calls_disabled")
+	ErrNotAllowed    = errors.New("not_a_participant")
+)
+
+// TokenTTL is how long a join token stays valid.
+//
+// Short on purpose. The token is fetched immediately before joining, so it
+// never needs to outlive that; a long-lived one is a standing invitation to
+// a room, sitting in whatever logs the request passed through.
+const TokenTTL = 5 * time.Minute
+
+// Participation is the one question this module asks of the rest of the app.
+//
+// An interface rather than a repository import: modules here do not reach
+// into each other's storage, and "who is in this chat" is already answered
+// elsewhere.
+type Participation interface {
+	IsParticipant(ctx context.Context, chatID, userID uuid.UUID) (bool, error)
+}
+
+// Identity resolves the display name shown to the other participants.
+type Identity interface {
+	DisplayName(ctx context.Context, userID uuid.UUID) (string, error)
+}
+
+// Ringer is how the other side finds out. Without it a call is silent until
+// someone happens to open the app — which is not a call, it is a room that
+// exists.
+type Ringer interface {
+	// Ring reaches everyone in the chat except the caller, live and by push.
+	Ring(ctx context.Context, chatID, caller uuid.UUID, callerName, mode string)
+}
+
+type Config struct {
+	URL       string
+	APIKey    string
+	APISecret string
+}
+
+func (c Config) enabled() bool {
+	return c.URL != "" && c.APIKey != "" && c.APISecret != ""
+}
+
+type Service struct {
+	cfg   Config
+	chats Participation
+	users Identity
+	ring  Ringer
+}
+
+func NewService(cfg Config, chats Participation, users Identity, ring Ringer) *Service {
+	return &Service{cfg: cfg, chats: chats, users: users, ring: ring}
+}
+
+// Grant is what the client needs to join.
+type Grant struct {
+	// URL of the SFU. Sent per request rather than compiled into the app so
+	// moving the SFU does not require shipping a new build.
+	URL   string `json:"url"`
+	Room  string `json:"room"`
+	Token string `json:"token"`
+	// Identity is the participant id inside the room. The user's own id, so
+	// the client can tell whose track is whose.
+	Identity  string    `json:"identity"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// TokenFor issues a join token for one user in one chat's room.
+func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring bool, mode string) (Grant, error) {
+	if !s.cfg.enabled() {
+		return Grant{}, ErrCallsDisabled
+	}
+
+	ok, err := s.chats.IsParticipant(ctx, chatID, userID)
+	if err != nil {
+		return Grant{}, err
+	}
+	if !ok {
+		// The room is named after the chat, so a chat id is enough to guess a
+		// room name. This check is the only thing standing between a guessed
+		// id and someone else's call.
+		return Grant{}, ErrNotAllowed
+	}
+
+	name, err := s.users.DisplayName(ctx, userID)
+	if err != nil || name == "" {
+		name = "…"
+	}
+
+	room := chatID.String()
+	at := auth.NewAccessToken(s.cfg.APIKey, s.cfg.APISecret).
+		SetIdentity(userID.String()).
+		SetName(name).
+		SetValidFor(TokenTTL).
+		SetVideoGrant(&auth.VideoGrant{
+			Room:     room,
+			RoomJoin: true,
+			// Publishing and subscribing only. No room administration: a
+			// participant must not be able to remove others or mint further
+			// tokens from inside the call.
+			CanPublish:     boolPtr(true),
+			CanSubscribe:   boolPtr(true),
+			CanPublishData: boolPtr(true),
+		})
+
+	token, err := at.ToJWT()
+	if err != nil {
+		return Grant{}, err
+	}
+
+	// Ringing on the first join, not on every token request.
+	//
+	// Both sides fetch a token — the caller to start, the callee to answer —
+	// so ringing unconditionally would make the phone ring in the hand of the
+	// person answering it. `ring` is set only by the caller's request.
+	if ring && s.ring != nil {
+		s.ring.Ring(ctx, chatID, userID, name, mode)
+	}
+
+	return Grant{
+		URL:       s.cfg.URL,
+		Room:      room,
+		Token:     token,
+		Identity:  userID.String(),
+		ExpiresAt: time.Now().Add(TokenTTL),
+	}, nil
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// ── controller ──────────────────────────────────────────────────────────────
+
+type Controller struct{ svc *Service }
+
+func NewController(svc *Service) *Controller { return &Controller{svc: svc} }
+
+// PostToken — POST /chats/:id/call/token
+func (c *Controller) PostToken(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	// The caller asks to ring; the person answering does not.
+	ring := ctx.Query("ring") == "1"
+	mode := ctx.Query("mode")
+	if mode != "video" {
+		mode = "voice"
+	}
+	grant, err := c.svc.TokenFor(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx), ring, mode)
+	switch {
+	case errors.Is(err, ErrCallsDisabled):
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": ErrCallsDisabled.Error()})
+		return
+	case errors.Is(err, ErrNotAllowed):
+		// Reported as not-found, not forbidden: "you may not join this" also
+		// confirms the room exists.
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "chat_not_found"})
+		return
+	case err != nil:
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	ctx.JSON(http.StatusOK, grant)
+}
+
+// Register mounts the call routes on a JWT-protected group.
+func Register(rg *gin.RouterGroup, c *Controller) {
+	rg.POST("/chats/:id/call/token", c.PostToken)
+}

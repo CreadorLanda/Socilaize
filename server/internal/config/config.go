@@ -18,6 +18,20 @@ type Config struct {
 	Crypto   CryptoConfig
 	Media    MediaConfig
 	Push     PushConfig
+	LiveKit  LiveKitConfig
+}
+
+// LiveKitConfig points at the self-hosted SFU.
+//
+// Empty means calls are disabled: the token endpoint answers 503 rather than
+// handing out a token to a room nobody can reach.
+type LiveKitConfig struct {
+	// URL the client dials, e.g. wss://calls.example.com.
+	URL string
+	// APIKey and APISecret sign the join tokens. The secret never leaves the
+	// server — the client receives a signed token, never the key itself.
+	APIKey    string
+	APISecret string
 }
 
 // PushConfig configures the offline push worker.
@@ -98,6 +112,11 @@ func Load() (Config, error) {
 			MaxUploadBytes: getenvInt64("MEDIA_MAX_BYTES", 25<<20),
 			TTL:            getenvDuration("MEDIA_TTL", 30*24*time.Hour),
 			SweepEvery:     getenvDuration("MEDIA_SWEEP_EVERY", time.Hour),
+		},
+		LiveKit: LiveKitConfig{
+			URL:       os.Getenv("LIVEKIT_URL"),
+			APIKey:    os.Getenv("LIVEKIT_API_KEY"),
+			APISecret: os.Getenv("LIVEKIT_API_SECRET"),
 		},
 		Push: PushConfig{
 			WebhookURL:         os.Getenv("PUSH_WEBHOOK_URL"),

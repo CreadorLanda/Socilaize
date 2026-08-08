@@ -18,7 +18,30 @@ import {
 export interface GamePlayer {
   id: string;
   name: string;
+  /** Without the leading @ — the room adds it. */
+  username?: string;
   avatarUri?: string;
+}
+
+/** One message from the room's chat, already decrypted by the chat screen. */
+export interface GameChatMessage {
+  id: string;
+  text: string;
+  fromMe: boolean;
+  senderName: string;
+  senderUsername?: string;
+}
+
+/**
+ * A display name plus the handle underneath.
+ *
+ * Two people in a group can share a display name, and in a game that turns
+ * on "whose turn is it" that ambiguity is the whole problem. The handle is
+ * the part that is unique.
+ */
+function handle(p?: GamePlayer | null): string {
+  if (!p?.username) return '';
+  return `@${p.username.replace(/^@/, '')}`;
 }
 
 export type GameRoomSend = (payload: GameMessagePayload) => void;
@@ -37,6 +60,8 @@ export function GameRoom({
   payloads,
   meId,
   onSend,
+  chat,
+  onSendText,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -44,6 +69,9 @@ export function GameRoom({
   payloads: GameMessagePayload[];
   meId: string | null;
   onSend: GameRoomSend;
+  /** The group's ordinary messages, oldest first. */
+  chat: GameChatMessage[];
+  onSendText: (text: string) => void;
 }) {
   const { colors } = useTheme();
   const memberIds = useMemo(() => sortedMemberIds(players.map((p) => p.id)), [players]);
@@ -191,6 +219,11 @@ export function GameRoom({
       <Text style={[styles.tileName, { color: colors.text }]} numberOfLines={1}>
         {p.name}
       </Text>
+      {handle(p) ? (
+        <Text style={[styles.tileHandle, { color: colors.textMuted }]} numberOfLines={1}>
+          {handle(p)}
+        </Text>
+      ) : null}
       {done ? (
         <Ionicons name="checkmark-circle" size={14} color={colors.success} />
       ) : highlight ? (
@@ -226,6 +259,9 @@ export function GameRoom({
             <Ionicons name="trophy" size={48} color={Palette.accent.yellow} />
             <Text style={[styles.winnerName, { color: colors.text }]}>
               {players.find((p) => p.id === state.winnerId)?.name ?? '—'}
+            </Text>
+            <Text style={[styles.handleLine, { color: colors.textMuted }]}>
+              {handle(players.find((p) => p.id === state.winnerId))}
             </Text>
             <Text style={[styles.winnerSub, { color: colors.textSecondary }]}>
               {t('game.winner')}
@@ -295,9 +331,14 @@ export function GameRoom({
                       {state.choice === 'dare' ? t('game.dare') : t('game.truth')}
                     </Text>
                   </View>
-                  <Text style={[styles.challengePlayer, { color: colors.text }]}>
-                    {players.find((p) => p.id === state.currentPlayerId)?.name}
-                  </Text>
+                  <View>
+                    <Text style={[styles.challengePlayer, { color: colors.text }]}>
+                      {players.find((p) => p.id === state.currentPlayerId)?.name}
+                    </Text>
+                    <Text style={[styles.handleLine, { color: colors.textMuted }]}>
+                      {handle(players.find((p) => p.id === state.currentPlayerId))}
+                    </Text>
+                  </View>
                 </View>
                 <Text style={[styles.challengeText, { color: colors.text }]}>
                   {state.challenge}
@@ -328,6 +369,9 @@ export function GameRoom({
               <View style={styles.center}>
                 <Text style={[styles.challengePlayer, { color: colors.text }]}>
                   {players.find((p) => p.id === state.currentPlayerId)?.name}
+                </Text>
+                <Text style={[styles.handleLine, { color: colors.textMuted }]}>
+                  {handle(players.find((p) => p.id === state.currentPlayerId))}
                 </Text>
                 <Text style={[styles.startHint, { color: colors.textSecondary }]}>
                   {t('game.awaiting_challenge', {
@@ -394,6 +438,9 @@ export function GameRoom({
                 <Text style={[styles.challengePlayer, { color: colors.text }]}>
                   {players.find((p) => p.id === state.currentPlayerId)?.name}
                 </Text>
+                <Text style={[styles.handleLine, { color: colors.textMuted }]}>
+                  {handle(players.find((p) => p.id === state.currentPlayerId))}
+                </Text>
                 <Text style={[styles.startHint, { color: colors.textSecondary }]}>
                   {t('game.their_turn')}
                 </Text>
@@ -431,6 +478,9 @@ export function GameRoom({
                 <Text style={[styles.winnerName, { color: colors.text }]}>
                   {players[spinIndex]?.name}
                 </Text>
+                <Text style={[styles.handleLine, { color: colors.textMuted }]}>
+                  {handle(players[spinIndex])}
+                </Text>
                 <Text style={[styles.startHint, { color: colors.textSecondary }]}>
                   {t('game.spun_sub')}
                 </Text>
@@ -442,8 +492,120 @@ export function GameRoom({
             )}
           </View>
         </Modal>
+
+        {/*
+          The room is a room. A game where you cannot react to what just
+          happened is a turn-taking machine, and the whole point of Truth or
+          Dare is the talking around it — so the group's chat lives here
+          rather than behind the modal, where it was unreachable.
+
+          These are ordinary messages on the ordinary send path, which is
+          what keeps them end-to-end encrypted: the room composes text and
+          hands it to the chat screen, exactly as the composer downstairs
+          does. Nothing about the game touches the ciphertext.
+        */}
+        <RoomChat
+          messages={chat}
+          onSend={onSendText}
+          bare={!state.active}
+        />
       </View>
     </Modal>
+  );
+}
+
+/**
+ * The chat strip at the foot of the room.
+ *
+ * Deliberately compact: it is company for the game, not a replacement for
+ * the full thread. It grows when there is no game running, because then
+ * talking is the only thing to do here.
+ */
+function RoomChat({
+  messages,
+  onSend,
+  bare,
+}: {
+  messages: GameChatMessage[];
+  onSend: (text: string) => void;
+  bare: boolean;
+}) {
+  const { colors } = useTheme();
+  const [draft, setDraft] = useState('');
+  const listRef = useRef<ScrollView>(null);
+
+  // Follow the conversation. Without this the newest message lands below the
+  // fold and the room looks like nobody is talking.
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const id = setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 60);
+    return () => clearTimeout(id);
+  }, [messages.length]);
+
+  const send = () => {
+    const text = draft.trim();
+    if (!text) return;
+    onSend(text);
+    setDraft('');
+  };
+
+  return (
+    <View style={[styles.chatWrap, { borderTopColor: colors.divider }, bare && styles.chatWrapTall]}>
+      <ScrollView
+        ref={listRef}
+        style={styles.chatList}
+        contentContainerStyle={styles.chatListContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {messages.length === 0 ? (
+          <Text style={[styles.chatEmpty, { color: colors.textMuted }]}>
+            {t('game.chat_empty')}
+          </Text>
+        ) : (
+          messages.map((m) => (
+            <View key={m.id} style={styles.chatRow}>
+              <Text
+                style={[
+                  styles.chatSender,
+                  { color: m.fromMe ? Palette.brand[400] : colors.textSecondary },
+                ]}
+                numberOfLines={1}
+              >
+                {m.senderUsername ? `@${m.senderUsername.replace(/^@/, '')}` : m.senderName}
+              </Text>
+              <Text style={[styles.chatText, { color: colors.text }]}>{m.text}</Text>
+            </View>
+          ))
+        )}
+      </ScrollView>
+
+      <View style={[styles.chatComposer, { backgroundColor: colors.surfaceMuted }]}>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          placeholder={t('game.chat_placeholder')}
+          placeholderTextColor={colors.textMuted}
+          style={[styles.chatInput, { color: colors.text }]}
+          onSubmitEditing={send}
+          returnKeyType="send"
+          multiline
+          maxLength={2000}
+        />
+        <Pressable
+          onPress={send}
+          disabled={!draft.trim()}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={t('game.chat_send')}
+        >
+          <Ionicons
+            name="arrow-up-circle"
+            size={30}
+            color={draft.trim() ? Palette.brand[400] : colors.textMuted}
+          />
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -523,6 +685,27 @@ const styles = StyleSheet.create({
   },
   tileAvatarText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
   tileName: { ...Typography.micro, fontWeight: '600', maxWidth: 64 },
+  tileHandle: { ...Typography.micro, fontSize: 10, maxWidth: 64 },
+  handleLine: { ...Typography.caption, marginTop: 2 },
+  chatWrap: { maxHeight: 210, borderTopWidth: StyleSheet.hairlineWidth },
+  // With no game running there is nothing else on screen worth the space.
+  chatWrapTall: { maxHeight: 340 },
+  chatList: { maxHeight: 150 },
+  chatListContent: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm, gap: Spacing.xs },
+  chatEmpty: { ...Typography.caption, textAlign: 'center', paddingVertical: Spacing.lg },
+  chatRow: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'baseline' },
+  chatSender: { ...Typography.micro, fontWeight: '700', maxWidth: 110 },
+  chatText: { ...Typography.caption, flex: 1 },
+  chatComposer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: Spacing.sm,
+    margin: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radii.xl,
+  },
+  chatInput: { flex: 1, ...Typography.body, maxHeight: 90, padding: 0 },
   startTitle: { ...Typography.h1 },
   startHint: { ...Typography.body, textAlign: 'center', maxWidth: 300 },
   bigAvatar: {

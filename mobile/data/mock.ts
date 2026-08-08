@@ -216,6 +216,12 @@ export type Message = {
   media?: MediaAttachment;
   /** Display name of the sender — shown in group threads for incoming messages. */
   senderName?: string;
+  /**
+   * Who sent it. Display names are not unique inside a group, so anything
+   * that has to match a message to a member — the game room's chat, for one —
+   * needs the id rather than the name.
+   */
+  senderId?: string;
   senderAvatarUri?: string;
   /** True for messages sent before the current user joined the group. */
   historical?: boolean;

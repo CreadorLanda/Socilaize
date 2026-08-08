@@ -17,6 +17,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/config"
 	"github.com/CreadorLanda/Socilaize/server/internal/middleware"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/auth"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/calls"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/channels"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/groups"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
@@ -142,6 +143,21 @@ func New(cfg config.Config) (*Server, error) {
 	stickersCtl := stickers.NewController(stickers.NewService(stickersRepo, mediaCopier{mediaSvc}))
 	stickers.Register(authed, stickersCtl)
 
+	// Calls: the server signs who may join which room and nothing else. No
+	// audio or video passes through here — the SFU is a separate process, and
+	// the streams are encrypted with a key derived on the devices.
+	callsCtl := calls.NewController(calls.NewService(
+		calls.Config{
+			URL:       cfg.LiveKit.URL,
+			APIKey:    cfg.LiveKit.APIKey,
+			APISecret: cfg.LiveKit.APISecret,
+		},
+		chatParticipation{msgRepo},
+		userNames{usersRepo},
+		callRinger{repo: msgRepo, hub: hub, push: notifSvc},
+	))
+	calls.Register(authed, callsCtl)
+
 	// Discover channels + posts.
 	channelsRepo := channels.NewRepository(pg)
 	channelsCtl := channels.NewController(channels.NewService(channelsRepo))
@@ -153,6 +169,71 @@ func New(cfg config.Config) (*Server, error) {
 		msgSweeper: messages.NewSweeper(msgSvc, 5*time.Minute),
 		errCh:      make(chan error, 2),
 	}, nil
+}
+
+// chatParticipation and userNames adapt existing repositories to the narrow
+// interfaces the calls module declares, so it imports neither — same pattern
+// as mediaCopier below.
+type chatParticipation struct{ repo *messages.Repository }
+
+func (c chatParticipation) IsParticipant(ctx context.Context, chatID, userID uuid.UUID) (bool, error) {
+	return c.repo.IsParticipant(ctx, chatID, userID)
+}
+
+// callRinger makes the other phones ring.
+//
+// Live participants get a websocket event, which the app turns into an
+// incoming-call screen. Everyone else gets a push — without it a call is
+// silent until someone happens to open the app.
+type callRinger struct {
+	repo *messages.Repository
+	hub  *realtime.Hub
+	push *notifications.Service
+}
+
+func (c callRinger) Ring(ctx context.Context, chatID, caller uuid.UUID, callerName, mode string) {
+	ids, err := c.repo.ParticipantIDs(ctx, chatID)
+	if err != nil {
+		return
+	}
+	data := map[string]string{
+		"type":        "call.incoming",
+		"chat_id":     chatID.String(),
+		"caller_id":   caller.String(),
+		"caller_name": callerName,
+		"mode":        mode,
+	}
+
+	for _, uid := range ids {
+		if uid == caller {
+			continue
+		}
+		if c.hub != nil && c.hub.Online(uid) {
+			// Already on the wire — a push as well would ring twice.
+			c.hub.PublishJSON([]uuid.UUID{uid}, "call.incoming", chatID.String(), data)
+			continue
+		}
+		if c.push != nil {
+			_ = c.push.NotifyUser(ctx, uid, "calls", callerName, callBody(mode), data)
+		}
+	}
+}
+
+func callBody(mode string) string {
+	if mode == "video" {
+		return "Incoming video call"
+	}
+	return "Incoming call"
+}
+
+type userNames struct{ repo *users.Repository }
+
+func (u userNames) DisplayName(ctx context.Context, userID uuid.UUID) (string, error) {
+	usr, err := u.repo.ByID(ctx, userID)
+	if err != nil || usr == nil {
+		return "", err
+	}
+	return usr.DisplayName, nil
 }
 
 // mediaCopier adapts media.Service to the narrow interface the stickers

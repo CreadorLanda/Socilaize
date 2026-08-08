@@ -10,7 +10,8 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.yo.messenger"
+      "bundleIdentifier": "app.yo.messenger",
+      "bitcode": false
     },
     "android": {
       "adaptiveIcon": {
@@ -24,8 +25,15 @@
       "package": "app.yo.messenger",
       "permissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
-      ]
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -72,7 +80,10 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "@config-plugins/react-native-webrtc",
+      "expo-asset",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -81,12 +92,11 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "5e47a526-6fb4-469a-b5a8-5549755dc991"
+        "projectId": "6d5c2cb7-968a-4e67-bf72-a5b68820223e"
       }
     },
-    "owner": "alexandrelanda",
+    "owner": "dandaraais-team",
     "updates": {
-      "url": "https://u.expo.dev/5e47a526-6fb4-469a-b5a8-5549755dc991",
       "fallbackToCacheTimeout": 0
     },
     "runtimeVersion": {

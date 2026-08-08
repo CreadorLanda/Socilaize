@@ -19,6 +19,7 @@ export {
   // in a try/catch that sent the plaintext instead, three times over. The
   // only encryption entry point outside this module is the one that refuses.
   encryptForPeerOrFail,
+  deriveSharedSecret,
   E2EEUnavailable,
   establishSessionAsInitiator,
   isEnvelope,

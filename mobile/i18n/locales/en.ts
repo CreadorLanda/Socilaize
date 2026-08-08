@@ -1,4 +1,10 @@
 export default {
+  push: {
+    reply: 'Reply',
+    send: 'Send',
+    reply_placeholder: 'Message',
+    mark_read: 'Mark as read',
+  },
   onboarding: {
     line1: 'More than',
     line2: 'messaging.',
@@ -173,6 +179,7 @@ export default {
     no_results: 'No users found. Try a different name.',
   },
   friend_request: {
+    write_intro: 'Write a message to send your request.',
     sent_waiting: 'Friend request sent. Waiting for acceptance.',
     pending_for_you: 'Incoming friend request',
     waiting_placeholder: 'Waiting for acceptance…',
@@ -626,7 +633,6 @@ export default {
     mode_voice: 'Voice',
     mode_video: 'Video',
     mode_live: 'Live',
-    mute: 'Mute',
     unmute: 'Unmute',
     cam_on: 'Cam on',
     cam_off: 'Cam off',
@@ -655,6 +661,10 @@ export default {
     game_ready_hint: 'Everyone jumps in on the next beat',
   },
   game: {
+    chat_empty: 'Nobody has said anything yet. The room is yours.',
+    chat_placeholder: 'Say something…',
+    chat_send: 'Send',
+    chat_you: 'You',
     title: 'Truth or Dare',
     not_started: 'No game running yet',
     start: 'Start game',
@@ -736,6 +746,19 @@ export default {
     admin: 'Admin',
   },
   call: {
+    someone: 'Someone',
+    incoming_voice: 'Incoming call',
+    incoming_video: 'Incoming video call',
+    answer: 'Answer',
+    decline: 'Decline',
+    connecting: 'Connecting…',
+    failed_to_join: 'Could not join the call.',
+    waiting_for_others: 'Waiting for the other person…',
+    participants: '{{count}} in the call',
+    audio_only: 'Audio call',
+    add_people: 'Add people',
+    hang_up: 'Hang up',
+    invite_failed: 'Could not add them to the call.',
     voice_call: 'Voice call',
     video_call: 'Video call',
     calling: 'Calling…',

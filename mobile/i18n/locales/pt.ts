@@ -1,4 +1,10 @@
 export default {
+  push: {
+    reply: 'Responder',
+    send: 'Enviar',
+    reply_placeholder: 'Mensagem',
+    mark_read: 'Marcar como lida',
+  },
   onboarding: {
     line1: 'Mais do que',
     line2: 'mensagens.',
@@ -173,6 +179,7 @@ export default {
     no_results: 'Nenhum utilizador encontrado. Tenta outro nome.',
   },
   friend_request: {
+    write_intro: 'Escreve uma mensagem para enviares o pedido.',
     sent_waiting: 'Pedido de amizade enviado. Aguarda aceitação.',
     pending_for_you: 'Pedido de amizade pendente',
     waiting_placeholder: 'A aguardar aceitação…',
@@ -655,6 +662,10 @@ export default {
     game_ready_hint: 'Toda a gente entra no próximo beat',
   },
   game: {
+    chat_empty: 'Ainda ninguém disse nada. A sala é vossa.',
+    chat_placeholder: 'Diz alguma coisa…',
+    chat_send: 'Enviar',
+    chat_you: 'Tu',
     title: 'Verdade ou Desafio',
     not_started: 'Ainda não há jogo a correr',
     start: 'Começar jogo',
@@ -736,6 +747,19 @@ export default {
     admin: 'Admin',
   },
   call: {
+    someone: 'Alguém',
+    incoming_voice: 'Chamada a entrar',
+    incoming_video: 'Videochamada a entrar',
+    answer: 'Atender',
+    decline: 'Recusar',
+    connecting: 'A ligar…',
+    failed_to_join: 'Não foi possível entrar na chamada.',
+    waiting_for_others: 'À espera da outra pessoa…',
+    participants: '{{count}} na chamada',
+    audio_only: 'Chamada de voz',
+    add_people: 'Adicionar pessoas',
+    hang_up: 'Desligar',
+    invite_failed: 'Não foi possível adicioná-los à chamada.',
     voice_call: 'Chamada de voz',
     video_call: 'Chamada de vídeo',
     calling: 'A chamar…',

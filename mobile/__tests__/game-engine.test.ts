@@ -82,22 +82,23 @@ test('replay: choose then challenge then done advances to next round', () => {
   expect(done.doneIds).toContain(p1);
 });
 
-test('replay: everyone done advances the round', () => {
-  // Round 1 player completes; all others "pass" by also marking done.
+/**
+ * This used to assert that a round ends once *every* member marks done, with
+ * the others "passing". The room never offered them the button — it is gated
+ * on isMyTurn — so no real session could produce those events, and the game
+ * stopped dead after the first player's turn.
+ *
+ * A round now belongs to one player and ends when that player is done.
+ */
+test('replay: the round ends on the current player alone', () => {
   const p1 = MEMBERS[pickPlayer(START.seed, 1, MEMBERS)];
-  const events: GameMessagePayload[] = [START];
-  for (const m of MEMBERS) {
-    events.push({
-      kind: 'game',
-      game: 'truth-or-dare',
-      action: 'done',
-      playerId: m,
-    });
-  }
-  const state = replayGame(events, MEMBERS);
+  const state = replayGame(
+    [START, { kind: 'game', game: 'truth-or-dare', action: 'done', playerId: p1 }],
+    MEMBERS,
+  );
   expect(state.round).toBe(2);
-  expect(state.doneIds).toEqual([]);
-  expect(state.currentPlayerId).toBe(MEMBERS[pickPlayer(START.seed, 2, MEMBERS)]);
+  expect(state.doneIds).toEqual([p1]);
+  expect(state.currentPlayerId).not.toBe(p1);
 });
 
 test('replay: max rounds ends the game with a winner', () => {

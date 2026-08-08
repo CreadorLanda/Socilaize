@@ -152,7 +152,42 @@ func (s *Service) AcceptChat(ctx context.Context, chatID, userID uuid.UUID) (Cha
 	if err := s.repo.UpdateChatStatus(ctx, chatID, ChatStatusActive); err != nil {
 		return Chat{}, err
 	}
+
+	// Tell the person who asked.
+	//
+	// Being accepted is the one moment in this flow the requester cannot
+	// discover on their own: nothing arrives, the chat simply stops being
+	// pending. Without this they have to keep reopening it to find out.
+	accepter, err := s.users.ByID(ctx, userID)
+	name := "Someone"
+	if err == nil && accepter != nil && accepter.DisplayName != "" {
+		name = accepter.DisplayName
+	}
+	s.notifyChatAccepted(ctx, chatID, chat.CreatedBy, name)
+
+	// The requester's open screen should stop showing a pending banner
+	// without waiting for a refresh.
+	s.broadcast(ctx, chatID, "chat.accepted", map[string]any{
+		"chat_id":     chatID.String(),
+		"accepted_by": userID.String(),
+	})
+
 	return s.loadChat(ctx, chatID, userID)
+}
+
+// notifyChatAccepted pushes to the requester only. The accepter performed the
+// action and needs no telling.
+func (s *Service) notifyChatAccepted(ctx context.Context, chatID, requester uuid.UUID, accepterName string) {
+	if s.push == nil {
+		return
+	}
+	if s.hub != nil && s.hub.Online(requester) {
+		// The broadcast above already reached them.
+		return
+	}
+	_ = s.push.NotifyUser(ctx, requester, "messages",
+		accepterName, "accepted your request",
+		map[string]string{"type": "chat.accepted", "chat_id": chatID.String()})
 }
 
 // BlockChat marks a chat blocked. Any participant may block.
