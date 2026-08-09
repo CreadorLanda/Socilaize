@@ -66,3 +66,15 @@ export function callHistory() {
 export function declineCall(chatId: string) {
   return api.post<void>(`/api/chats/${chatId}/call/decline`, {});
 }
+
+/**
+ * Pull people into a call already running.
+ *
+ * The conversation is not touched: a one-to-one chat stays a one-to-one chat
+ * and the guest list belongs to the call.
+ */
+export function inviteToCall(chatId: string, userIds: string[]) {
+  return api.post<{ invited: number }>(`/api/chats/${chatId}/call/invite`, {
+    user_ids: userIds,
+  });
+}
