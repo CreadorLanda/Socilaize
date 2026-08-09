@@ -46,6 +46,9 @@ const TokenTTL = 5 * time.Minute
 // elsewhere.
 type Participation interface {
 	IsParticipant(ctx context.Context, chatID, userID uuid.UUID) (bool, error)
+	// MemberIDs is everyone the call reaches, so the log can say who was rung
+	// and who never answered.
+	MemberIDs(ctx context.Context, chatID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // Identity resolves the display name shown to the other participants.
@@ -76,10 +79,13 @@ type Service struct {
 	chats Participation
 	users Identity
 	ring  Ringer
+	// log records what happened. Optional: without it calls still work, they
+	// simply leave no trace.
+	log *HistoryRepo
 }
 
-func NewService(cfg Config, chats Participation, users Identity, ring Ringer) *Service {
-	return &Service{cfg: cfg, chats: chats, users: users, ring: ring}
+func NewService(cfg Config, chats Participation, users Identity, ring Ringer, log *HistoryRepo) *Service {
+	return &Service{cfg: cfg, chats: chats, users: users, ring: ring, log: log}
 }
 
 // Grant is what the client needs to join.
@@ -138,6 +144,21 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 		return Grant{}, err
 	}
 
+	// The log is written here because this is the only moment the server
+	// reliably hears about a call: a token is signed when someone starts one
+	// and again when someone answers.
+	if s.log != nil {
+		if ring {
+			members, _ := s.chats.MemberIDs(ctx, chatID)
+			if _, err := s.log.Start(ctx, chatID, userID, mode, members); err != nil {
+				// A call that fails to be logged is still a call worth having.
+				_ = err
+			}
+		} else if callID, running, _ := s.log.Running(ctx, chatID); running {
+			_ = s.log.Join(ctx, callID, userID)
+		}
+	}
+
 	// Ringing on the first join, not on every token request.
 	//
 	// Both sides fetch a token — the caller to start, the callee to answer —
@@ -194,7 +215,46 @@ func (c *Controller) PostToken(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, grant)
 }
 
+// GetHistory — GET /calls
+func (c *Controller) GetHistory(ctx *gin.Context) {
+	if c.svc.log == nil {
+		ctx.JSON(http.StatusOK, []Entry{})
+		return
+	}
+	list, err := c.svc.log.History(ctx.Request.Context(), middleware.UserIDFrom(ctx), 50)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	ctx.JSON(http.StatusOK, list)
+}
+
+// PostDecline — POST /chats/:id/call/decline
+//
+// Saying no explicitly, which reads differently in the log from never
+// answering at all.
+func (c *Controller) PostDecline(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	userID := middleware.UserIDFrom(ctx)
+	if ok, err := c.svc.chats.IsParticipant(ctx.Request.Context(), chatID, userID); err != nil || !ok {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "chat_not_found"})
+		return
+	}
+	if c.svc.log != nil {
+		if callID, running, _ := c.svc.log.Running(ctx.Request.Context(), chatID); running {
+			_ = c.svc.log.Decline(ctx.Request.Context(), callID, userID)
+		}
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 // Register mounts the call routes on a JWT-protected group.
 func Register(rg *gin.RouterGroup, c *Controller) {
 	rg.POST("/chats/:id/call/token", c.PostToken)
+	rg.POST("/chats/:id/call/decline", c.PostDecline)
+	rg.GET("/calls", c.GetHistory)
 }

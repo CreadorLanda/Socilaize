@@ -41,6 +41,7 @@ type Server struct {
 	pg           *pgxpool.Pool
 	rdb          *redis.Client
 	pushWorker   *notifications.Worker
+	callSweeper  *calls.Sweeper
 	mediaSweeper *media.Sweeper
 	msgSweeper   *messages.Sweeper
 	pubSrv       *http.Server
@@ -146,6 +147,13 @@ func New(cfg config.Config) (*Server, error) {
 	// Calls: the server signs who may join which room and nothing else. No
 	// audio or video passes through here — the SFU is a separate process, and
 	// the streams are encrypted with a key derived on the devices.
+	//
+	// The history repo records who rang whom and who answered — the call log
+	// read from bundled sample data before this.
+	callsHistory := calls.NewHistoryRepo(pg)
+	// A call whose participants all vanished would otherwise stay "running"
+	// forever, and the log would offer to join an empty room.
+	callSweeper := calls.NewSweeper(callsHistory, 10*time.Minute, 4*time.Hour)
 	callsCtl := calls.NewController(calls.NewService(
 		calls.Config{
 			URL:       cfg.LiveKit.URL,
@@ -155,6 +163,7 @@ func New(cfg config.Config) (*Server, error) {
 		chatParticipation{msgRepo},
 		userNames{usersRepo},
 		callRinger{repo: msgRepo, hub: hub, push: notifSvc},
+		callsHistory,
 	))
 	calls.Register(authed, callsCtl)
 
@@ -165,7 +174,7 @@ func New(cfg config.Config) (*Server, error) {
 
 	return &Server{
 		cfg: cfg, router: r, pg: pg, rdb: rdb,
-		pushWorker: pushWorker, mediaSweeper: mediaSweeper,
+		pushWorker: pushWorker, mediaSweeper: mediaSweeper, callSweeper: callSweeper,
 		msgSweeper: messages.NewSweeper(msgSvc, 5*time.Minute),
 		errCh:      make(chan error, 2),
 	}, nil
@@ -178,6 +187,10 @@ type chatParticipation struct{ repo *messages.Repository }
 
 func (c chatParticipation) IsParticipant(ctx context.Context, chatID, userID uuid.UUID) (bool, error) {
 	return c.repo.IsParticipant(ctx, chatID, userID)
+}
+
+func (c chatParticipation) MemberIDs(ctx context.Context, chatID uuid.UUID) ([]uuid.UUID, error) {
+	return c.repo.ParticipantIDs(ctx, chatID)
 }
 
 // callRinger makes the other phones ring.
@@ -265,6 +278,9 @@ func (s *Server) ListenAndServe() {
 		}
 	}()
 
+	if s.callSweeper != nil {
+		s.callSweeper.Start()
+	}
 	if s.pushWorker != nil {
 		s.pushWorker.Start()
 	}
@@ -282,6 +298,9 @@ func (s *Server) Err() <-chan error { return s.errCh }
 // Close releases platform connections and stops all listeners.
 // Safe to call multiple times.
 func (s *Server) Close() {
+	if s.callSweeper != nil {
+		s.callSweeper.Start()
+	}
 	if s.pushWorker != nil {
 		s.pushWorker.Stop()
 	}

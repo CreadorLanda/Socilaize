@@ -35,3 +35,34 @@ export function callToken(
   const qs = q.toString();
   return api.post<CallGrant>(`/api/chats/${chatId}/call/token${qs ? `?${qs}` : ''}`, {});
 }
+
+/** One row of the call log, as this user sees it. */
+export type CallLogEntry = {
+  id: string;
+  chat_id: string;
+  caller_id: string;
+  caller_name: string;
+  mode: 'voice' | 'video';
+  started_at: string;
+  ended_at?: string;
+  /** Still going — the row offers to join rather than to call back. */
+  running: boolean;
+  /**
+   * `ringing` means live and not yet joined. It is deliberately not `missed`:
+   * a call is only missed once it has ended without you, and reporting a live
+   * one as missed would hide the single call the log can actually help with.
+   */
+  outcome: 'answered' | 'declined' | 'missed' | 'ringing';
+  mine: boolean;
+  duration_sec: number;
+  participants: number;
+};
+
+export function callHistory() {
+  return api.get<CallLogEntry[]>('/api/calls');
+}
+
+/** Say no explicitly, which reads differently in the log from never answering. */
+export function declineCall(chatId: string) {
+  return api.post<void>(`/api/chats/${chatId}/call/decline`, {});
+}
