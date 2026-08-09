@@ -22,6 +22,14 @@ func (f fakeChats) IsParticipant(_ context.Context, _, userID uuid.UUID) (bool, 
 	return f.members[userID], nil
 }
 
+func (f fakeChats) MemberIDs(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, 0, len(f.members))
+	for id := range f.members {
+		out = append(out, id)
+	}
+	return out, nil
+}
+
 type fakeRinger struct{ rang int }
 
 func (f *fakeRinger) Ring(context.Context, uuid.UUID, uuid.UUID, string, string) { f.rang++ }
@@ -48,6 +56,7 @@ func newTestService(members ...uuid.UUID) (*Service, fakeChats) {
 		chats,
 		fakeUsers{name: "Alice"},
 		&fakeRinger{},
+		nil,
 	), chats
 }
 
@@ -116,7 +125,7 @@ func TestTokenGrantsOneRoomOnly(t *testing.T) {
 // would look like a working call until the moment it failed to connect.
 func TestDisabledWithoutConfig(t *testing.T) {
 	alice := uuid.New()
-	svc := NewService(Config{}, fakeChats{members: map[uuid.UUID]bool{alice: true}}, fakeUsers{}, &fakeRinger{})
+	svc := NewService(Config{}, fakeChats{members: map[uuid.UUID]bool{alice: true}}, fakeUsers{}, &fakeRinger{}, nil)
 
 	if _, err := svc.TokenFor(context.Background(), uuid.New(), alice, false, "voice"); !errors.Is(err, ErrCallsDisabled) {
 		t.Fatalf("TokenFor without config = %v, want ErrCallsDisabled", err)
@@ -129,6 +138,7 @@ func TestDisabledWithoutConfig(t *testing.T) {
 		fakeChats{members: map[uuid.UUID]bool{alice: true}},
 		fakeUsers{},
 		&fakeRinger{},
+		nil,
 	)
 	if _, err := partial.TokenFor(context.Background(), uuid.New(), alice, false, "voice"); !errors.Is(err, ErrCallsDisabled) {
 		t.Fatalf("TokenFor with partial config = %v, want ErrCallsDisabled", err)
@@ -167,6 +177,7 @@ func TestOnlyTheCallerRings(t *testing.T) {
 		fakeChats{members: map[uuid.UUID]bool{alice: true}},
 		fakeUsers{name: "Alice"},
 		ringer,
+		nil,
 	)
 
 	if _, err := svc.TokenFor(context.Background(), chat, alice, false, "voice"); err != nil {
@@ -194,6 +205,7 @@ func TestRefusedCallerDoesNotRing(t *testing.T) {
 		fakeChats{members: map[uuid.UUID]bool{}},
 		fakeUsers{name: "Eve"},
 		ringer,
+		nil,
 	)
 	if _, err := svc.TokenFor(context.Background(), uuid.New(), eve, true, "voice"); !errors.Is(err, ErrNotAllowed) {
 		t.Fatalf("got %v, want ErrNotAllowed", err)

@@ -1,15 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState } from '@/components/ui/empty-state';
 import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import { CALLS, type CallRecord } from '@/data/mock';
+import { callHistory, type CallLogEntry } from '@/data/api/calls';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -36,18 +35,44 @@ const BUCKET_LABEL: Record<Bucket, string> = {
 export default function CallsScreen() {
   const { colors, isDark } = useTheme();
   const [tab, setTab] = useState<Tab>('all');
+  const [calls, setCalls] = useState<CallLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Refetched whenever the screen comes back into focus. A call that started
+  // while this list was open would otherwise never appear, and the whole point
+  // of the running state is that you can still join it.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      callHistory()
+        .then((rows) => {
+          if (!cancelled) setCalls(rows ?? []);
+        })
+        .catch(() => {
+          if (!cancelled) setCalls([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
 
   const sections = useMemo(() => {
-    const rows = tab === 'missed' ? CALLS.filter((c) => c.direction === 'missed') : CALLS;
+    // "missed" excludes calls still ringing: those are not missed yet, and
+    // burying a joinable call under that tab would waste it.
+    const rows = tab === 'missed' ? calls.filter((c) => c.outcome === 'missed') : calls;
     const order: Bucket[] = ['today', 'yesterday', 'earlier'];
     return order
       .map((bucket) => ({
         bucket,
         title: BUCKET_LABEL[bucket],
-        data: rows.filter((c) => bucketOf(c.timestamp) === bucket),
+        data: rows.filter((c) => bucketOf(c.started_at) === bucket),
       }))
       .filter((s) => s.data.length > 0);
-  }, [tab]);
+  }, [tab, calls]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
@@ -107,11 +132,16 @@ export default function CallsScreen() {
           contentContainerStyle={sections.length === 0 ? styles.emptyList : styles.list}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            <EmptyState
-              icon={tab === 'missed' ? 'checkmark-circle-outline' : 'call-outline'}
-              title={tab === 'missed' ? t('calls.empty_missed') : t('calls.empty_all')}
-              description={t('calls.empty_hint')}
-            />
+            loading ? null : (
+              // Nothing is shown while the first fetch is in flight: an empty
+              // state that flashes before the data arrives reads as "you have
+              // no calls", which may be false.
+              <EmptyState
+                icon={tab === 'missed' ? 'checkmark-circle-outline' : 'call-outline'}
+                title={tab === 'missed' ? t('calls.empty_missed') : t('calls.empty_all')}
+                description={t('calls.empty_hint')}
+              />
+            )
           }
         />
       </StateTransition>
@@ -119,71 +149,102 @@ export default function CallsScreen() {
   );
 }
 
-function CallRow({ call }: { call: CallRecord }) {
+function CallRow({ call }: { call: CallLogEntry }) {
   const { colors } = useTheme();
-  const missed = call.direction === 'missed';
-  const label =
-    call.direction === 'incoming'
-      ? t('calls.incoming')
-      : call.direction === 'outgoing'
-        ? t('calls.outgoing')
-        : t('calls.missed');
+  const missed = call.outcome === 'missed';
+  // A live call is the one row worth interrupting the list for: it is not a
+  // record of something that happened, it is a door still open.
+  const live = call.running && call.outcome !== 'answered';
 
-  const callBack = () => router.push(`/call/${call.chatId}?mode=${call.type}`);
+  const label = live
+    ? t('calls.in_progress')
+    : call.outcome === 'missed'
+      ? t('calls.missed')
+      : call.outcome === 'declined'
+        ? t('calls.declined')
+        : call.mine
+          ? t('calls.outgoing')
+          : t('calls.incoming');
+
+  // Joining an existing call, not starting a new one: `incoming=1` stops this
+  // phone asking the server to ring everyone again for a call already ringing.
+  const action = () =>
+    router.push(
+      call.running
+        ? `/call/${call.chat_id}?mode=${call.mode}&incoming=1`
+        : `/call/${call.chat_id}?mode=${call.mode}`,
+    );
 
   return (
     <Pressable
-      onPress={() => router.push(`/chat/${call.chatId}`)}
+      onPress={() => router.push(`/chat/${call.chat_id}`)}
       style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surfaceMuted }]}
       accessibilityRole="button"
     >
-      <Image
-        source={{ uri: call.avatarUri }}
-        style={[styles.avatar, { backgroundColor: colors.surfaceMuted }]}
-        contentFit="cover"
-      />
+      <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: colors.surfaceMuted }]}>
+        <Text style={[styles.avatarInitial, { color: colors.textSecondary }]}>
+          {(call.caller_name || '?').charAt(0).toUpperCase()}
+        </Text>
+      </View>
       <View style={styles.rowText}>
         <Text
           style={[styles.name, { color: missed ? colors.danger : colors.text }]}
           numberOfLines={1}
         >
-          {call.name}
+          {call.caller_name || t('call.someone')}
+          {call.participants > 2 ? `  ·  ${call.participants}` : ''}
         </Text>
         <View style={styles.meta}>
+          {live ? (
+            <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
+          ) : (
+            <Ionicons
+              name={call.mine ? 'arrow-up' : 'arrow-down'}
+              size={13}
+              color={missed ? colors.danger : colors.success}
+            />
+          )}
           <Ionicons
-            name={call.direction === 'outgoing' ? 'arrow-up' : 'arrow-down'}
-            size={13}
-            color={missed ? colors.danger : colors.success}
-          />
-          <Ionicons
-            name={call.type === 'video' ? 'videocam' : 'call'}
+            name={call.mode === 'video' ? 'videocam' : 'call'}
             size={12}
             color={colors.textMuted}
           />
-          <Text style={[styles.metaText, { color: colors.textSecondary }]} numberOfLines={1}>
+          <Text
+            style={[styles.metaText, { color: live ? colors.success : colors.textSecondary }]}
+            numberOfLines={1}
+          >
             {label}
+            {!live && call.duration_sec > 0 ? `  ·  ${formatDuration(call.duration_sec)}` : ''}
           </Text>
         </View>
       </View>
-      <Text style={[styles.time, { color: colors.textMuted }]}>{timeOf(call.timestamp)}</Text>
+      <Text style={[styles.time, { color: colors.textMuted }]}>{timeOf(call.started_at)}</Text>
       <Pressable
-        onPress={callBack}
+        onPress={action}
         hitSlop={8}
         style={({ pressed }) => [
           styles.callBtn,
-          { backgroundColor: colors.surfaceMuted },
+          { backgroundColor: live ? colors.success : colors.surfaceMuted },
           pressed && { opacity: 0.6 },
         ]}
-        accessibilityLabel={t('calls.callback', { name: call.name })}
+        accessibilityLabel={
+          live ? t('calls.join') : t('calls.callback', { name: call.caller_name })
+        }
       >
         <Ionicons
-          name={call.type === 'video' ? 'videocam' : 'call'}
+          name={live ? 'enter' : call.mode === 'video' ? 'videocam' : 'call'}
           size={19}
-          color={colors.primary}
+          color={live ? colors.onPrimary : colors.primary}
         />
       </Pressable>
     </Pressable>
   );
+}
+
+function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 const AVATAR = 50;
@@ -252,6 +313,9 @@ const styles = StyleSheet.create({
   meta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { ...Typography.caption, flex: 1 },
   time: { ...Typography.micro },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { ...Typography.h3 },
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
   callBtn: {
     width: 40,
     height: 40,

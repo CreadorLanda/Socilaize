@@ -1022,6 +1022,9 @@ export default {
     clear: 'Clear',
   },
   calls: {
+    in_progress: 'In progress',
+    join: 'Join the call',
+    declined: 'Declined',
     title: 'Calls',
     tab_all: 'All',
     tab_missed: 'Missed',

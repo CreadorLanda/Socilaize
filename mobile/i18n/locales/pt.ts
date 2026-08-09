@@ -1023,6 +1023,9 @@ export default {
     clear: 'Limpar',
   },
   calls: {
+    in_progress: 'A decorrer',
+    join: 'Entrar na chamada',
+    declined: 'Recusada',
     title: 'Chamadas',
     tab_all: 'Todas',
     tab_missed: 'Perdidas',
