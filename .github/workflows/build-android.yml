@@ -38,6 +38,12 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # One place. The version appears in the cache path, the cache key and the
+      # install step, and three copies of a version string is three chances for
+      # them to disagree — which would show up as a cache that never hits and a
+      # download every run, silently.
+      NDK_VERSION: '27.3.13750724'
     timeout-minutes: 60
     defaults:
       run:
@@ -67,6 +73,18 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      # The NDK is over a gigabyte and does not change between runs.
+      - name: Cache the NDK
+        id: ndk-cache
+        uses: actions/cache@v4
+        with:
+          # Literal, not ${{ env.ANDROID_SDK_ROOT }}: the expression context
+          # only sees env: blocks declared in the workflow, never the runner's
+          # own variables. It would resolve to empty and cache the wrong path —
+          # silently, as a cache that never hits.
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}
+
       # The NDK is not in the runner image, and react-native-webrtc compiles
       # native code that needs it. The build fails at the check step with the
       # exact path it looked for, which is where this version comes from.
@@ -76,14 +94,35 @@ jobs:
       # in with a message about a path nobody chose. When the Expo SDK moves,
       # the build says which version it wants and this line follows it.
       - name: Install the NDK
-        env:
-          NDK_VERSION: '27.3.13750724'
         run: |
-          yes | sdkmanager --install "ndk;$NDK_VERSION" > /dev/null
+          # The cache restores the directory but not the sdkmanager bookkeeping,
+          # so the check below is what decides — not whether the step ran.
+          if [ ! -d "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" ]; then
+            yes | sdkmanager --install "ndk;$NDK_VERSION" > /dev/null
+          fi
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
           test -d "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" \
             || { echo "::error::NDK $NDK_VERSION did not install"; exit 1; }
+
+      # Gradle rebuilds every native dependency from scratch on a fresh runner,
+      # and this project carries react-native-webrtc and LiveKit — the bulk of
+      # the build time is compiling code that did not change.
+      #
+      # Keyed on the lockfile and the gradle files: anything that could alter
+      # what gets compiled invalidates it. The restore-keys line means a
+      # dependency bump reuses most of the previous cache instead of starting
+      # from nothing.
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            mobile/android/.gradle
+          key: gradle-${{ runner.os }}-${{ hashFiles('mobile/bun.lock', 'mobile/package.json', 'mobile/app.json') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
