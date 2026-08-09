@@ -341,7 +341,11 @@ export default function ChatScreen() {
   const selectionMode = selectedIds.size > 0;
   const [dandaraTyping, setDandaraTyping] = useState(false);
   /** Peer typing from realtime backend (non-AI chats). */
-  const [peerTyping, setPeerTyping] = useState(false);
+  // What the other person is doing, or null. Two states rather than a
+  // boolean: holding the mic and typing look identical from here otherwise,
+  // and they mean very different things to whoever is waiting.
+  const [peerActivity, setPeerActivity] = useState<'typing' | 'recording' | null>(null);
+  const peerTyping = peerActivity !== null;
   const peerTypingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingSentRef = useRef(false);
   const currentUser = useCurrentUser();
@@ -643,10 +647,18 @@ export default function ChatScreen() {
         const uid = String(payload.user_id ?? '');
         if (uid && uid === meId) return;
         const typing = !!payload.typing;
-        setPeerTyping(typing);
+        const kind = payload.kind === 'recording' ? 'recording' : 'typing';
+        setPeerActivity(typing ? kind : null);
         if (peerTypingClearRef.current) clearTimeout(peerTypingClearRef.current);
         if (typing) {
-          peerTypingClearRef.current = setTimeout(() => setPeerTyping(false), 4000);
+          // Clears itself. An indicator stuck because someone closed the app
+          // mid-word is worse than none — it says "they are still there" when
+          // they are not. Recording gets longer: a voice note takes a while,
+          // and a bar that vanishes mid-recording reads as them giving up.
+          peerTypingClearRef.current = setTimeout(
+            () => setPeerActivity(null),
+            kind === 'recording' ? 12000 : 4000,
+          );
         }
         return;
       }
@@ -850,6 +862,8 @@ export default function ChatScreen() {
     recordStartRef.current = Date.now();
     setElapsedSec(0);
     setRecordPhase('recording');
+    // The other side sees "recording audio" rather than the typing dots.
+    if (id && !isAIChat) apiSetTyping(id, true, 'recording').catch(() => {});
     micScale.value = withSpring(1.7, { damping: 12 });
     micHalo.value = withRepeat(withTiming(1, { duration: 1100 }), -1, false);
     stopTimer();
@@ -870,6 +884,9 @@ export default function ChatScreen() {
     const duration = Math.round((Date.now() - recordStartRef.current) / 1000);
     setRecordPhase('idle');
     resetRecordingValues();
+    // Cleared on every way out — sent, cancelled or abandoned. A recording
+    // indicator that outlives the recording is the failure this guards.
+    if (id && !isAIChat) apiSetTyping(id, false, 'recording').catch(() => {});
     try {
       await audioRecorder.stop();
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
@@ -930,6 +947,9 @@ export default function ChatScreen() {
     }
     setTimeout(() => {
       setRecordPhase('idle');
+    // Cleared on every way out — sent, cancelled or abandoned. A recording
+    // indicator that outlives the recording is the failure this guards.
+    if (id && !isAIChat) apiSetTyping(id, false, 'recording').catch(() => {});
       resetRecordingValues();
     }, 280);
   };
@@ -2373,7 +2393,7 @@ export default function ChatScreen() {
             }
             ListFooterComponent={
               dandaraTyping || (peerTyping && layout.showTypingDots !== false) ? (
-                <TypingBubble />
+                <TypingBubble recording={peerActivity === 'recording'} />
               ) : null
             }
             ListEmptyComponent={
@@ -3312,8 +3332,15 @@ function TypingDot({ index }: { index: number }) {
   return <Animated.View style={[styles.typingDot, { backgroundColor: colors.textMuted }, style]} />;
 }
 
-// "Dandara is typing" bubble shown while a reply is being prepared.
-function TypingBubble() {
+/**
+ * Shown while the other side is composing.
+ *
+ * `recording` swaps the three dots for a mic and a word. Holding the mic looks
+ * identical to typing from here otherwise, and the two mean very different
+ * things to whoever is waiting: typing resolves in seconds, a voice note can
+ * take a minute.
+ */
+function TypingBubble({ recording = false }: { recording?: boolean }) {
   const { colors, chat, layout } = useTheme();
   const mineEnd = layout.myBubbleSide === 'right';
   const radii = bubbleRadii(layout, false, true, layout.myBubbleSide);
@@ -3344,11 +3371,20 @@ function TypingBubble() {
           },
         ]}
       >
-        <View style={styles.typingDots}>
-          <TypingDot index={0} />
-          <TypingDot index={1} />
-          <TypingDot index={2} />
-        </View>
+        {recording ? (
+          <View style={styles.recordingHint}>
+            <Ionicons name="mic" size={14} color={colors.danger} />
+            <Text style={[styles.recordingHintText, { color: colors.textSecondary }]}>
+              {t('chat.recording_audio')}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.typingDots}>
+            <TypingDot index={0} />
+            <TypingDot index={1} />
+            <TypingDot index={2} />
+          </View>
+        )}
       </View>
     </View>
   );
@@ -4792,6 +4828,8 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: 14,
   },
+  recordingHint: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  recordingHintText: { ...Typography.caption },
   typingDots: {
     flexDirection: 'row',
     alignItems: 'center',

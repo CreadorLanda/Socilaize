@@ -494,14 +494,21 @@ func (s *Service) MarkRead(ctx context.Context, chatID, userID uuid.UUID, messag
 	})
 }
 
-// Typing broadcasts a typing indicator (ephemeral — not persisted).
-func (s *Service) Typing(ctx context.Context, chatID, userID uuid.UUID, typing bool) error {
+// Typing broadcasts a composing indicator (ephemeral — not persisted).
+//
+// `kind` says what they are doing: composing text, or holding the mic. Anything
+// unrecognised is treated as typing, which is what an older client sends.
+func (s *Service) Typing(ctx context.Context, chatID, userID uuid.UUID, typing bool, kind string) error {
 	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
 		return err
+	}
+	if kind != "recording" {
+		kind = "typing"
 	}
 	s.broadcast(ctx, chatID, "typing", map[string]any{
 		"user_id": userID,
 		"typing":  typing,
+		"kind":    kind,
 	})
 	return nil
 }

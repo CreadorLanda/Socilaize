@@ -246,6 +246,12 @@ type MarkReadRequest struct {
 
 type TypingRequest struct {
 	Typing bool `json:"typing"`
+	// Kind distinguishes composing from holding the mic. They look identical
+	// from the other side and mean very different things to the person
+	// waiting: typing resolves in seconds, a voice note can take a minute.
+	//
+	// Empty means "typing", so an older client keeps working unchanged.
+	Kind string `json:"kind,omitempty"`
 }
 
 type ReactRequest struct {
