@@ -754,6 +754,11 @@ export default {
     admin: 'Admin',
   },
   call: {
+    camera_failed_title: 'Camera unavailable',
+    camera_failed_body: 'The camera could not be turned on for this call.',
+    camera_permission: 'Yo needs camera access to turn on video. Grant it in your phone settings.',
+    add_needs_group_title: 'This is a one-to-one call',
+    add_needs_group_body: 'A one-to-one conversation has exactly two people. Create a group to call more than one person.',
     someone: 'Someone',
     incoming_voice: 'Incoming call',
     incoming_video: 'Incoming video call',

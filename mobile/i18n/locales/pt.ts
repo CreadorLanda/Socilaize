@@ -755,6 +755,11 @@ export default {
     admin: 'Admin',
   },
   call: {
+    camera_failed_title: 'Câmara indisponível',
+    camera_failed_body: 'Não foi possível ligar a câmara nesta chamada.',
+    camera_permission: 'O Yo precisa de acesso à câmara para ligar o vídeo. Concede-o nas definições do telemóvel.',
+    add_needs_group_title: 'Esta é uma chamada 1:1',
+    add_needs_group_body: 'Uma conversa entre duas pessoas tem exatamente duas. Cria um grupo para chamares mais do que uma pessoa.',
     someone: 'Alguém',
     incoming_voice: 'Chamada a entrar',
     incoming_video: 'Videochamada a entrar',

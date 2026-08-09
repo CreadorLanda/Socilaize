@@ -11,7 +11,7 @@ import {
   useRoomContext,
   useTracks,
 } from '@livekit/react-native';
-import { RoomEvent, Track } from 'livekit-client';
+import { Track } from 'livekit-client';
 import type { TrackReference } from '@livekit/react-native';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -58,6 +58,7 @@ export default function CallScreen() {
 
   const [grant, setGrant] = useState<CallGrant | null>(null);
   const [e2eeKey, setE2eeKey] = useState<string | null>(null);
+  const [isGroup, setIsGroup] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export default function CallScreen() {
         // group has no single pairwise session; those calls run without the
         // extra layer until the key is derived from the group's sender key.
         const chat = (await listChats()).find((c) => c.id === id);
+        if (!cancelled) setIsGroup(chat?.type === 'group');
         if (chat?.type !== 'group' && chat?.peer_user_id) {
           const key = await callKeyFor(id, chat.peer_user_id);
           if (!cancelled) setE2eeKey(key);
@@ -144,7 +146,7 @@ export default function CallScreen() {
         : {})}
       onError={() => setFailure(t('call.failed_to_join'))}
     >
-      <CallStage chatId={id!} mode={callMode} e2eeKey={e2eeKey} />
+      <CallStage chatId={id!} mode={callMode} e2eeKey={e2eeKey} isGroup={isGroup} />
     </LiveKitRoom>
   );
 }
@@ -159,10 +161,13 @@ function CallStage({
   chatId,
   mode,
   e2eeKey,
+  isGroup,
 }: {
   chatId: string;
   mode: Mode;
   e2eeKey: string | null;
+  /** A one-to-one chat has no group to add anyone to. */
+  isGroup: boolean;
 }) {
   const { colors } = useTheme();
   const room = useRoomContext();
@@ -177,22 +182,29 @@ function CallStage({
     { onlySubscribed: false },
   );
 
+  const others = participants.filter((p) => p.identity !== localParticipant.identity);
+
   const [seconds, setSeconds] = useState(0);
   const [connected, setConnected] = useState(false);
   const [adding, setAdding] = useState(false);
   const startedAt = useRef<number | null>(null);
 
+  // A call is connected when someone else is in it, not when this phone
+  // reaches the SFU.
+  //
+  // RoomEvent.Connected fires as soon as we join, which for the caller is
+  // immediately — the other phone is still ringing. The screen showed a
+  // running duration for a call nobody had answered.
+  //
+  // Joining early is right: the caller has to be in the room to be heard the
+  // moment the other side arrives. What was wrong was calling that
+  // "connected".
+  const someoneElseHere = others.length > 0;
   useEffect(() => {
-    const onConnected = () => {
-      setConnected(true);
-      startedAt.current = Date.now();
-    };
-    room.on(RoomEvent.Connected, onConnected);
-    if (room.state === 'connected') onConnected();
-    return () => {
-      room.off(RoomEvent.Connected, onConnected);
-    };
-  }, [room]);
+    if (!someoneElseHere || connected) return;
+    setConnected(true);
+    startedAt.current = Date.now();
+  }, [someoneElseHere, connected]);
 
   // Timed from the wall clock, not by counting ticks. An interval that misses
   // a beat while the app is backgrounded would drift, and a call timer that
@@ -205,12 +217,33 @@ function CallStage({
     return () => clearInterval(tick);
   }, [connected]);
 
+  /**
+   * Turn the camera on or off mid-call.
+   *
+   * A voice call starts without a video track at all, so turning the camera on
+   * has to create and publish one — and that asks for a permission the call
+   * never requested. It fails silently otherwise: the button flips back and
+   * nothing explains why, which reads as the feature being broken rather than
+   * as a permission being missing.
+   */
+  const toggleCamera = async () => {
+    try {
+      await localParticipant.setCameraEnabled(!isCameraEnabled);
+    } catch (err) {
+      appAlert(
+        t('call.camera_failed_title'),
+        err instanceof Error && /permission|denied/i.test(err.message)
+          ? t('call.camera_permission')
+          : t('call.camera_failed_body'),
+      );
+    }
+  };
+
   const hangUp = () => {
     void room.disconnect();
     router.back();
   };
 
-  const others = participants.filter((p) => p.identity !== localParticipant.identity);
   // useTracks hands back placeholders for participants who have not published
   // yet — they have no publication at all. VideoTrack needs a real one, so the
   // narrowing is a type guard rather than a filter: a placeholder rendered as
@@ -228,6 +261,11 @@ function CallStage({
       // The room is the chat. Adding someone to the call means adding them to
       // the conversation — there is no separate guest list, and inventing one
       // would let people into a room whose messages they cannot read.
+      //
+      // Which is also why this cannot work in a one-to-one chat: it has
+      // exactly two participants and no group to add to. The request used to
+      // be sent anyway and failed with "could not add them", which explained
+      // nothing.
       await addGroupMembers(chatId, people.map((p) => p.id));
     } catch {
       appAlert(t('chats.action_failed_title'), t('call.invite_failed'));
@@ -247,7 +285,16 @@ function CallStage({
               : t('call.participants', { count: others.length + 1 })}
         </Text>
         <Text style={styles.timer}>
-          {connected ? formatDuration(seconds) : t('call.connecting')}
+          {/*
+            Three states, not two. "Connecting" is reaching the SFU; "calling"
+            is being there alone while the other phone rings. Collapsing them
+            told the caller they were in a call nobody had answered.
+          */}
+          {connected
+            ? formatDuration(seconds)
+            : room.state === 'connected'
+              ? t('call.calling')
+              : t('call.connecting')}
         </Text>
         {/*
           Shown, not assumed. The fingerprint is derived from the same key on
@@ -280,7 +327,11 @@ function CallStage({
               <Ionicons name="person" size={54} color={colors.textMuted} />
             </View>
             <Text style={styles.status}>
-              {connected ? t('call.audio_only') : t('call.connecting')}
+              {connected
+                ? t('call.audio_only')
+                : room.state === 'connected'
+                  ? t('call.calling')
+                  : t('call.connecting')}
             </Text>
           </View>
         )}
@@ -297,12 +348,20 @@ function CallStage({
           icon={isCameraEnabled ? 'videocam' : 'videocam-off'}
           active={!isCameraEnabled}
           label={t('call.camera')}
-          onPress={() => void localParticipant.setCameraEnabled(!isCameraEnabled)}
+          onPress={() => void toggleCamera()}
         />
         <CircleButton
           icon="person-add"
           label={t('call.add_people')}
-          onPress={() => setAdding(true)}
+          onPress={() => {
+            if (!isGroup) {
+              // Says what would have to happen, instead of failing at the
+              // request and reporting that something went wrong.
+              appAlert(t('call.add_needs_group_title'), t('call.add_needs_group_body'));
+              return;
+            }
+            setAdding(true);
+          }}
         />
         <CircleButton icon="call" label={t('call.hang_up')} danger onPress={hangUp} />
       </View>
