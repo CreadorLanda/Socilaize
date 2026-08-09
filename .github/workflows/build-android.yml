@@ -1,0 +1,114 @@
+# Build the Android app on GitHub's runners.
+#
+# `eas build --local` does the work here rather than on Expo's servers, which
+# is the whole point: the free queue has taken up to two hours. The runners
+# already ship with the Android SDK, and this repository is public, so the
+# minutes are free and unlimited.
+#
+# Building on the development machine was the obvious alternative and is not
+# available: an Android build needs roughly 14 GB and that machine has 1.3 GB.
+name: Build Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: EAS build profile
+        type: choice
+        options: [preview, production, development]
+        default: preview
+      format:
+        description: apk to install directly, aab for the Play Store
+        type: choice
+        options: [apk, aab]
+        default: apk
+  push:
+    branches: [main]
+    # Only when something that changes the binary changes. A README edit
+    # should not spend twenty minutes of runner time.
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/build-android.yml'
+
+concurrency:
+  # A newer push makes an in-flight build pointless.
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The default runner image is close to full, and Gradle failing on disk
+      # space does so late and with a message that points nowhere useful.
+      - name: Free disk space
+        run: |
+          echo "before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk \
+                      /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+          echo "after:"; df -h / | tail -1
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Catches version mismatches and missing peer dependencies before the
+      # build spends twenty minutes discovering them.
+      - name: Check the project
+        run: |
+          bunx expo-doctor || echo "::warning::expo-doctor reported issues"
+          bunx tsc --noEmit
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        env:
+          # Fetches the signing credentials Expo already holds, so the keystore
+          # never has to live in this repository.
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          FORMAT="${{ github.event.inputs.format || 'apk' }}"
+          PROFILE="${{ github.event.inputs.profile || 'preview' }}"
+          OUT="$RUNNER_TEMP/yo-$PROFILE.$FORMAT"
+
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN is not set. Add it under Settings → Secrets → Actions."
+            exit 1
+          fi
+
+          bunx eas-cli build \
+            --platform android \
+            --profile "$PROFILE" \
+            --local \
+            --non-interactive \
+            --output "$OUT"
+
+          echo "ARTIFACT=$OUT" >> "$GITHUB_ENV"
+          ls -lh "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yo-android-${{ github.event.inputs.profile || 'preview' }}-${{ github.sha }}
+          path: ${{ env.ARTIFACT }}
+          # Long enough to test with, short enough not to hoard binaries.
+          retention-days: 14
+          if-no-files-found: error
