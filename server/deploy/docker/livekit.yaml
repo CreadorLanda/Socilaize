@@ -1,0 +1,38 @@
+# LiveKit SFU — self-hosted, no third party involved.
+#
+# Ports, and why they matter here specifically:
+#
+#   7880/tcp   signalling + the WebSocket clients dial. This one can sit
+#              behind Cloudflare Tunnel like the rest of the API.
+#   7881/tcp   ICE over TCP — the fallback when UDP is blocked entirely.
+#   50000-60000/udp   the actual audio and video.
+#
+# The UDP range is the part a Cloudflare Tunnel cannot carry: a tunnel
+# proxies HTTP and WebSockets, and media is neither. These ports have to be
+# open on the VPS firewall and reachable at the machine's public address, or
+# calls connect and then stay silent — which is worse than failing outright,
+# because it looks like the other person is not talking.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  # Only set this if the SFU sits behind NAT with a known public address.
+  use_external_ip: true
+
+# Keys are read from the environment so the secret never lands in a file that
+# git or an editor might sync. Generate a pair with:
+#   docker run --rm livekit/livekit-server generate-keys
+keys:
+  # Replaced at deploy time — see scripts/vps-livekit.sh.
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
+logging:
+  level: info
+
+# Rooms disappear once empty. Nothing about a call is worth persisting: the
+# streams were encrypted end to end and the server could not read them anyway.
+room:
+  empty_timeout: 60
+  departure_timeout: 20
+  max_participants: 16

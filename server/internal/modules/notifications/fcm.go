@@ -124,6 +124,23 @@ type fcmAPNSConfig struct {
 	Payload map[string]any    `json:"payload,omitempty"`
 }
 
+// messageCategory must match the identifier the client registers its reply
+// action under. They are two halves of one contract: change either and the
+// reply box quietly stops appearing.
+const messageCategory = "yo.message"
+
+// apsPayload builds the iOS half.
+//
+// iOS reads the category from the aps dictionary, not from the data payload,
+// so the same identifier has to be stated in both places.
+func apsPayload(job PushJob) map[string]any {
+	aps := map[string]any{"sound": "default"}
+	if job.Category == "messages" || job.Category == "groups" {
+		aps["category"] = messageCategory
+	}
+	return aps
+}
+
 func (s *FCMSender) sendOne(ctx context.Context, job PushJob, token string) error {
 	data := map[string]string{}
 	for k, v := range job.Data {
@@ -131,6 +148,17 @@ func (s *FCMSender) sendOne(ctx context.Context, job PushJob, token string) erro
 	}
 	if job.Category != "" {
 		data["category"] = job.Category
+	}
+
+	// The notification category, which is what puts a reply box on the
+	// notification instead of a plain line of text. The client registers the
+	// actions under this identifier at startup; naming it here is what makes
+	// them appear.
+	//
+	// Only on messages: a "reply" button on a story or a call notification
+	// would offer something that goes nowhere.
+	if job.Category == "messages" || job.Category == "groups" {
+		data["categoryId"] = messageCategory
 	}
 	reqBody := fcmMessageRequest{
 		Message: fcmMessage{
@@ -146,9 +174,7 @@ func (s *FCMSender) sendOne(ctx context.Context, job PushJob, token string) erro
 			APNS: &fcmAPNSConfig{
 				Headers: map[string]string{"apns-priority": "10"},
 				Payload: map[string]any{
-					"aps": map[string]any{
-						"sound": "default",
-					},
+					"aps": apsPayload(job),
 				},
 			},
 		},

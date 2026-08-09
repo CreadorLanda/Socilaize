@@ -19,6 +19,8 @@ import { Radii, Spacing, Typography } from '@/constants/theme';
 import { authStart, authVerify, type Platform } from '@/data/api/auth';
 import { ApiError } from '@/data/api/client';
 import { setSession } from '@/data/auth-store';
+import { ensureKeysPublished } from '@/data/crypto';
+import { registerPushWithServer } from '@/data/push';
 import { useTheme } from '@/hooks/use-theme';
 import { getInstallId } from '@/data/install-id';
 import { t } from '@/i18n';
@@ -90,6 +92,22 @@ export default function VerifyScreen() {
         platform: devicePlatform(),
       });
       await setSession(res.user, res.tokens, e164);
+
+      // Publish keys and register for push the moment a session exists.
+      //
+      // Both used to run only from the root layout, on a launch that already
+      // had a session — so someone who registered and went straight into the
+      // app had neither. The consequences were silent and asymmetric: nobody
+      // could message them (their key bundle did not exist, so the sender's
+      // encryption was refused with "this person has not set up encryption"),
+      // and no notification ever arrived. The database showed it plainly —
+      // an account with 0 keys and 0 push devices.
+      //
+      // Not awaited: neither is needed for the next screen, and a slow
+      // network must not hold someone on the verification step.
+      ensureKeysPublished().catch(() => {});
+      registerPushWithServer().catch(() => {});
+
       // Returning users land straight in the app. The backend marks a fresh
       // account with an empty display_name + a `u<hash>` placeholder username
       // — so a non-empty display_name is a reliable "already onboarded" flag.

@@ -1,37 +1,64 @@
-# Reverse proxy + automatic TLS (Let's Encrypt) for the Socialize API.
+# Reverse proxy + automatic TLS (Let's Encrypt) for the Yo API.
 #
-# Install Caddy on the VPS:
+# This replaces the Cloudflare Tunnel, and doing so removes a real limitation
+# rather than merely swapping one host for another: a tunnel carries HTTP and
+# WebSockets, and the calls SFU needs UDP, which is neither. With the domain
+# pointing straight at this machine, the media ports work with nothing in the
+# way.
+#
+# Install:
 #   sudo apt install caddy        # Debian/Ubuntu
 #   # or:  https://caddyserver.com/docs/install
 #
-# Then place this file at /etc/caddy/Caddyfile (replacing the default) and:
+# Place at /etc/caddy/Caddyfile, then:
 #   sudo systemctl reload caddy
 #
-# Caddy will obtain a TLS cert on first boot and renew it automatically.
+# DNS first. Caddy proves ownership over port 80 before it can issue a cert,
+# so this record must exist and resolve before the first reload:
+#
+#   yo.alexandrelanda.com.   A   <public IP of this VPS>
+#
+# The apex alexandrelanda.com can stay wherever it is — on Vercel or anywhere
+# else. A subdomain is an independent record; the two do not compete.
 
-# Replace this with your actual domain. The DNS A/AAAA records for it must
-# point at this VPS before Caddy can issue a cert.
-api.socialize.example {
+yo.alexandrelanda.com {
 	encode gzip zstd
 
-	# WebSocket upgrades: Caddy handles this transparently with reverse_proxy,
-	# but we bump idle timeouts so long-lived WS connections survive.
-	@websocket {
-		header Connection *Upgrade*
-		header Upgrade websocket
+	# ── Calls signalling ────────────────────────────────────────────────
+	#
+	# Only the WebSocket the clients dial to negotiate a call. The audio and
+	# video never come through here: they are UDP, straight to ports
+	# 50000-60000 on this machine's public address.
+	#
+	# handle_path strips the prefix, so /livekit/rtc reaches LiveKit as /rtc,
+	# which is the path it actually serves.
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			transport http {
+				read_timeout 3600s
+				write_timeout 3600s
+			}
+		}
 	}
 
-	# All routes proxy to the Go API on localhost:8080.
-	reverse_proxy 127.0.0.1:8080 {
-		header_up Host {host}
-		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
+	# ── Everything else: the Go API ─────────────────────────────────────
+	handle {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
 
-		# Long-poll-friendly timeouts for WS.
-		transport http {
-			read_timeout 3600s
-			write_timeout 3600s
+			# The chat WebSocket is long-lived; the default timeouts would cut
+			# it and the client would reconnect every minute.
+			transport http {
+				read_timeout 3600s
+				write_timeout 3600s
+			}
 		}
 	}
 
@@ -46,7 +73,7 @@ api.socialize.example {
 	}
 
 	log {
-		output file /var/log/caddy/api.log {
+		output file /var/log/caddy/yo.log {
 			roll_size 10mb
 			roll_keep 5
 		}

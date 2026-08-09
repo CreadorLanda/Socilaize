@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "607005204491",
+    "project_id": "gen-lang-client-0983372700",
+    "storage_bucket": "gen-lang-client-0983372700.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:607005204491:android:c0fea408753c336424a70e",
+        "android_client_info": {
+          "package_name": "app.yo.messenger"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBhZ24JKejNwlD3QcYmDSieL0Izt2SJGjw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

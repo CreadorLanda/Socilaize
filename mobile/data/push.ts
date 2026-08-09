@@ -1,8 +1,11 @@
-import Constants from 'expo-constants';
 import * as Device from 'expo-device';
+import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { markRead } from '@/data/api/messages';
+import { sendQuickReply } from '@/data/quick-reply';
+import { t } from '@/i18n';
 import {
   registerPushDevice,
   unregisterPushDevice,
@@ -46,7 +49,7 @@ async function ensureAndroidChannel(): Promise<void> {
  * Request permission and return an Expo push token when available.
  * Falls back to null on web / simulators without push support.
  */
-export async function getExpoPushToken(): Promise<string | null> {
+export async function getDevicePushToken(): Promise<string | null> {
   if (Platform.OS === 'web') return null;
   // Physical device is required for real push on iOS; Android emulators can
   // still return Expo tokens in some setups — we try either way.
@@ -66,21 +69,23 @@ export async function getExpoPushToken(): Promise<string | null> {
     return null;
   }
 
-  // EAS projectId improves reliability; optional for Expo Go.
-  const extra = Constants.expoConfig?.extra as
-    | { eas?: { projectId?: string } }
-    | undefined;
-  const projectId =
-    (Constants as { easConfig?: { projectId?: string } }).easConfig?.projectId ??
-    extra?.eas?.projectId;
-
   try {
-    const token = await Notifications.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined,
-    );
-    return token.data ?? null;
+    // The device's own FCM registration token, not an Expo one.
+    //
+    // An Expo token is delivered by Expo's servers, which means every
+    // notification this app sends passes through a third party. The native
+    // token goes straight from our server to Google, and the server already
+    // routes by token shape — it has both senders and picks by prefix.
+    //
+    // Requires google-services.json in the build; without it Android has no
+    // project to register against and this throws rather than returning a
+    // token that would be silently refused later.
+    const token = await Notifications.getDevicePushTokenAsync();
+    return typeof token.data === 'string' ? token.data : null;
   } catch {
-    // Dev client without projectId / Expo Go edge cases.
+    // No Google Play services, or a build without the Firebase config.
+    // Reported as "no token" rather than thrown: a device that cannot
+    // receive push must still be able to use the app.
     return null;
   }
 }
@@ -90,7 +95,7 @@ export async function getExpoPushToken(): Promise<string | null> {
  * Safe to call multiple times (upsert on the server).
  */
 export async function registerPushWithServer(): Promise<string | null> {
-  const token = await getExpoPushToken();
+  const token = await getDevicePushToken();
   if (!token) return null;
   await registerPushDevice(token, platformForDevice());
   return token;
@@ -121,4 +126,85 @@ export async function unregisterPushWithServer(): Promise<void> {
     // failing here is a stale token, which the server drops on its first
     // `Unregistered` response from FCM anyway.
   }
+}
+
+/** Category the server tags message pushes with, so the reply box appears. */
+export const MESSAGE_CATEGORY = 'yo.message';
+
+/**
+ * Declare the reply action on message notifications.
+ *
+ * A category is what turns a notification into something you can act on
+ * without opening the app. Registered once at startup — the OS keeps it, and
+ * the server only has to name it in the payload.
+ */
+export async function registerNotificationActions(): Promise<void> {
+  try {
+    await Notifications.setNotificationCategoryAsync(MESSAGE_CATEGORY, [
+      {
+        identifier: 'reply',
+        buttonTitle: t('push.reply'),
+        textInput: {
+          submitButtonTitle: t('push.send'),
+          placeholder: t('push.reply_placeholder'),
+        },
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: 'mark_read',
+        buttonTitle: t('push.mark_read'),
+        options: { opensAppToForeground: false },
+      },
+    ]);
+  } catch (err) {
+    // Older Android versions and some launchers ignore categories. The
+    // notification still arrives; it just cannot be replied to inline.
+    console.warn('[push] notification actions unavailable:', err);
+  }
+}
+
+/**
+ * Handle a reply typed straight into the notification.
+ *
+ * Returns an unsubscribe function. The reply goes through the same encrypted
+ * send path as the composer — see data/quick-reply. Replying from the lock
+ * screen must not be a way around the encryption.
+ */
+export function listenForNotificationReplies(): () => void {
+  const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data as
+      | { chat_id?: string; message_id?: string; type?: string; mode?: string }
+      | undefined;
+    const chatId = data?.chat_id;
+    if (!chatId) return;
+
+    if (response.actionIdentifier === 'reply') {
+      const text = (response as { userText?: string }).userText ?? '';
+      if (!text.trim()) return;
+      void sendQuickReply(chatId, text).catch((err) => {
+        // Nothing to show — the app may not be open. Logged so a failure is
+        // findable rather than a message that silently never sent.
+        console.warn('[push] quick reply failed:', err);
+      });
+      return;
+    }
+
+    // Tapping an incoming-call notification answers it. `incoming` is what
+    // stops the answering phone asking the server to ring everyone again.
+    if (data?.type === 'call.incoming') {
+      const mode = (data as { mode?: string }).mode === 'video' ? 'video' : 'voice';
+      router.push(`/call/${chatId}?mode=${mode}&incoming=1`);
+      return;
+    }
+
+    if (response.actionIdentifier === 'mark_read') {
+      // The id the notification was raised for. Without it there is nothing
+      // to mark: the read receipt names a message, not a chat.
+      const messageId = Number(data?.message_id);
+      if (Number.isFinite(messageId) && messageId > 0) {
+        void markRead(chatId, messageId).catch(() => {});
+      }
+    }
+  });
+  return () => sub.remove();
 }

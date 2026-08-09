@@ -300,8 +300,15 @@ async function publishKeys(): Promise<DeviceKeyMaterial> {
     if (res.one_time_remaining < OTK_REFILL_BELOW) {
       await refillOneTimeKeys(material);
     }
-  } catch {
-    // Offline / unauth — keep local keys; retry next bootstrap.
+  } catch (err) {
+    // Offline or unauthenticated. The local keys stay, and uploadedAt is
+    // deliberately not stamped, so the next call retries.
+    //
+    // Logged rather than swallowed whole: an account whose bundle never
+    // reaches the server cannot be messaged by anyone, and the sender is the
+    // only one who sees an error — "this person has not set up encryption".
+    // Silence here meant the failure showed up on someone else's phone.
+    console.warn('[e2ee] key publish failed, will retry:', err);
   }
   return material;
 }

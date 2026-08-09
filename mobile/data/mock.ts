@@ -185,7 +185,22 @@ export type MessageAttachment =
       time: string;
       location?: string;
     }
-  | { kind: 'game'; name: string; tagline: string; color: string; icon: string };
+  | {
+      kind: 'game';
+      name: string;
+      tagline: string;
+      color: string;
+      icon: string;
+      /** Truth or Dare engine payload — present on real game messages. */
+      game?: 'truth-or-dare';
+      action?: 'start' | 'choose' | 'challenge' | 'done' | 'end';
+      seed?: string;
+      maxRounds?: number;
+      playerId?: string;
+      choice?: 'truth' | 'dare';
+      text?: string;
+      winnerId?: string;
+    };
 
 export type Message = {
   /** 0 when written here; 1+ once passed along. Drives the forwarded label. */
@@ -201,6 +216,12 @@ export type Message = {
   media?: MediaAttachment;
   /** Display name of the sender — shown in group threads for incoming messages. */
   senderName?: string;
+  /**
+   * Who sent it. Display names are not unique inside a group, so anything
+   * that has to match a message to a member — the game room's chat, for one —
+   * needs the id rather than the name.
+   */
+  senderId?: string;
   senderAvatarUri?: string;
   /** True for messages sent before the current user joined the group. */
   historical?: boolean;

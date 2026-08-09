@@ -57,6 +57,12 @@ import { MessageInfoSheet } from '@/components/chat/message-info';
 import { formatSpeed, nextSpeed } from '@/components/chat/speed-control';
 import { StickerPicker } from '@/components/chat/sticker-picker';
 import { AttachmentComposer } from '@/components/chat/attachment-composer';
+import {
+  GameRoom,
+  type GameChatMessage,
+  type GamePlayer,
+} from '@/components/game/game-room';
+import { extractGamePayloads, MAX_ROUNDS, type GameMessagePayload } from '@/data/game';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StateTransition } from '@/components/ui/state-transition';
 import { Radii, Spacing, Typography } from '@/constants/theme';
@@ -134,6 +140,7 @@ import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
 import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
+import { handleCallEvent } from '@/data/incoming-call';
 import { t } from '@/i18n';
 
 const CHAT_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
@@ -155,7 +162,7 @@ const ATTACHMENT_WIRE_TYPE: Record<string, string | undefined> = {
   poll: 'poll',
   event: 'event',
   sticker: 'sticker',
-  game: undefined, // no schema type yet
+  game: 'game', // truth-or-dare; server schema accepts it (migration 0033)
 };
 
 const ATTACH_ITEMS: { key: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
@@ -517,6 +524,8 @@ export default function ChatScreen() {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const handleEvent = (ev: RealtimeEvent) => {
+        // A call can arrive on any screen; the store decides what to show.
+        if (handleCallEvent(ev.type, ev.payload)) return;
       if (ev.chat_id && ev.chat_id !== id) return;
       const payload = ev.payload as Record<string, unknown> | null | undefined;
 
@@ -1842,6 +1851,71 @@ export default function ChatScreen() {
     );
   };
 
+  // ── Truth or Dare room ───────────────────────────────────────────────────
+  const [gameOpen, setGameOpen] = useState(false);
+
+  const gamePlayers = useMemo<GamePlayer[]>(() => {
+    if (!isGroup || !group?.members?.length) return [];
+    return group.members.map((m) => ({
+      id: m.id,
+      name: m.name || m.username,
+      // The store keeps the handle with its @; the room adds its own.
+      username: m.username?.replace(/^@/, '') || undefined,
+      avatarUri: m.avatarUri,
+    }));
+  }, [isGroup, group]);
+
+  const gamePayloads = useMemo<GameMessagePayload[]>(
+    () => extractGamePayloads(messages),
+    [messages],
+  );
+
+  /**
+   * The group's ordinary conversation, for the room's chat strip.
+   *
+   * Game events and system notices are dropped: the room already renders the
+   * game, and repeating it as chat lines would be the same information twice.
+   * Everything here has been decrypted by the chat screen already — the room
+   * never sees ciphertext, and never sends any either.
+   */
+  const gameChat = useMemo<GameChatMessage[]>(
+    () =>
+      messages
+        .filter((m) => !m.system && !m.attachment && !m.deletedAt && m.text)
+        .slice(-60)
+        .map((m) => ({
+          id: m.id,
+          text: m.text,
+          fromMe: m.fromMe,
+          senderName: m.fromMe ? t('game.chat_you') : m.senderName ?? '',
+          // Matched by id, not by name: two members can share a display name,
+          // which in a game about whose turn it is would be the worst place
+          // to guess.
+          senderUsername: gamePlayers.find((p) => p.id === m.senderId)?.username,
+        })),
+    [messages, gamePlayers],
+  );
+
+  const sendGame = (payload: GameMessagePayload) => {
+    // The invite bubble and the engine share the same message shape; the
+    // engine payload already carries kind/game plus its action fields.
+    sendAttachment({
+      ...payload,
+      name: t('game.title'),
+      tagline: t('game.round_of', { round: 1, max: MAX_ROUNDS }),
+      color: '#6366F1',
+      icon: 'dice',
+    });
+  };
+
+  const handlePlayGame = () => {
+    if (gamePlayers.length < 2) {
+      appAlert(t('game.title'), t('game.need_two'));
+      return;
+    }
+    setGameOpen(true);
+  };
+
   // Mark a view-once message as opened. On a real backend this would also
   // fire an event to the bridge so the sender sees "Opened".
   /**
@@ -2188,6 +2262,7 @@ export default function ChatScreen() {
                   onReact={handleReact}
                   onReply={replyFromSwipe}
                   onVote={handleVote}
+                  onPlay={handlePlayGame}
                   onViewOnce={handleViewOnce}
                   revealed={revealed}
                 />
@@ -2279,7 +2354,13 @@ export default function ChatScreen() {
                 <Ionicons name="time-outline" size={18} color={colors.warning} />
                 <Text style={[styles.pendingText, { color: colors.textSecondary }]} numberOfLines={2}>
                   {iSentRequest
-                    ? t('friend_request.sent_waiting')
+                    ? hasMyIntro
+                      ? t('friend_request.sent_waiting')
+                      : // The chat row exists the moment it is opened, but
+                        // nothing has reached the other person until an intro
+                        // message is sent. Claiming "request sent" before that
+                        // announced something that had not happened.
+                        t('friend_request.write_intro')
                     : t('friend_request.pending_for_you')}
                 </Text>
                 {!iSentRequest ? (
@@ -2560,6 +2641,22 @@ export default function ChatScreen() {
           onClose={() => setInfoMessageId(null)}
         />
       ) : null}
+
+      {/* Truth or Dare room — fullscreen game layered over the chat */}
+      {isGroup && (
+        <GameRoom
+          visible={gameOpen}
+          onClose={() => setGameOpen(false)}
+          players={gamePlayers}
+          payloads={gamePayloads}
+          meId={meId ?? null}
+          onSend={sendGame}
+          chat={gameChat}
+          // The room's composer is the chat's composer. Same path, same
+          // encryption — the game adds no way to send anything in the clear.
+          onSendText={submitText}
+        />
+      )}
 
       {/* Delete confirmation */}
       <DeleteMessageModal
@@ -3202,6 +3299,7 @@ function BubbleBody({
   isGroup,
   query,
   onVote,
+  onPlay,
   onViewOnce,
   revealed,
   onOpenMedia,
@@ -3212,6 +3310,7 @@ function BubbleBody({
   isGroup: boolean;
   query: string;
   onVote?: (optionId: string) => void;
+  onPlay?: () => void;
   onViewOnce?: (msgId: string) => void;
   /** Ids opened during this visit — see the screen's `revealed`. */
   revealed?: Set<string>;
@@ -3413,6 +3512,7 @@ function BubbleBody({
           attachment={msg.attachment}
           mine={mine}
           onVote={onVote}
+          onPlay={onPlay}
           onLongPress={onLongPressMedia}
         />
       ) : null}
@@ -3459,6 +3559,7 @@ function Bubble({
   onReact,
   onReply,
   onVote,
+  onPlay,
   onViewOnce,
   revealed,
   onOpenMedia,
@@ -3474,6 +3575,7 @@ function Bubble({
   onReact: (msgId: string, emoji: string) => void;
   onReply: (msg: GroupedMessage) => void;
   onVote: (msgId: string, optionId: string) => void;
+  onPlay?: () => void;
   onViewOnce: (msgId: string) => void;
   revealed: Set<string>;
   onOpenMedia: (msg: Message) => void;
@@ -3635,6 +3737,7 @@ function Bubble({
               isGroup={isGroup}
               query={query}
               onVote={(optId) => onVote(msg.id, optId)}
+              onPlay={onPlay}
               onViewOnce={onViewOnce}
               revealed={revealed}
               onOpenMedia={onOpenMedia}

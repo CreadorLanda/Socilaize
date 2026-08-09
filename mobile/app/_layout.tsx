@@ -9,7 +9,12 @@ import 'react-native-reanimated';
 
 import { AppToast } from '@/components/ui/app-toast';
 import { DialogHost } from '@/components/ui/dialog-host';
+import { IncomingCallHost } from '@/components/ui/incoming-call';
 import { AnimatedSplash } from '@/components/ui/splash';
+import {
+  listenForNotificationReplies,
+  registerNotificationActions,
+} from '@/data/push';
 import { bootstrapAuth } from '@/data/auth-store';
 import { ensureKeysPublished } from '@/data/crypto';
 import { registerPushWithServer } from '@/data/push';
@@ -27,6 +32,14 @@ export default function RootLayout() {
   // brief onboarding flash that returning users would otherwise see.
   const [booted, setBooted] = useState(false);
   const [splashGone, setSplashGone] = useState(false);
+
+  // The reply box on a message notification, and the handler behind it.
+  // Registered once for the life of the app, not per screen: a notification
+  // can be answered while no screen is mounted at all.
+  useEffect(() => {
+    void registerNotificationActions();
+    return listenForNotificationReplies();
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -185,6 +198,11 @@ export default function RootLayout() {
           <AppToast />
           {/* One dialog host for the whole app — see data/dialog-store. */}
           <DialogHost />
+          {/*
+            The ringing screen. Mounted here for the same reason as the dialog
+            host: a call arrives while whatever screen happens to be on top.
+          */}
+          <IncomingCallHost />
         </View>
         <StatusBar style="auto" />
       </ThemeProvider>
