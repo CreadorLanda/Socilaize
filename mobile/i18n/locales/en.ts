@@ -423,6 +423,10 @@ export default {
     section: 'In your notes',
   },
   chat_info: {
+    share_history_title: 'Share past messages?',
+    share_history_body: 'Choose whether they can read what was said before they joined. This cannot be changed afterwards.',
+    share_history_yes: 'Share history',
+    share_history_no: 'From now on',
     manage_member_hint: 'Choose what this person can do in the group.',
     promote_member: 'Make admin',
     demote_member: 'Remove admin',

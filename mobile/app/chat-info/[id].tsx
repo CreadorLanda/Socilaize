@@ -20,7 +20,6 @@ import {
   type ReportReason,
 } from '@/data/api/messages';
 import { appAlert, appPrompt } from '@/data/dialog-store';
-import { invalidateGroupEpoch } from '@/data/crypto';
 import {
   addGroupMembers,
   leaveGroup,
@@ -41,6 +40,7 @@ import { clearChat, refreshChats, removeChat, setChatSettings, useChats } from '
 import {
   ensureKeysPublished,
   getIdentityPublic,
+  invalidateGroupEpoch,
   loadSession,
   safetyNumber,
 } from '@/data/crypto';
@@ -357,6 +357,24 @@ export default function ChatInfoScreen() {
       },
       { text: t('common.cancel'), style: 'cancel' },
     ]);
+  };
+
+  /**
+   * Add people, having asked how far back they may read.
+   *
+   * Invalidating the key epoch matters here too: joining rotates the group's
+   * sender keys, so the keys the new member receives only open messages from
+   * now on — the encryption and the visibility rule agree.
+   */
+  const addMembersWith = async (userIds: string[], shareHistory: boolean) => {
+    if (!id || userIds.length === 0) return;
+    try {
+      await addGroupMembers(id, userIds, shareHistory);
+      invalidateGroupEpoch(id);
+      await refreshGroup(id);
+    } catch {
+      appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
+    }
   };
 
   const failed = () =>
@@ -900,14 +918,20 @@ export default function ChatInfoScreen() {
             onClose={() => setAddingMembers(false)}
             onConfirm={(people) => {
               if (people.length === 0) return;
-              addGroupMembers(id, people.map((p) => p.id))
-                .then(() => {
-                  // Joining rotates too, so the new members' keys only open
-                  // what is written from now on.
-                  invalidateGroupEpoch(id);
-                  return refreshGroup(id);
-                })
-                .catch(failed);
+              // Asked at the moment of adding: the decision belongs to the
+              // person making it. A group-wide switch could be flipped later
+              // and retroactively expose a conversation to someone who joined
+              // under different terms.
+              appAlert(t('chat_info.share_history_title'), t('chat_info.share_history_body'), [
+                {
+                  text: t('chat_info.share_history_no'),
+                  onPress: () => void addMembersWith(people.map((p) => p.id), false),
+                },
+                {
+                  text: t('chat_info.share_history_yes'),
+                  onPress: () => void addMembersWith(people.map((p) => p.id), true),
+                },
+              ]);
             }}
           />
           <ListPicker visible={showLists} chatId={id} onClose={() => setShowLists(false)} />

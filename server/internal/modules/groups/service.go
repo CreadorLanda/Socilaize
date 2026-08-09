@@ -170,18 +170,39 @@ func (s *Service) Patch(ctx context.Context, groupID, userID uuid.UUID, req Patc
 	return s.load(ctx, groupID)
 }
 
-func (s *Service) AddMembers(ctx context.Context, groupID, actor uuid.UUID, userIDs []uuid.UUID) (Group, error) {
+// AddMembers adds people, and decides how far back each may read.
+//
+// shareHistory is the adder's choice, made once at the moment of adding. It is
+// not a group setting: one of those can be flipped later, retroactively
+// exposing a conversation to someone who joined under different terms.
+func (s *Service) AddMembers(ctx context.Context, groupID, actor uuid.UUID, userIDs []uuid.UUID, shareHistory bool) (Group, error) {
 	if err := s.requireAdmin(ctx, groupID, actor); err != nil {
 		return Group{}, err
 	}
+	added := 0
 	for _, uid := range userIDs {
 		if uid == uuid.Nil {
 			continue
 		}
-		if err := s.repo.AddMember(ctx, groupID, uid, RoleMember); err != nil {
+		joined, err := s.repo.AddMemberWithHistory(ctx, groupID, uid, RoleMember, shareHistory)
+		if err != nil {
 			return Group{}, err
 		}
+		if joined {
+			added++
+		}
 	}
+
+	// Nothing happened, so nothing is announced and nothing rotates.
+	//
+	// The notice used to be written unconditionally: adding someone already in
+	// the group, or sending an empty list, still put "members added" in the
+	// thread and still retired everyone's sender key. A group notice should
+	// describe something that occurred.
+	if added == 0 {
+		return s.load(ctx, groupID)
+	}
+
 	// New members must not be able to read what was said before they
 	// arrived. Everyone's sender key is retired, so the keys they receive
 	// only ever open messages written from here on.

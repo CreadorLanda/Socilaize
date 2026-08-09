@@ -62,6 +62,11 @@ type PatchGroupRequest struct {
 
 type AddMembersRequest struct {
 	UserIDs []uuid.UUID `json:"user_ids" binding:"required"`
+	// ShareHistory decides whether these people may read what was said before
+	// they arrived. A pointer so "not sent" is distinguishable from "false":
+	// an older client that omits it keeps the previous behaviour of sharing
+	// everything, rather than silently hiding history from everyone it adds.
+	ShareHistory *bool `json:"share_history"`
 }
 
 type SetRoleRequest struct {

@@ -543,6 +543,14 @@ const messageSelectBase = `
 	-- Joined rather than queried per row: a page of fifty messages must not
 	-- become fifty-one round trips because one of them might be a view-once.
 	LEFT JOIN message_views mv ON mv.message_id = m.id AND mv.user_id = $1
+	-- What this reader is allowed to see.
+	--
+	-- chats.history_enabled has promised this since migration 0010 and nothing
+	-- ever read it, so every new member saw the entire history regardless of
+	-- what the group was set to. Enforced here, in the read path, because a
+	-- rule applied anywhere else is a rule a different client can skip.
+	JOIN chat_participants cpv
+	     ON cpv.chat_id = m.chat_id AND cpv.user_id = $1
 	-- Reactions came back only over the websocket, so reopening a chat lost
 	-- every one of them: the map started empty and nothing on the read path
 	-- refilled it. Aggregated here rather than queried per message — a page
@@ -581,6 +589,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID, viewerID uuid.UUI
 	if before > 0 {
 		const q = messageSelectBase + `
 			WHERE m.chat_id = $2 AND m.id < $3 AND m.deleted_at IS NULL
+			  AND (cpv.history_from IS NULL OR m.created_at >= cpv.history_from)
 			  -- Past its deadline but not yet swept: hide it now rather
 			  -- than let the sweep interval decide how long it lingers.
 			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
@@ -591,6 +600,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID, viewerID uuid.UUI
 	} else {
 		const q = messageSelectBase + `
 			WHERE m.chat_id = $2 AND m.deleted_at IS NULL
+			  AND (cpv.history_from IS NULL OR m.created_at >= cpv.history_from)
 			  AND (m.expires_at IS NULL OR m.expires_at > NOW())
 			ORDER BY m.id DESC
 			LIMIT $3

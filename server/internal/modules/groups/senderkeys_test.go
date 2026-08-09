@@ -142,7 +142,7 @@ func TestSenderKeysRotateOnMembershipChange(t *testing.T) {
 
 	// Joining rotates too, so a new member cannot open what was said before
 	// they arrived.
-	if _, err := svc.AddMembers(ctx, g.ID, alice, []uuid.UUID{carol}); err != nil {
+	if _, err := svc.AddMembers(ctx, g.ID, alice, []uuid.UUID{carol}, true); err != nil {
 		t.Fatalf("AddMembers: %v", err)
 	}
 	if afterJoin := epochOf(t, svc, g.ID, alice); afterJoin <= afterRemoval {
@@ -203,5 +203,70 @@ func TestSenderKeysSurviveRotationForHistory(t *testing.T) {
 	// Oldest first, so a client can replay them in order.
 	if keys[0].Epoch >= keys[1].Epoch {
 		t.Fatalf("keys not ordered by epoch: %d then %d", keys[0].Epoch, keys[1].Epoch)
+	}
+}
+
+// TestNoNoticeWhenNothingHappened: a group notice should describe something
+// that occurred.
+//
+// The notice and the key rotation both fired unconditionally — adding someone
+// already in the group, or sending an empty list, still wrote "members added"
+// into the thread and still retired everyone's sender key.
+func TestNoNoticeWhenNothingHappened(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := NewService(NewRepository(pool))
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	g, err := svc.Create(ctx, alice, CreateGroupRequest{Title: "avisos", MemberIDs: []uuid.UUID{bob}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	countNotices := func() int {
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM messages
+			WHERE chat_id = $1 AND message_type = 'system' AND content LIKE '%members_added%'
+		`, g.ID).Scan(&n); err != nil {
+			t.Fatalf("count notices: %v", err)
+		}
+		return n
+	}
+
+	before := countNotices()
+	epochBefore := epochOf(t, svc, g.ID, alice)
+
+	// Bob is already a member. Nothing changes.
+	if _, err := svc.AddMembers(ctx, g.ID, alice, []uuid.UUID{bob}, true); err != nil {
+		t.Fatalf("AddMembers(existing): %v", err)
+	}
+	if got := countNotices(); got != before {
+		t.Fatalf("adding an existing member wrote %d notices, want %d", got, before)
+	}
+	if got := epochOf(t, svc, g.ID, alice); got != epochBefore {
+		t.Fatalf("adding an existing member rotated the keys: %d → %d", epochBefore, got)
+	}
+
+	// An empty list changes nothing either.
+	if _, err := svc.AddMembers(ctx, g.ID, alice, []uuid.UUID{}, true); err != nil {
+		t.Fatalf("AddMembers(empty): %v", err)
+	}
+	if got := countNotices(); got != before {
+		t.Fatalf("an empty add wrote a notice")
+	}
+
+	// A real addition does announce, and does rotate.
+	carol := createTestUser(t, pool, "carol_"+uuid.NewString()[:8])
+	if _, err := svc.AddMembers(ctx, g.ID, alice, []uuid.UUID{carol}, false); err != nil {
+		t.Fatalf("AddMembers(new): %v", err)
+	}
+	if got := countNotices(); got != before+1 {
+		t.Fatalf("a real addition wrote %d notices, want %d", got, before+1)
+	}
+	if got := epochOf(t, svc, g.ID, alice); got <= epochBefore {
+		t.Fatal("a real addition did not rotate the keys")
 	}
 }

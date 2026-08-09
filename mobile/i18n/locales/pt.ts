@@ -423,6 +423,10 @@ export default {
     section: 'Nas tuas notas',
   },
   chat_info: {
+    share_history_title: 'Partilhar mensagens anteriores?',
+    share_history_body: 'Escolhe se podem ler o que foi dito antes de entrarem. Isto não se altera depois.',
+    share_history_yes: 'Partilhar histórico',
+    share_history_no: 'Só a partir de agora',
     manage_member_hint: 'Escolhe o que esta pessoa pode fazer no grupo.',
     promote_member: 'Tornar administrador',
     demote_member: 'Deixar de ser administrador',

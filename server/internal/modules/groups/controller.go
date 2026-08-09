@@ -88,7 +88,9 @@ func (c *Controller) PostMembers(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	g, err := c.svc.AddMembers(ctx.Request.Context(), id, middleware.UserIDFrom(ctx), req.UserIDs)
+	// Omitted means "share", which is what happened before this existed.
+	share := req.ShareHistory == nil || *req.ShareHistory
+	g, err := c.svc.AddMembers(ctx.Request.Context(), id, middleware.UserIDFrom(ctx), req.UserIDs, share)
 	if err != nil {
 		writeErr(ctx, err)
 		return
