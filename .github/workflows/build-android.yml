@@ -67,6 +67,24 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      # The NDK is not in the runner image, and react-native-webrtc compiles
+      # native code that needs it. The build fails at the check step with the
+      # exact path it looked for, which is where this version comes from.
+      #
+      # Pinned rather than detected: reading it out of node_modules would mean
+      # installing dependencies first, and a wrong guess fails twenty minutes
+      # in with a message about a path nobody chose. When the Expo SDK moves,
+      # the build says which version it wants and this line follows it.
+      - name: Install the NDK
+        env:
+          NDK_VERSION: '27.3.13750724'
+        run: |
+          yes | sdkmanager --install "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          test -d "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" \
+            || { echo "::error::NDK $NDK_VERSION did not install"; exit 1; }
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
