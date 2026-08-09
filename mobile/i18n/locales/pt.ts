@@ -281,6 +281,7 @@ export default {
     search_hint: 'Escreve para procurar por username.',
   },
   chat: {
+    recording_audio: 'a gravar áudio…',
     e2ee_blocked_server: 'O servidor não conseguiu preparar a encriptação desta conversa. Se continuar, a app pode estar mais recente que o servidor.',
     e2ee_blocked_title: 'Não enviada',
     e2ee_blocked_peer_has_no_keys: 'A aplicação desta pessoa ainda não configurou a encriptação. A mensagem não foi enviada, porque enviá-la significaria enviá-la sem encriptação.',

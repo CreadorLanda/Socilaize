@@ -281,6 +281,7 @@ export default {
     search_hint: 'Type to search by username.',
   },
   chat: {
+    recording_audio: 'recording audio…',
     e2ee_blocked_server: 'The server could not set up encryption for this conversation. If this keeps happening the app may be newer than the server.',
     e2ee_blocked_title: 'Not sent',
     e2ee_blocked_peer_has_no_keys: 'This person\u2019s app has not set up encryption yet. The message was not sent, because sending it would mean sending it unencrypted.',
