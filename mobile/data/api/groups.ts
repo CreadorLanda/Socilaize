@@ -57,8 +57,18 @@ export function patchGroup(
   return api.patch<GroupDTO>(`/api/groups/${id}`, patch);
 }
 
-export function addGroupMembers(id: string, userIds: string[]) {
-  return api.post<GroupDTO>(`/api/groups/${id}/members`, { user_ids: userIds });
+/**
+ * Add people to a group.
+ *
+ * `shareHistory` decides whether they may read what was said before they
+ * arrived. Omitted means share — the behaviour that existed before the choice
+ * did, so an older client does not start hiding history silently.
+ */
+export function addGroupMembers(id: string, userIds: string[], shareHistory?: boolean) {
+  return api.post<GroupDTO>(`/api/groups/${id}/members`, {
+    user_ids: userIds,
+    ...(shareHistory === undefined ? {} : { share_history: shareHistory }),
+  });
 }
 
 export function removeGroupMember(id: string, userId: string) {

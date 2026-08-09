@@ -42,6 +42,22 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     // The whole limited-view feature was a UI flag nothing ever set: the
     // server has tracked the limit from the start and the client read
     // neither field, so a "view once" opened forever.
+    // A call leaves a row in the thread. The content is the call id and mode;
+    // the outcome is resolved from the call log when rendering, because it
+    // changes after the message is written.
+    call:
+      m.message_type === 'call'
+        ? (() => {
+            try {
+              const p = JSON.parse(m.content) as { call_id?: string; mode?: string };
+              return p.call_id
+                ? { callId: p.call_id, mode: p.mode === 'video' ? 'video' : 'voice' }
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          })()
+        : undefined,
     viewOnce: m.view_limit != null,
     viewsLeft: m.views_left,
     viewed: m.view_limit != null && (m.views_left ?? 1) <= 0,

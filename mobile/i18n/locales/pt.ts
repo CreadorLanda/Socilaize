@@ -281,6 +281,7 @@ export default {
     search_hint: 'Escreve para procurar por username.',
   },
   chat: {
+    recording_audio: 'a gravar áudio…',
     e2ee_blocked_server: 'O servidor não conseguiu preparar a encriptação desta conversa. Se continuar, a app pode estar mais recente que o servidor.',
     e2ee_blocked_title: 'Não enviada',
     e2ee_blocked_peer_has_no_keys: 'A aplicação desta pessoa ainda não configurou a encriptação. A mensagem não foi enviada, porque enviá-la significaria enviá-la sem encriptação.',
@@ -423,6 +424,10 @@ export default {
     section: 'Nas tuas notas',
   },
   chat_info: {
+    share_history_title: 'Partilhar mensagens anteriores?',
+    share_history_body: 'Escolhe se podem ler o que foi dito antes de entrarem. Isto não se altera depois.',
+    share_history_yes: 'Partilhar histórico',
+    share_history_no: 'Só a partir de agora',
     manage_member_hint: 'Escolhe o que esta pessoa pode fazer no grupo.',
     promote_member: 'Tornar administrador',
     demote_member: 'Deixar de ser administrador',
@@ -1023,6 +1028,7 @@ export default {
     clear: 'Limpar',
   },
   calls: {
+    call_back: 'Ligar de volta',
     in_progress: 'A decorrer',
     join: 'Entrar na chamada',
     declined: 'Recusada',

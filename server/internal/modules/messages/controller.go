@@ -177,7 +177,7 @@ func (c *Controller) PostTyping(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
-	if err := c.svc.Typing(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx), req.Typing); err != nil {
+	if err := c.svc.Typing(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx), req.Typing, req.Kind); err != nil {
 		writeErr(ctx, err)
 		return
 	}

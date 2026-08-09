@@ -109,6 +109,11 @@ const (
 	MsgEvent    MessageType = "event"
 	MsgSystem   MessageType = "system"
 	MsgReply    MessageType = "reply"
+	// MsgCall is the row a call leaves in the conversation. Its content is
+	// the call id, and the client resolves the outcome from the call log —
+	// the outcome changes after the message is written, so it cannot be
+	// baked into the text.
+	MsgCall MessageType = "call"
 )
 
 type Message struct {
@@ -241,6 +246,12 @@ type MarkReadRequest struct {
 
 type TypingRequest struct {
 	Typing bool `json:"typing"`
+	// Kind distinguishes composing from holding the mic. They look identical
+	// from the other side and mean very different things to the person
+	// waiting: typing resolves in seconds, a voice note can take a minute.
+	//
+	// Empty means "typing", so an older client keeps working unchanged.
+	Kind string `json:"kind,omitempty"`
 }
 
 type ReactRequest struct {

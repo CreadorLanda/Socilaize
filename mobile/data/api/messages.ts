@@ -247,9 +247,19 @@ export function markRead(chatId: string, messageId: number) {
   return api.post<void>(`/api/chats/${chatId}/read`, { message_id: messageId });
 }
 
-/** Broadcast typing indicator */
-export function setTyping(chatId: string, typing: boolean) {
-  return api.post<void>(`/api/chats/${chatId}/typing`, { typing });
+/**
+ * Broadcast what this person is doing in the composer.
+ *
+ * `recording` is a different signal from `typing`, not a variant of it:
+ * holding the mic looks identical from the other side and means something
+ * very different to the person waiting.
+ */
+export function setTyping(
+  chatId: string,
+  typing: boolean,
+  kind: 'typing' | 'recording' = 'typing',
+) {
+  return api.post<void>(`/api/chats/${chatId}/typing`, { typing, kind });
 }
 
 /** Add reaction */

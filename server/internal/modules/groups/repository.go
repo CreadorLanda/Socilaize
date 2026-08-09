@@ -197,6 +197,31 @@ func (r *Repository) Patch(
 	return err
 }
 
+// AddMemberWithHistory adds someone and decides, once, how far back they can
+// read.
+//
+// `shareHistory` false stamps history_from with now, so they see the group
+// from their arrival onwards. The decision belongs to whoever is adding, at
+// the moment of adding — a group-wide switch could be flipped later and
+// retroactively expose a conversation to someone who joined under other terms.
+// Returns whether someone actually joined. A caller who was already a member
+// changes nothing, and the group should not announce it or rotate its keys.
+func (r *Repository) AddMemberWithHistory(ctx context.Context, chatID, userID uuid.UUID, role MemberRole, shareHistory bool) (bool, error) {
+	var from any
+	if !shareHistory {
+		from = time.Now()
+	}
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO chat_participants (chat_id, user_id, role, history_from)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (chat_id, user_id) DO NOTHING
+	`, chatID, userID, role, from)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (r *Repository) AddMember(ctx context.Context, chatID, userID uuid.UUID, role MemberRole) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO chat_participants (chat_id, user_id, role)

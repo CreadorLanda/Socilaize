@@ -281,6 +281,7 @@ export default {
     search_hint: 'Type to search by username.',
   },
   chat: {
+    recording_audio: 'recording audio…',
     e2ee_blocked_server: 'The server could not set up encryption for this conversation. If this keeps happening the app may be newer than the server.',
     e2ee_blocked_title: 'Not sent',
     e2ee_blocked_peer_has_no_keys: 'This person\u2019s app has not set up encryption yet. The message was not sent, because sending it would mean sending it unencrypted.',
@@ -423,6 +424,10 @@ export default {
     section: 'In your notes',
   },
   chat_info: {
+    share_history_title: 'Share past messages?',
+    share_history_body: 'Choose whether they can read what was said before they joined. This cannot be changed afterwards.',
+    share_history_yes: 'Share history',
+    share_history_no: 'From now on',
     manage_member_hint: 'Choose what this person can do in the group.',
     promote_member: 'Make admin',
     demote_member: 'Remove admin',
@@ -1022,6 +1027,7 @@ export default {
     clear: 'Clear',
   },
   calls: {
+    call_back: 'Call back',
     in_progress: 'In progress',
     join: 'Join the call',
     declined: 'Declined',
