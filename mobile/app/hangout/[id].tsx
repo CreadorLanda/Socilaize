@@ -64,7 +64,13 @@ export default function HangoutScreen() {
     mode?: string;
     game?: string;
   }>();
-  const chat = useMemo(() => CHATS.find((c) => c.id === id), [id]);
+  // The screen is reached with a channel id, and looked that id up in the
+  // bundled mock chat list — where it never appears. Every real id fell
+  // through to "conversa não encontrada", so the games never opened.
+  //
+  // Nothing here needs the chat itself: the room is identified by the id in
+  // the route and the games run on it.
+  const chat = useMemo(() => CHATS.find((c) => c.id === id) ?? null, [id]);
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
@@ -103,7 +109,9 @@ export default function HangoutScreen() {
     }
   }, [phase]);
 
-  if (!chat) {
+  // Only a missing id is a real failure. A chat that is not in the bundled
+  // sample data is the normal case, not an error.
+  if (!id) {
     return (
       <SafeAreaView style={styles.fallback}>
         <Text style={{ color: '#fff' }}>{t('chat.not_found')}</Text>
@@ -143,7 +151,7 @@ export default function HangoutScreen() {
       {/* Ambient bg */}
       {isVideo || isLive ? (
         <Image
-          source={{ uri: chat.avatarUri }}
+          source={{ uri: chat?.avatarUri }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           blurRadius={isLive ? 18 : 8}
@@ -172,7 +180,7 @@ export default function HangoutScreen() {
               </View>
             )}
             <Text style={styles.roomTitle} numberOfLines={1}>
-              {chat.name}
+              {chat?.name ?? t('hangout.room')}
             </Text>
             <Text style={styles.roomMeta}>
               {phase === 'lobby'

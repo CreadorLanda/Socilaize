@@ -49,6 +49,14 @@ export interface MessageDTO {
   view_limit?: number;
   /** Opens the current user has left; only meaningful with view_limit. */
   views_left?: number;
+  /**
+   * Reactions on this message.
+   *
+   * Sent with history now. They used to arrive only over the websocket, so
+   * every reaction disappeared the moment the chat was reopened — stored on
+   * the server, invisible to the reader.
+   */
+  reactions?: ReactionDTO[];
   chat_id: string;
   sender_id: string;
   content: string;

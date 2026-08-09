@@ -142,6 +142,10 @@ type Message struct {
 	// ViewsLeft is how many opens the requesting user has remaining. Only
 	// meaningful when ViewLimit is set.
 	ViewsLeft *int `json:"views_left,omitempty"`
+	// Reactions on this message. Sent with history because the client had no
+	// other way to learn about them — it only ever heard the live event, so
+	// every reaction vanished when the chat was reopened.
+	Reactions []Reaction `json:"reactions,omitempty"`
 }
 
 // ReceiptStatus is the delivery lifecycle of a message for one recipient.

@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -511,7 +512,6 @@ func (r *Repository) RegisterView(ctx context.Context, messageID int64, userID u
 	return limit, &remaining, tx.Commit(ctx)
 }
 
-
 // ListMessages returns messages for a chat, newest first, with cursor-based
 // pagination. Content is decrypted on read. Sender display name/avatar are
 // joined in the same query to avoid N+1 lookups.
@@ -536,12 +536,27 @@ const messageSelectBase = `
 	       rc.delivered_to, rc.read_by,
 	       m.forward_count, m.source_channel_id::text, m.source_post_id::text,
 	       m.expires_at,
-	       m.view_limit, COALESCE(mv.views, 0)
+	       m.view_limit, COALESCE(mv.views, 0),
+	       COALESCE(rx.list, '[]')
 	FROM messages m
 	LEFT JOIN users u ON u.id = m.sender_id
 	-- Joined rather than queried per row: a page of fifty messages must not
 	-- become fifty-one round trips because one of them might be a view-once.
 	LEFT JOIN message_views mv ON mv.message_id = m.id AND mv.user_id = $1
+	-- Reactions came back only over the websocket, so reopening a chat lost
+	-- every one of them: the map started empty and nothing on the read path
+	-- refilled it. Aggregated here rather than queried per message — a page
+	-- of fifty must not become fifty-one round trips.
+	LEFT JOIN LATERAL (
+	    SELECT json_agg(json_build_object(
+	               'message_id', mr.message_id,
+	               'user_id',    mr.user_id,
+	               'emoji',      mr.emoji,
+	               'created_at', mr.created_at
+	           ) ORDER BY mr.created_at)::text AS list
+	    FROM message_reactions mr
+	    WHERE mr.message_id = m.id
+	) rx ON TRUE
 	LEFT JOIN LATERAL (
 	    SELECT count(*) FILTER (WHERE mr.status IN ('delivered', 'read')) AS delivered_to,
 	           count(*) FILTER (WHERE mr.status = 'read')                 AS read_by
@@ -596,12 +611,19 @@ func (r *Repository) ListMessages(ctx context.Context, chatID, viewerID uuid.UUI
 		var expiresAt *time.Time
 		var viewLimit *int
 		var viewsUsed int
+		var reactionsJSON string
 		if err := rows.Scan(&m.ID, &m.ChatID, &m.SenderID, &m.Content,
 			&m.MessageType, &m.ReplyToID, &m.CreatedAt, &m.EditedAt, &m.DeletedAt,
 			&senderName, &senderAvatar, &deliveredTo, &readBy,
 			&forwardCount, &srcChannel, &srcPost, &expiresAt,
-			&viewLimit, &viewsUsed); err != nil {
+			&viewLimit, &viewsUsed, &reactionsJSON); err != nil {
 			return nil, err
+		}
+		var reactions []Reaction
+		if reactionsJSON != "" && reactionsJSON != "[]" {
+			// A malformed aggregate must not sink the whole page: the message
+			// is worth more than its reactions.
+			_ = json.Unmarshal([]byte(reactionsJSON), &reactions)
 		}
 		// Reported without consuming anything. Scrolling past a view-once
 		// must not spend it — only opening it does, through RegisterView.
@@ -630,6 +652,7 @@ func (r *Repository) ListMessages(ctx context.Context, chatID, viewerID uuid.UUI
 			ForwardCount:    forwardCount,
 			ViewLimit:       viewLimit,
 			ViewsLeft:       viewsLeft,
+			Reactions:       reactions,
 			SourceChannelID: srcChannel,
 			SourcePostID:    srcPost,
 			ExpiresAt:       expiresAt,

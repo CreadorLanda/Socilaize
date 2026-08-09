@@ -855,3 +855,58 @@ func TestLimitedViewSurvivesReload(t *testing.T) {
 		t.Fatalf("sender's views_left: %v, want 1", m.ViewsLeft)
 	}
 }
+
+// TestReactionsSurviveReload is why reactions appeared to "not work".
+//
+// They were stored correctly and broadcast correctly, but no read path ever
+// returned them: the client's map started empty on every chat open and only
+// the live websocket event refilled it. React, leave, come back — gone.
+func TestReactionsSurviveReload(t *testing.T) {
+	pool := testDB(t)
+	ctx := context.Background()
+	svc := newTestService(pool)
+
+	alice := createTestUser(t, pool, "alice_"+uuid.NewString()[:8])
+	bob := createTestUser(t, pool, "bob_"+uuid.NewString()[:8])
+
+	chat, err := svc.CreateDirectChat(ctx, alice, bob)
+	if err != nil {
+		t.Fatalf("CreateDirectChat: %v", err)
+	}
+	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
+		t.Fatalf("AcceptChat: %v", err)
+	}
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "olá"})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	if _, err := svc.React(ctx, chat.ID, bob, sent.ID, "❤️", false); err != nil {
+		t.Fatalf("AddReaction: %v", err)
+	}
+
+	// The reload. This is the path that was silent.
+	msgs, err := svc.ListMessages(ctx, chat.ID, alice, 50, 0)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	var found *Message
+	for i := range msgs {
+		if msgs[i].ID == sent.ID {
+			found = &msgs[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("message missing from history")
+	}
+	if len(found.Reactions) != 1 {
+		t.Fatalf("history returned %d reactions, want 1 — reopening the chat loses them",
+			len(found.Reactions))
+	}
+	if found.Reactions[0].Emoji != "❤️" {
+		t.Fatalf("emoji = %q, want ❤️", found.Reactions[0].Emoji)
+	}
+	if found.Reactions[0].UserID != bob {
+		t.Fatalf("reaction attributed to %s, want bob", found.Reactions[0].UserID)
+	}
+}
