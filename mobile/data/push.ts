@@ -208,3 +208,36 @@ export function listenForNotificationReplies(): () => void {
   });
   return () => sub.remove();
 }
+
+
+/**
+ * A notification you get for signing up.
+ *
+ * Its real job is diagnostic. Push has three independent halves — a token
+ * registered on the server, a credential the server can send with, and a
+ * build that carries google-services.json — and when it is silent there is no
+ * way to tell which half is missing. This fires on the one occasion the app
+ * knows all three were just exercised, so a phone that stays quiet says
+ * something specific.
+ *
+ * Local, not a round trip through FCM: the point is to confirm this device
+ * can display a notification at all, before blaming the server.
+ */
+export async function notifyWelcome(displayName?: string): Promise<void> {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: t('push.welcome_title'),
+        body: displayName
+          ? t('push.welcome_body_named', { name: displayName })
+          : t('push.welcome_body'),
+        data: { type: 'welcome' },
+      },
+      // Two seconds, not immediate: the account screen is still settling and
+      // a notification fired mid-transition is easy to miss.
+      trigger: { seconds: 2, type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL },
+    });
+  } catch (err) {
+    console.warn('[push] welcome notification failed:', err);
+  }
+}

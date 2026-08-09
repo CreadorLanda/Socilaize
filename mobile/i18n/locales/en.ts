@@ -1,5 +1,8 @@
 export default {
   push: {
+    welcome_title: 'Welcome to Yo',
+    welcome_body: 'Notifications are working. You will hear about new messages here.',
+    welcome_body_named: '{{name}}, notifications are working. You will hear about new messages here.',
     reply: 'Reply',
     send: 'Send',
     reply_placeholder: 'Message',

@@ -20,7 +20,7 @@ import { authStart, authVerify, type Platform } from '@/data/api/auth';
 import { ApiError } from '@/data/api/client';
 import { setSession } from '@/data/auth-store';
 import { ensureKeysPublished } from '@/data/crypto';
-import { registerPushWithServer } from '@/data/push';
+import { notifyWelcome, registerPushWithServer } from '@/data/push';
 import { useTheme } from '@/hooks/use-theme';
 import { getInstallId } from '@/data/install-id';
 import { t } from '@/i18n';
@@ -106,7 +106,12 @@ export default function VerifyScreen() {
       // Not awaited: neither is needed for the next screen, and a slow
       // network must not hold someone on the verification step.
       ensureKeysPublished().catch(() => {});
-      registerPushWithServer().catch(() => {});
+      // Registered first, then a local notification to prove this phone can
+      // show one at all. Push has three halves that fail independently and
+      // silently; this narrows which.
+      registerPushWithServer()
+        .then(() => notifyWelcome(res.user.display_name || undefined))
+        .catch(() => {});
 
       // Returning users land straight in the app. The backend marks a fresh
       // account with an empty display_name + a `u<hash>` placeholder username

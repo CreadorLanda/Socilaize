@@ -33,6 +33,7 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     timestamp: formatMsgTime(m.created_at),
     senderName: m.sender_name,
     senderId: m.sender_id,
+    replyToId: m.reply_to_id,
     senderAvatarUri: m.sender_avatar,
     edited: !!m.edited_at,
     deletedAt: m.deleted_at,

@@ -118,6 +118,7 @@ import {
   STICKER_BUBBLE_SIZE,
   serverMessageId,
 } from '@/data/message-map';
+import { linkReplies } from '@/data/reply-link';
 import { ensureLocal, mediaIdFromURL, useCacheState } from '@/data/media-cache';
 import {
   loadCachedMessages,
@@ -397,7 +398,9 @@ export default function ChatScreen() {
         // Seed only — the network result replaces this wholesale, and
         // overwriting live messages with stale rows would be a regression.
         if (cancelled || cached.length === 0) return;
-        setMessages(cached.map((m) => mapApiMessage(m, meId)));
+        // Quotes reconstructed here too: the cache stores the decrypted DTO,
+        // which carries reply_to_id but no quoted text.
+        setMessages(linkReplies(cached.map((m) => mapApiMessage(m, meId))));
       })
       .catch((err) => {
         // Loud on purpose. Swallowing this is how a completely dead local
@@ -457,9 +460,22 @@ export default function ChatScreen() {
             decrypted.push({ dto: m, body: m.content, msg: base });
           }
         }
+
+        // Reactions come with the history now. Without this the map started
+        // empty on every open and only a live websocket event could fill it,
+        // which is why a reaction vanished the moment you left the chat.
+        setReactionsMap((prev) => {
+          const next = { ...prev };
+          for (const m of ordered) {
+            if (m.reactions?.length) {
+              next[String(m.id)] = collapseReactions(m.reactions, meId);
+            }
+          }
+          return next;
+        });
         if (cancelled) return;
         const mapped = decrypted.map((d) => d.msg);
-        setMessages(mapped);
+        setMessages(linkReplies(mapped));
 
         // Write through in the background: the screen is already correct, so
         // a slow disk must not hold it up, and a failure here costs only the
@@ -1391,6 +1407,11 @@ export default function ChatScreen() {
           const mapped = mapApiMessage(dto, meId);
           // Show plaintext in UI even if wire was encrypted.
           mapped.text = text;
+          // Keep the quote the optimistic bubble was showing. The server
+          // returns only reply_to_id — it cannot return the quoted text,
+          // which is encrypted — so dropping this made the quote blink out
+          // the instant the message was confirmed.
+          if (reply) mapped.replyTo = reply;
           setMessages((prev) => {
             if (prev.some((m) => m.id === mapped.id)) {
               return prev.filter((m) => m.id !== tempId);

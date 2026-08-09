@@ -237,6 +237,14 @@ export type Message = {
     | { kind: 'joined' }
     | { kind: 'disappearing'; seconds: number; actorId: string };
   replyTo?: { id: string; text: string; fromMe: boolean; senderName?: string; icon?: string };
+  /**
+   * The message this one answers, as the server knows it.
+   *
+   * `replyTo` above is the rendered quote and can only be built once the
+   * quoted message is in hand. This is the pointer that survives the round
+   * trip — without it a reply loaded from history had nothing to link to.
+   */
+  replyToId?: number;
   attachment?: MessageAttachment;
   /** True for messages authored by the Dandara AI assistant. */
   isAI?: boolean;
