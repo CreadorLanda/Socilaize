@@ -1027,6 +1027,7 @@ export default {
     clear: 'Limpar',
   },
   calls: {
+    call_back: 'Ligar de volta',
     in_progress: 'A decorrer',
     join: 'Entrar na chamada',
     declined: 'Recusada',

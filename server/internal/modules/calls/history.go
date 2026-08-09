@@ -61,7 +61,9 @@ func NewHistoryRepo(db *pgxpool.Pool) *HistoryRepo { return &HistoryRepo{db: db}
 // Returns the existing call when one is already running in this chat: a
 // second person pressing call on a group that is already talking should join
 // it, not start a rival one.
-func (r *HistoryRepo) Start(ctx context.Context, chatID, caller uuid.UUID, mode string, invitees []uuid.UUID) (uuid.UUID, error) {
+// Returns created=false when it joined an existing call instead of starting
+// one — the difference matters to anything that announces a new call.
+func (r *HistoryRepo) Start(ctx context.Context, chatID, caller uuid.UUID, mode string, invitees []uuid.UUID) (uuid.UUID, bool, error) {
 	var existing uuid.UUID
 	err := r.db.QueryRow(ctx, `
 		SELECT id FROM calls WHERE chat_id = $1 AND ended_at IS NULL
@@ -70,12 +72,12 @@ func (r *HistoryRepo) Start(ctx context.Context, chatID, caller uuid.UUID, mode 
 	if err == nil {
 		// Already running — the caller joins it instead.
 		_ = r.Join(ctx, existing, caller)
-		return existing, nil
+		return existing, false, nil
 	}
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
@@ -83,14 +85,14 @@ func (r *HistoryRepo) Start(ctx context.Context, chatID, caller uuid.UUID, mode 
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO calls (chat_id, caller_id, mode) VALUES ($1, $2, $3) RETURNING id
 	`, chatID, caller, mode).Scan(&id); err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, false, err
 	}
 
 	// The caller is in it from the start; everyone else is merely rung.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO call_participants (call_id, user_id, joined_at) VALUES ($1, $2, NOW())
 	`, id, caller); err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, false, err
 	}
 	for _, u := range invitees {
 		if u == caller {
@@ -100,10 +102,10 @@ func (r *HistoryRepo) Start(ctx context.Context, chatID, caller uuid.UUID, mode 
 			INSERT INTO call_participants (call_id, user_id) VALUES ($1, $2)
 			ON CONFLICT DO NOTHING
 		`, id, u); err != nil {
-			return uuid.Nil, err
+			return uuid.Nil, false, err
 		}
 	}
-	return id, tx.Commit(ctx)
+	return id, true, tx.Commit(ctx)
 }
 
 // Join marks someone as having answered.

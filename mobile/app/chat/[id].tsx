@@ -136,6 +136,8 @@ import {
   isGroupEnvelope,
   syncGroupKeys,
 } from '@/data/crypto';
+import { CallRow } from '@/components/chat/call-row';
+import { callHistory, type CallLogEntry } from '@/data/api/calls';
 import { describeE2EEBlocked, reportE2EEBlocked } from '@/data/e2ee-blocked';
 import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
 import { bubbleRadii } from '@/data/theme-store';
@@ -1872,6 +1874,33 @@ export default function ChatScreen() {
     );
   };
 
+  /**
+   * Call outcomes, keyed by call id.
+   *
+   * The row a call leaves in the thread carries only the call id: whether it
+   * was answered, missed, or is still running changes after the row is
+   * written, so baking it into the message would make the thread lie.
+   *
+   * Fetched once per chat open. Cheap, and the alternative — a request per
+   * call row — is not.
+   */
+  const [callLog, setCallLog] = useState<Record<string, CallLogEntry>>({});
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    callHistory()
+      .then((rows) => {
+        if (cancelled) return;
+        const map: Record<string, CallLogEntry> = {};
+        for (const r of rows ?? []) map[r.id] = r;
+        setCallLog(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id, messages.length]);
+
   // ── Truth or Dare room ───────────────────────────────────────────────────
   const [gameOpen, setGameOpen] = useState(false);
 
@@ -2262,7 +2291,19 @@ export default function ChatScreen() {
             data={grouped}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) =>
-              item.system ? (
+              item.call ? (
+                // A call is neither a bubble nor a divider: it is a row you
+                // can act on, and while the call is running that action is
+                // "join" rather than "call back".
+                <CallRow
+                  chatId={id!}
+                  callId={item.call.callId}
+                  mode={item.call.mode}
+                  entry={callLog[item.call.callId]}
+                  fromMe={item.fromMe}
+                  timestamp={item.timestamp}
+                />
+              ) : item.system ? (
                 <SystemDivider
                   msg={item}
                   mine={item.fromMe}

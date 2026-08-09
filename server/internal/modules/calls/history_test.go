@@ -84,7 +84,7 @@ func TestRunningCallIsJoinable(t *testing.T) {
 	alice, bob := mkUser(t, pool), mkUser(t, pool)
 	chat := mkChat(t, pool, alice, bob)
 
-	callID, err := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	callID, _, err := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestMissedOnlyAfterTheCallEnds(t *testing.T) {
 
 	alice, bob := mkUser(t, pool), mkUser(t, pool)
 	chat := mkChat(t, pool, alice, bob)
-	callID, err := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	callID, _, err := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestAnsweringIsRecordedOnce(t *testing.T) {
 
 	alice, bob := mkUser(t, pool), mkUser(t, pool)
 	chat := mkChat(t, pool, alice, bob)
-	callID, _ := repo.Start(ctx, chat, alice, "video", []uuid.UUID{alice, bob})
+	callID, _, _ := repo.Start(ctx, chat, alice, "video", []uuid.UUID{alice, bob})
 
 	if err := repo.Join(ctx, callID, bob); err != nil {
 		t.Fatalf("Join: %v", err)
@@ -183,8 +183,8 @@ func TestSecondCallerJoinsInsteadOfStartingARival(t *testing.T) {
 	alice, bob, carol := mkUser(t, pool), mkUser(t, pool), mkUser(t, pool)
 	chat := mkChat(t, pool, alice, bob, carol)
 
-	first, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob, carol})
-	second, err := repo.Start(ctx, chat, bob, "voice", []uuid.UUID{alice, bob, carol})
+	first, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob, carol})
+	second, _, err := repo.Start(ctx, chat, bob, "voice", []uuid.UUID{alice, bob, carol})
 	if err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestSweepClosesAbandonedCalls(t *testing.T) {
 
 	alice := mkUser(t, pool)
 	chat := mkChat(t, pool, alice)
-	callID, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice})
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice})
 
 	if _, err := pool.Exec(ctx,
 		`UPDATE calls SET started_at = NOW() - INTERVAL '5 hours' WHERE id = $1`, callID); err != nil {

@@ -57,6 +57,7 @@ func newTestService(members ...uuid.UUID) (*Service, fakeChats) {
 		fakeUsers{name: "Alice"},
 		&fakeRinger{},
 		nil,
+		nil,
 	), chats
 }
 
@@ -125,7 +126,7 @@ func TestTokenGrantsOneRoomOnly(t *testing.T) {
 // would look like a working call until the moment it failed to connect.
 func TestDisabledWithoutConfig(t *testing.T) {
 	alice := uuid.New()
-	svc := NewService(Config{}, fakeChats{members: map[uuid.UUID]bool{alice: true}}, fakeUsers{}, &fakeRinger{}, nil)
+	svc := NewService(Config{}, fakeChats{members: map[uuid.UUID]bool{alice: true}}, fakeUsers{}, &fakeRinger{}, nil, nil)
 
 	if _, err := svc.TokenFor(context.Background(), uuid.New(), alice, false, "voice"); !errors.Is(err, ErrCallsDisabled) {
 		t.Fatalf("TokenFor without config = %v, want ErrCallsDisabled", err)
@@ -138,6 +139,7 @@ func TestDisabledWithoutConfig(t *testing.T) {
 		fakeChats{members: map[uuid.UUID]bool{alice: true}},
 		fakeUsers{},
 		&fakeRinger{},
+		nil,
 		nil,
 	)
 	if _, err := partial.TokenFor(context.Background(), uuid.New(), alice, false, "voice"); !errors.Is(err, ErrCallsDisabled) {
@@ -178,6 +180,7 @@ func TestOnlyTheCallerRings(t *testing.T) {
 		fakeUsers{name: "Alice"},
 		ringer,
 		nil,
+		nil,
 	)
 
 	if _, err := svc.TokenFor(context.Background(), chat, alice, false, "voice"); err != nil {
@@ -205,6 +208,7 @@ func TestRefusedCallerDoesNotRing(t *testing.T) {
 		fakeChats{members: map[uuid.UUID]bool{}},
 		fakeUsers{name: "Eve"},
 		ringer,
+		nil,
 		nil,
 	)
 	if _, err := svc.TokenFor(context.Background(), uuid.New(), eve, true, "voice"); !errors.Is(err, ErrNotAllowed) {

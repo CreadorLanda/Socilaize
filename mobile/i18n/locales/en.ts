@@ -1026,6 +1026,7 @@ export default {
     clear: 'Clear',
   },
   calls: {
+    call_back: 'Call back',
     in_progress: 'In progress',
     join: 'Join the call',
     declined: 'Declined',

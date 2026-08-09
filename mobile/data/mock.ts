@@ -245,6 +245,14 @@ export type Message = {
    * trip — without it a reply loaded from history had nothing to link to.
    */
   replyToId?: number;
+  /**
+   * A call that happened in this conversation.
+   *
+   * Only the id and mode: the outcome changes after the row is written, so it
+   * is resolved from the call log at render time rather than baked into text
+   * that would then be wrong.
+   */
+  call?: { callId: string; mode: 'voice' | 'video' };
   attachment?: MessageAttachment;
   /** True for messages authored by the Dandara AI assistant. */
   isAI?: boolean;

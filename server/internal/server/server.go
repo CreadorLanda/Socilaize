@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -164,6 +165,7 @@ func New(cfg config.Config) (*Server, error) {
 		userNames{usersRepo},
 		callRinger{repo: msgRepo, hub: hub, push: notifSvc},
 		callsHistory,
+		callTrace{repo: msgRepo, hub: hub},
 	))
 	calls.Register(authed, callsCtl)
 
@@ -237,6 +239,34 @@ func callBody(mode string) string {
 		return "Incoming video call"
 	}
 	return "Incoming call"
+}
+
+// callTrace writes the row a call leaves in the conversation.
+//
+// The content is the call id and mode, not a sentence: the outcome — answered,
+// missed, how long it lasted — is not known when the row is written, and the
+// client resolves it from the call log when rendering.
+type callTrace struct {
+	repo *messages.Repository
+	hub  *realtime.Hub
+}
+
+func (c callTrace) RecordCall(ctx context.Context, chatID, caller, callID uuid.UUID, mode string) {
+	body := fmt.Sprintf(`{"call_id":%q,"mode":%q}`, callID.String(), mode)
+	id, err := c.repo.InsertMessage(ctx, chatID, caller, body, messages.MsgCall, nil, nil, messages.Origin{})
+	if err != nil || c.hub == nil {
+		return
+	}
+	// Live participants see the row appear as the call starts, which is what
+	// makes "join" reachable without leaving the conversation.
+	ids, err := c.repo.ParticipantIDs(ctx, chatID)
+	if err != nil {
+		return
+	}
+	c.hub.PublishJSON(ids, "message.new", chatID.String(), map[string]any{
+		"id": id, "chat_id": chatID.String(), "sender_id": caller.String(),
+		"content": body, "message_type": string(messages.MsgCall),
+	})
 }
 
 type userNames struct{ repo *users.Repository }

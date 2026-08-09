@@ -56,6 +56,14 @@ type Identity interface {
 	DisplayName(ctx context.Context, userID uuid.UUID) (string, error)
 }
 
+// Trace writes the row a call leaves in the conversation.
+//
+// Separate from Ringer because ringing is transient and this is permanent:
+// one wakes a phone, the other is what the thread still says tomorrow.
+type Trace interface {
+	RecordCall(ctx context.Context, chatID, caller uuid.UUID, callID uuid.UUID, mode string)
+}
+
 // Ringer is how the other side finds out. Without it a call is silent until
 // someone happens to open the app — which is not a call, it is a room that
 // exists.
@@ -81,11 +89,12 @@ type Service struct {
 	ring  Ringer
 	// log records what happened. Optional: without it calls still work, they
 	// simply leave no trace.
-	log *HistoryRepo
+	log   *HistoryRepo
+	trace Trace
 }
 
-func NewService(cfg Config, chats Participation, users Identity, ring Ringer, log *HistoryRepo) *Service {
-	return &Service{cfg: cfg, chats: chats, users: users, ring: ring, log: log}
+func NewService(cfg Config, chats Participation, users Identity, ring Ringer, log *HistoryRepo, trace Trace) *Service {
+	return &Service{cfg: cfg, chats: chats, users: users, ring: ring, log: log, trace: trace}
 }
 
 // Grant is what the client needs to join.
@@ -150,9 +159,15 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 	if s.log != nil {
 		if ring {
 			members, _ := s.chats.MemberIDs(ctx, chatID)
-			if _, err := s.log.Start(ctx, chatID, userID, mode, members); err != nil {
+			callID, created, err := s.log.Start(ctx, chatID, userID, mode, members)
+			if err != nil {
 				// A call that fails to be logged is still a call worth having.
 				_ = err
+			} else if created && s.trace != nil {
+				// Only on a genuinely new call. Start joins an existing one
+				// when the group is already talking, and a second row for the
+				// same call would read as a second call.
+				s.trace.RecordCall(ctx, chatID, userID, callID, mode)
 			}
 		} else if callID, running, _ := s.log.Running(ctx, chatID); running {
 			_ = s.log.Join(ctx, callID, userID)
