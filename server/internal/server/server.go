@@ -234,6 +234,29 @@ func (c callRinger) Ring(ctx context.Context, chatID, caller uuid.UUID, callerNa
 	}
 }
 
+// RingUsers reaches a named few rather than everyone in the chat.
+//
+// Used when people are pulled into a call already running: they may not be in
+// the conversation at all, so "everyone in the chat" would both miss them and
+// ring people who are already talking.
+func (c callRinger) RingUsers(ctx context.Context, chatID uuid.UUID, users []uuid.UUID, callerName, mode string) {
+	data := map[string]string{
+		"type":        "call.incoming",
+		"chat_id":     chatID.String(),
+		"caller_name": callerName,
+		"mode":        mode,
+	}
+	for _, uid := range users {
+		if c.hub != nil && c.hub.Online(uid) {
+			c.hub.PublishJSON([]uuid.UUID{uid}, "call.incoming", chatID.String(), data)
+			continue
+		}
+		if c.push != nil {
+			_ = c.push.NotifyUser(ctx, uid, "calls", callerName, callBody(mode), data)
+		}
+	}
+}
+
 func callBody(mode string) string {
 	if mode == "video" {
 		return "Incoming video call"

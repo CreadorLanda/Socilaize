@@ -235,3 +235,78 @@ func mustHistory(t *testing.T, repo *HistoryRepo, user uuid.UUID) []Entry {
 	}
 	return list
 }
+
+// TestInvitingSomeoneDoesNotGrowTheChat is the whole point of separating the
+// room from the conversation.
+//
+// The room used to be named after the chat, so pulling someone into a call
+// meant adding them to the chat — which is not what anyone means by "add to
+// the call". They would gain access to the entire conversation.
+func TestInvitingSomeoneDoesNotGrowTheChat(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob, carol := mkUser(t, pool), mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob) // carol is deliberately not in it
+	callID, _, err := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	before := participantCount(t, pool, chat)
+
+	added, err := repo.Invite(ctx, callID, []uuid.UUID{carol})
+	if err != nil {
+		t.Fatalf("Invite: %v", err)
+	}
+	if len(added) != 1 || added[0] != carol {
+		t.Fatalf("Invite reported %v, want carol alone", added)
+	}
+
+	if after := participantCount(t, pool, chat); after != before {
+		t.Fatalf("the chat grew from %d to %d — inviting to a call must not add to the conversation",
+			before, after)
+	}
+
+	// She can join the call she was invited to.
+	if ok, _ := repo.MayJoin(ctx, callID, carol); !ok {
+		t.Fatal("an invited person cannot join the call")
+	}
+
+	// And someone invited to nothing still cannot.
+	dave := mkUser(t, pool)
+	if ok, _ := repo.MayJoin(ctx, callID, dave); ok {
+		t.Fatal("someone never invited can join the call")
+	}
+}
+
+// TestInviteReportsOnlyRealAdditions: someone already in the call must not
+// have their phone ring again.
+func TestInviteReportsOnlyRealAdditions(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob := mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob)
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+
+	added, err := repo.Invite(ctx, callID, []uuid.UUID{bob})
+	if err != nil {
+		t.Fatalf("Invite: %v", err)
+	}
+	if len(added) != 0 {
+		t.Fatalf("inviting someone already in the call reported %d additions", len(added))
+	}
+}
+
+func participantCount(t *testing.T, pool *pgxpool.Pool, chat uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM chat_participants WHERE chat_id = $1`, chat).Scan(&n); err != nil {
+		t.Fatalf("count participants: %v", err)
+	}
+	return n
+}
