@@ -1,5 +1,7 @@
 export default {
   push: {
+    new_message: 'Mensagem nova',
+    sent_attachment: 'Enviou um anexo',
     welcome_title: 'Bem-vindo ao Yo',
     welcome_body: 'As notificações estão a funcionar. É por aqui que sabes de mensagens novas.',
     welcome_body_named: '{{name}}, as notificações estão a funcionar. É por aqui que sabes de mensagens novas.',

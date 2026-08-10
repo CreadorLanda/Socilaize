@@ -160,14 +160,21 @@ func (s *FCMSender) sendOne(ctx context.Context, job PushJob, token string) erro
 	if job.Category == "messages" || job.Category == "groups" {
 		data["categoryId"] = messageCategory
 	}
+	// No notification block when there is no body.
+	//
+	// An encrypted message has none: the server cannot read it, so the device
+	// builds the notification after decrypting. Including an empty
+	// notification block would make the system display a blank one and the
+	// app would have no chance to replace it.
+	var notif *fcmNotification
+	if job.Body != "" {
+		notif = &fcmNotification{Title: job.Title, Body: job.Body}
+	}
 	reqBody := fcmMessageRequest{
 		Message: fcmMessage{
-			Token: token,
-			Notification: &fcmNotification{
-				Title: job.Title,
-				Body:  job.Body,
-			},
-			Data: data,
+			Token:        token,
+			Notification: notif,
+			Data:         data,
 			Android: &fcmAndroidConfig{
 				Priority: "HIGH",
 			},

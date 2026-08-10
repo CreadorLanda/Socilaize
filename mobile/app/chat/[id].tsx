@@ -138,6 +138,7 @@ import {
 } from '@/data/crypto';
 import { CallRow } from '@/components/chat/call-row';
 import { callHistory, type CallLogEntry } from '@/data/api/calls';
+import { setOpenChat } from '@/data/notification-builder';
 import { describeE2EEBlocked, reportE2EEBlocked } from '@/data/e2ee-blocked';
 import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
 import { bubbleRadii } from '@/data/theme-store';
@@ -723,6 +724,14 @@ export default function ChatScreen() {
   }, [messages.length, dandaraTyping, peerTyping, searchMode]);
 
   const isGroup = !!chat?.isGroup || apiChatInfo?.type === 'group';
+  // Tell the notification builder which conversation is on screen, so it stays
+  // quiet about this one. The server pushes to connected clients now; only the
+  // client knows what the reader is actually looking at.
+  useEffect(() => {
+    setOpenChat(id ?? null);
+    return () => setOpenChat(null);
+  }, [id]);
+
   useEffect(() => {
     if (!isGroup || !id) return;
     refreshGroup(id).catch(() => {});

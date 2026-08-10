@@ -12,7 +12,9 @@ import { DialogHost } from '@/components/ui/dialog-host';
 import { IncomingCallHost } from '@/components/ui/incoming-call';
 import { AnimatedSplash } from '@/components/ui/splash';
 import {
+  listenForForegroundMessages,
   listenForNotificationReplies,
+  registerBackgroundMessageHandler,
   registerNotificationActions,
 } from '@/data/push';
 import { bootstrapAuth } from '@/data/auth-store';
@@ -38,7 +40,15 @@ export default function RootLayout() {
   // can be answered while no screen is mounted at all.
   useEffect(() => {
     void registerNotificationActions();
-    return listenForNotificationReplies();
+    // Message pushes arrive with no text: the server cannot read an encrypted
+    // message, so the notification is built here, after decrypting.
+    registerBackgroundMessageHandler();
+    const stopReplies = listenForNotificationReplies();
+    const stopForeground = listenForForegroundMessages();
+    return () => {
+      stopReplies();
+      stopForeground();
+    };
   }, []);
 
   useEffect(() => {
