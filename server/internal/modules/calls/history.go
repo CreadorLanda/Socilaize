@@ -135,6 +135,49 @@ func (r *HistoryRepo) Running(ctx context.Context, chatID uuid.UUID) (uuid.UUID,
 	return id, true, nil
 }
 
+// Invite adds people to a call already running.
+//
+// This is what lets a one-to-one call grow without the conversation growing
+// with it: the guest list belongs to the call, not to the chat. Returns who
+// was actually added, so only they are rung and only a real change is
+// announced.
+func (r *HistoryRepo) Invite(ctx context.Context, callID uuid.UUID, users []uuid.UUID) ([]uuid.UUID, error) {
+	added := make([]uuid.UUID, 0, len(users))
+	for _, u := range users {
+		tag, err := r.db.Exec(ctx, `
+			INSERT INTO call_participants (call_id, user_id) VALUES ($1, $2)
+			ON CONFLICT DO NOTHING
+		`, callID, u)
+		if err != nil {
+			return added, err
+		}
+		if tag.RowsAffected() > 0 {
+			added = append(added, u)
+		}
+	}
+	return added, nil
+}
+
+// MayJoin reports whether this user was invited to this call.
+//
+// The permission for joining is the call's guest list, not the chat's
+// membership — otherwise someone pulled into a call could not enter the room
+// they were invited to.
+func (r *HistoryRepo) MayJoin(ctx context.Context, callID, user uuid.UUID) (bool, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT count(*) FROM call_participants WHERE call_id = $1 AND user_id = $2`,
+		callID, user).Scan(&n)
+	return n > 0, err
+}
+
+// ChatOf returns the conversation a call belongs to.
+func (r *HistoryRepo) ChatOf(ctx context.Context, callID uuid.UUID) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := r.db.QueryRow(ctx, `SELECT chat_id FROM calls WHERE id = $1`, callID).Scan(&id)
+	return id, err
+}
+
 // Decline records an explicit refusal, which reads differently from silence.
 func (r *HistoryRepo) Decline(ctx context.Context, callID, user uuid.UUID) error {
 	_, err := r.db.Exec(ctx, `

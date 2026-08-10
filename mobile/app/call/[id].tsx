@@ -19,8 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PeoplePicker, type PickablePerson } from '@/components/ui/people-picker';
 import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
-import { callToken, type CallGrant } from '@/data/api/calls';
-import { addGroupMembers } from '@/data/api/groups';
+import { callToken, inviteToCall, type CallGrant } from '@/data/api/calls';
 import { listChats } from '@/data/api/messages';
 import { callKeyFingerprint, callKeyFor } from '@/data/crypto/call-key';
 import { appAlert } from '@/data/dialog-store';
@@ -146,7 +145,13 @@ export default function CallScreen() {
         : {})}
       onError={() => setFailure(t('call.failed_to_join'))}
     >
-      <CallStage chatId={id!} mode={callMode} e2eeKey={e2eeKey} isGroup={isGroup} />
+      <CallStage
+        chatId={id!}
+        mode={callMode}
+        e2eeKey={e2eeKey}
+        isGroup={isGroup}
+        onDropE2EE={() => setE2eeKey(null)}
+      />
     </LiveKitRoom>
   );
 }
@@ -162,12 +167,19 @@ function CallStage({
   mode,
   e2eeKey,
   isGroup,
+  onDropE2EE,
 }: {
   chatId: string;
   mode: Mode;
   e2eeKey: string | null;
-  /** A one-to-one chat has no group to add anyone to. */
   isGroup: boolean;
+  /**
+   * Give up the derived media key.
+   *
+   * Required before a third person can hear anything: the key comes from a
+   * session between two people, and nobody else has a share in it.
+   */
+  onDropE2EE: () => void;
 }) {
   const { colors } = useTheme();
   const room = useRoomContext();
@@ -257,16 +269,40 @@ function CallStage({
 
   const inviteMore = async (people: PickablePerson[]) => {
     if (people.length === 0) return;
+
+    // The cost of a third person, stated before it is paid.
+    //
+    // The media key is derived from the session between two people. A third
+    // has no share in it and would hear silence — and dropping the key means
+    // the SFU could read the streams, which is exactly what the key exists to
+    // prevent. Doing that quietly, with the lock still showing, would be the
+    // worst of the options.
+    if (e2eeKey) {
+      appAlert(t('call.drop_e2ee_title'), t('call.drop_e2ee_body'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('call.drop_e2ee_confirm'),
+          style: 'destructive',
+          onPress: () => {
+            onDropE2EE();
+            void doInvite(people);
+          },
+        },
+      ]);
+      return;
+    }
+    void doInvite(people);
+  };
+
+  const doInvite = async (people: PickablePerson[]) => {
     try {
       // The room is the chat. Adding someone to the call means adding them to
       // the conversation — there is no separate guest list, and inventing one
       // would let people into a room whose messages they cannot read.
       //
-      // Which is also why this cannot work in a one-to-one chat: it has
-      // exactly two participants and no group to add to. The request used to
-      // be sent anyway and failed with "could not add them", which explained
-      // nothing.
-      await addGroupMembers(chatId, people.map((p) => p.id));
+      // The call's guest list, not the chat's. A one-to-one conversation stays
+      // one-to-one; only the room grows.
+      await inviteToCall(chatId, people.map((p) => p.id));
     } catch {
       appAlert(t('chats.action_failed_title'), t('call.invite_failed'));
     }
@@ -353,15 +389,7 @@ function CallStage({
         <CircleButton
           icon="person-add"
           label={t('call.add_people')}
-          onPress={() => {
-            if (!isGroup) {
-              // Says what would have to happen, instead of failing at the
-              // request and reporting that something went wrong.
-              appAlert(t('call.add_needs_group_title'), t('call.add_needs_group_body'));
-              return;
-            }
-            setAdding(true);
-          }}
+          onPress={() => setAdding(true)}
         />
         <CircleButton icon="call" label={t('call.hang_up')} danger onPress={hangUp} />
       </View>

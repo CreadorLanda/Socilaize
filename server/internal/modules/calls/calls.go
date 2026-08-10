@@ -70,6 +70,9 @@ type Trace interface {
 type Ringer interface {
 	// Ring reaches everyone in the chat except the caller, live and by push.
 	Ring(ctx context.Context, chatID, caller uuid.UUID, callerName, mode string)
+	// RingUsers reaches a named few — the people just pulled into a call,
+	// who may not be in the chat at all.
+	RingUsers(ctx context.Context, chatID uuid.UUID, users []uuid.UUID, callerName, mode string)
 }
 
 type Config struct {
@@ -110,20 +113,39 @@ type Grant struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// TokenFor issues a join token for one user in one chat's room.
+// TokenFor issues a join token.
+//
+// Order matters here: the call is created or found first, because the room is
+// named after it. Building the token before knowing the call would name a room
+// nobody else is in.
 func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring bool, mode string) (Grant, error) {
 	if !s.cfg.enabled() {
 		return Grant{}, ErrCallsDisabled
 	}
 
-	ok, err := s.chats.IsParticipant(ctx, chatID, userID)
+	// Two ways in, and they are different questions.
+	//
+	// Starting a call requires being in the conversation. Joining one requires
+	// being on that call's guest list — which is how someone pulled into a
+	// one-to-one call can enter a room whose chat they are not part of.
+	inChat, err := s.chats.IsParticipant(ctx, chatID, userID)
 	if err != nil {
 		return Grant{}, err
 	}
-	if !ok {
-		// The room is named after the chat, so a chat id is enough to guess a
-		// room name. This check is the only thing standing between a guessed
-		// id and someone else's call.
+
+	var callID uuid.UUID
+	var haveCall bool
+	if s.log != nil {
+		callID, haveCall, _ = s.log.Running(ctx, chatID)
+	}
+
+	invited := false
+	if haveCall && !inChat {
+		invited, _ = s.log.MayJoin(ctx, callID, userID)
+	}
+	if !inChat && !invited {
+		// Reported as not-found rather than forbidden: "you may not join this"
+		// also confirms the call exists.
 		return Grant{}, ErrNotAllowed
 	}
 
@@ -132,7 +154,36 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 		name = "…"
 	}
 
+	// Create or join the call before naming the room after it.
+	if s.log != nil {
+		if ring && inChat {
+			members, _ := s.chats.MemberIDs(ctx, chatID)
+			id, created, err := s.log.Start(ctx, chatID, userID, mode, members)
+			if err == nil {
+				callID, haveCall = id, true
+				if created && s.trace != nil {
+					// Only on a genuinely new call. Start joins an existing one
+					// when the group is already talking, and a second row would
+					// read as a second call.
+					s.trace.RecordCall(ctx, chatID, userID, id, mode)
+				}
+			}
+		} else if haveCall {
+			_ = s.log.Join(ctx, callID, userID)
+		}
+	}
+
+	// The room is the call, not the chat.
+	//
+	// It used to be the chat id, which made the permission check simple and
+	// made it impossible to pull anyone into a call without adding them to the
+	// conversation. Falling back to the chat id keeps calls working when the
+	// log is not configured at all.
 	room := chatID.String()
+	if haveCall {
+		room = callID.String()
+	}
+
 	at := auth.NewAccessToken(s.cfg.APIKey, s.cfg.APISecret).
 		SetIdentity(userID.String()).
 		SetName(name).
@@ -153,32 +204,11 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 		return Grant{}, err
 	}
 
-	// The log is written here because this is the only moment the server
-	// reliably hears about a call: a token is signed when someone starts one
-	// and again when someone answers.
-	if s.log != nil {
-		if ring {
-			members, _ := s.chats.MemberIDs(ctx, chatID)
-			callID, created, err := s.log.Start(ctx, chatID, userID, mode, members)
-			if err != nil {
-				// A call that fails to be logged is still a call worth having.
-				_ = err
-			} else if created && s.trace != nil {
-				// Only on a genuinely new call. Start joins an existing one
-				// when the group is already talking, and a second row for the
-				// same call would read as a second call.
-				s.trace.RecordCall(ctx, chatID, userID, callID, mode)
-			}
-		} else if callID, running, _ := s.log.Running(ctx, chatID); running {
-			_ = s.log.Join(ctx, callID, userID)
-		}
-	}
-
 	// Ringing on the first join, not on every token request.
 	//
 	// Both sides fetch a token — the caller to start, the callee to answer —
 	// so ringing unconditionally would make the phone ring in the hand of the
-	// person answering it. `ring` is set only by the caller's request.
+	// person answering it.
 	if ring && s.ring != nil {
 		s.ring.Ring(ctx, chatID, userID, name, mode)
 	}
@@ -267,9 +297,64 @@ func (c *Controller) PostDecline(ctx *gin.Context) {
 	ctx.Status(http.StatusNoContent)
 }
 
+type InviteRequest struct {
+	UserIDs []uuid.UUID `json:"user_ids" binding:"required,min=1,max=16"`
+}
+
+// PostInvite — POST /chats/:id/call/invite
+//
+// Pulls people into a call already running, without touching the conversation.
+// The chat keeps exactly the participants it had; only the call's guest list
+// grows.
+func (c *Controller) PostInvite(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	var req InviteRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	userID := middleware.UserIDFrom(ctx)
+
+	// Only someone already in the call may widen it. Otherwise an outsider who
+	// learned a chat id could add themselves.
+	if c.svc.log == nil {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": ErrCallsDisabled.Error()})
+		return
+	}
+	callID, running, _ := c.svc.log.Running(ctx.Request.Context(), chatID)
+	if !running {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "no_call_running"})
+		return
+	}
+	if ok, _ := c.svc.log.MayJoin(ctx.Request.Context(), callID, userID); !ok {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "no_call_running"})
+		return
+	}
+
+	added, err := c.svc.log.Invite(ctx.Request.Context(), callID, req.UserIDs)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+
+	// Ring only the people who were actually added — someone already in the
+	// call must not have their phone ring again.
+	if len(added) > 0 && c.svc.ring != nil {
+		name, _ := c.svc.users.DisplayName(ctx.Request.Context(), userID)
+		c.svc.ring.RingUsers(ctx.Request.Context(), chatID, added, name, "voice")
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"invited": len(added)})
+}
+
 // Register mounts the call routes on a JWT-protected group.
 func Register(rg *gin.RouterGroup, c *Controller) {
 	rg.POST("/chats/:id/call/token", c.PostToken)
 	rg.POST("/chats/:id/call/decline", c.PostDecline)
+	rg.POST("/chats/:id/call/invite", c.PostInvite)
 	rg.GET("/calls", c.GetHistory)
 }
