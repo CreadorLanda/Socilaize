@@ -571,7 +571,7 @@ export default function ChatInfoScreen() {
             label={t('hangout.games')}
             subtitle={t('hangout.games_hint')}
             colors={colors}
-            onPress={() => router.push(`/hangout/${chat.id}?mode=voice&game=trivia`)}
+            onPress={() => router.push(`/hangout/${chat.id}?mode=voice&game=1`)}
           />
           <Divider colors={colors} />
           <Row
