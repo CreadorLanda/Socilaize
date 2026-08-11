@@ -315,6 +315,11 @@ export default function SettingsScreen() {
             onPress={() => pickVisibility(t('settings.profile_photo'), profilePhoto, setProfilePhoto, 'photo_visibility')}
           />
           <Row
+            icon="ban-outline"
+            label={t('settings.blocked')}
+            onPress={() => router.push('/blocked')}
+          />
+          <Row
             icon="checkmark-done-outline"
             label={t('settings.read_receipts')}
             value={readReceipts ? undefined : t('settings.read_receipts_off')}

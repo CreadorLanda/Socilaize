@@ -565,3 +565,108 @@ func TestGuestCanDeclineAndHangUp(t *testing.T) {
 		t.Fatal("a stranger ended the call")
 	}
 }
+
+// TestBlockedPersonCannotRingYou is the gap blocking left wide open.
+//
+// The calls module asked one question — are you a participant — and never
+// looked at blocking at all. Someone you blocked could still make your phone
+// ring, and you could answer.
+func TestBlockedPersonCannotRingYou(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+
+	alice, bob := mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob)
+
+	ringer := &fakeRinger{}
+	svc := NewService(
+		Config{URL: "wss://calls.example", APIKey: testKey, APISecret: testSecret},
+		fakeChats{members: map[uuid.UUID]bool{alice: true, bob: true}},
+		fakeUsers{name: "Bob"},
+		ringer,
+		NewHistoryRepo(pool),
+		nil,
+	).WithBlocks(testBlocks{pool: pool, peers: map[uuid.UUID][2]uuid.UUID{chat: {alice, bob}}})
+
+	// Alice blocks Bob.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1, $2)`, alice, bob); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+
+	// Bob cannot start the call.
+	if _, err := svc.TokenFor(ctx, chat, bob, true, "voice"); !errors.Is(err, ErrNotAllowed) {
+		t.Fatalf("TokenFor(blocked caller) = %v, want ErrNotAllowed", err)
+	}
+	if ringer.rang != 0 {
+		t.Fatalf("a blocked person rang the phone %d times", ringer.rang)
+	}
+
+	// And Alice cannot ring Bob either. The channel is shut, not one-way:
+	// calling someone you blocked is not a thing to offer.
+	if _, err := svc.TokenFor(ctx, chat, alice, true, "voice"); !errors.Is(err, ErrNotAllowed) {
+		t.Fatalf("TokenFor(blocker) = %v, want ErrNotAllowed", err)
+	}
+}
+
+// TestBlockingDoesNotReachGroupCalls is the deliberate limit.
+//
+// A group is a place with other people in it. One member's decision about
+// another is not a reason to keep them out of the room — the app shows who in
+// it they blocked instead.
+func TestBlockingDoesNotReachGroupCalls(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+
+	alice, bob, carol := mkUser(t, pool), mkUser(t, pool), mkUser(t, pool)
+	group := mkChat(t, pool, alice, bob, carol)
+
+	svc := NewService(
+		Config{URL: "wss://calls.example", APIKey: testKey, APISecret: testSecret},
+		fakeChats{members: map[uuid.UUID]bool{alice: true, bob: true, carol: true}},
+		fakeUsers{name: "Bob"},
+		&fakeRinger{},
+		NewHistoryRepo(pool),
+		nil,
+		// No peer for a group: PeerOf fails, which is how the rule stays
+		// one-to-one without the module having to know what a group is.
+	).WithBlocks(testBlocks{pool: pool})
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1, $2)`, alice, bob); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+
+	if _, err := svc.TokenFor(ctx, group, bob, true, "voice"); err != nil {
+		t.Fatalf("a blocked member cannot join a group call: %v", err)
+	}
+	if _, err := svc.TokenFor(ctx, group, alice, false, "voice"); err != nil {
+		t.Fatalf("the blocker cannot join their own group call: %v", err)
+	}
+}
+
+// testBlocks is the seam the calls module declares, backed by the real table.
+type testBlocks struct {
+	pool  *pgxpool.Pool
+	peers map[uuid.UUID][2]uuid.UUID
+}
+
+func (b testBlocks) EitherWay(ctx context.Context, x, y uuid.UUID) (bool, error) {
+	var exists bool
+	err := b.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM blocks
+		  WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))
+	`, x, y).Scan(&exists)
+	return exists, err
+}
+
+func (b testBlocks) PeerOf(_ context.Context, chatID, userID uuid.UUID) (uuid.UUID, error) {
+	pair, ok := b.peers[chatID]
+	if !ok {
+		return uuid.Nil, errors.New("no peer")
+	}
+	if pair[0] == userID {
+		return pair[1], nil
+	}
+	return pair[0], nil
+}

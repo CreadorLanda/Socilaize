@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/blocks"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	"github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
@@ -56,7 +57,8 @@ func createTestUser(t *testing.T, pool *pgxpool.Pool, username string) uuid.UUID
 func newTestService(pool *pgxpool.Pool) *Service {
 	usersRepo := users.NewRepository(pool)
 	keysSvc := keys.NewService(keys.NewRepository(pool), usersRepo)
-	return NewService(NewRepository(pool, ""), keysSvc, usersRepo, nil, nil)
+	return NewService(NewRepository(pool, ""), keysSvc, usersRepo, nil, nil).
+		WithBlocks(blocks.NewRepo(pool))
 }
 
 // TestDirectChatFriendRequestFlow exercises the whole pending → accept
@@ -112,7 +114,10 @@ func TestDirectChatFriendRequestFlow(t *testing.T) {
 }
 
 // TestBlockedChatRejectsMessages guards against the opposite regression:
-// a blocked chat must reject sends outright, not just cap them at one.
+// a blocked person must be rejected outright, not just capped at one message.
+//
+// The block is directional now and lives on the person, so the test blocks a
+// person rather than setting a status on the conversation.
 func TestBlockedChatRejectsMessages(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
@@ -125,8 +130,8 @@ func TestBlockedChatRejectsMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDirectChat: %v", err)
 	}
-	if err := svc.BlockChat(ctx, chat.ID, bob); err != nil {
-		t.Fatalf("BlockChat: %v", err)
+	if err := blocks.NewRepo(pool).Block(ctx, bob, alice); err != nil {
+		t.Fatalf("Block: %v", err)
 	}
 	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "hello?"}); !errors.Is(err, ErrChatBlocked) {
 		t.Fatalf("expected chat_blocked, got %v", err)
@@ -151,9 +156,6 @@ func TestNonParticipantCannotAccessChat(t *testing.T) {
 
 	if _, err := svc.AcceptChat(ctx, chat.ID, eve); !errors.Is(err, ErrNotParticipant) {
 		t.Fatalf("AcceptChat by non-participant: got %v", err)
-	}
-	if err := svc.BlockChat(ctx, chat.ID, eve); !errors.Is(err, ErrNotParticipant) {
-		t.Fatalf("BlockChat by non-participant: got %v", err)
 	}
 	if _, err := svc.SendMessage(ctx, chat.ID, eve, SendMessageRequest{Content: "nope"}); !errors.Is(err, ErrNotParticipant) {
 		t.Fatalf("SendMessage by non-participant: got %v", err)

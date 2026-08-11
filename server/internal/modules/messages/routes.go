@@ -37,7 +37,6 @@ func Register(rg *gin.RouterGroup, c *Controller) {
 
 	// Chat actions
 	rg.POST("/chats/:id/accept", c.PostAcceptChat)
-	rg.POST("/chats/:id/block", c.PostBlockChat)
 	rg.POST("/chats/:id/report", c.PostReportChat)
 
 	// Per-user chat management (pin / mute / archive, clear, delete)
