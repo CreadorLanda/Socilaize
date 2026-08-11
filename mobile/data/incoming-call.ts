@@ -24,7 +24,7 @@ export type IncomingCall = {
  * the screen — and worse, a `call.incoming` that arrives while the app was
  * backgrounded would ring on return, for a call that ended minutes ago.
  */
-const RING_TIMEOUT_MS = 45_000;
+export const RING_TIMEOUT_MS = 45_000;
 
 let current: IncomingCall | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -59,17 +59,24 @@ export function resetIncomingCall(): void {
   dismissIncoming();
 }
 
+/**
+ * The ringing call, read outside React.
+ *
+ * The hook's snapshot getter, exported: anything that is not a component —
+ * a push handler, a websocket handler, a test — needs to know whether a call
+ * is already up before acting on one.
+ */
+export function getIncomingCall(): IncomingCall | null {
+  return current;
+}
+
 function subscribe(l: () => void): () => void {
   listeners.add(l);
   return () => listeners.delete(l);
 }
 
 export function useIncomingCall(): IncomingCall | null {
-  return useSyncExternalStore(
-    subscribe,
-    () => current,
-    () => null,
-  );
+  return useSyncExternalStore(subscribe, getIncomingCall, () => null);
 }
 
 /**
@@ -79,8 +86,17 @@ export function useIncomingCall(): IncomingCall | null {
  * of the store — there are two of them today and there will be more.
  */
 export function handleCallEvent(type: string, payload: unknown): boolean {
-  if (type !== 'call.incoming') return false;
   const p = payload as Record<string, string> | null | undefined;
+
+  // The caller gave up, or the last person left. The phone was ringing for a
+  // call that no longer exists — and answering it landed in an empty room,
+  // because the ring outlived the call by up to 45 seconds.
+  if (type === 'call.ended') {
+    if (p?.chat_id && current?.chatId === p.chat_id) dismissIncoming();
+    return true;
+  }
+
+  if (type !== 'call.incoming') return false;
   if (!p?.chat_id || !p?.caller_id) return false;
   ringIncoming({
     chatId: p.chat_id,

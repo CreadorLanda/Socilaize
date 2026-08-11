@@ -73,6 +73,10 @@ type Ringer interface {
 	// RingUsers reaches a named few — the people just pulled into a call,
 	// who may not be in the chat at all.
 	RingUsers(ctx context.Context, chatID uuid.UUID, users []uuid.UUID, callerName, mode string)
+	// Stopped tells the phones still ringing that there is nothing left to
+	// answer. Without it a caller who gives up leaves the other phone ringing
+	// for the full 45 seconds, and answering lands in an empty room.
+	Stopped(ctx context.Context, chatID uuid.UUID, users []uuid.UUID)
 }
 
 type Config struct {
@@ -209,7 +213,11 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 	// Both sides fetch a token — the caller to start, the callee to answer —
 	// so ringing unconditionally would make the phone ring in the hand of the
 	// person answering it.
-	if ring && s.ring != nil {
+	//
+	// And only from inside the conversation. A guest pulled into a one-to-one
+	// call is not in the chat; ringing on their behalf would ring every member
+	// of a conversation they are not part of.
+	if ring && inChat && s.ring != nil {
 		s.ring.Ring(ctx, chatID, userID, name, mode)
 	}
 
@@ -220,6 +228,44 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 		Identity:  userID.String(),
 		ExpiresAt: time.Now().Add(TokenTTL),
 	}, nil
+}
+
+// Hangup ends this user's part in the call, and the call itself if they were
+// the last one in it.
+//
+// The client used to disconnect from the SFU and tell nobody. The server only
+// heard about a call starting, never about it finishing, so every call ran
+// until the four-hour sweep: the log showed multi-hour durations for calls
+// that lasted seconds, offered a "join" button to a room that had been empty
+// since the night before, and a second call in the same chat was silently
+// folded into the first.
+func (s *Service) Hangup(ctx context.Context, chatID, userID uuid.UUID) error {
+	if s.log == nil {
+		return nil
+	}
+	callID, running, err := s.log.Running(ctx, chatID)
+	if err != nil || !running {
+		return err
+	}
+
+	// Being on the call's guest list is the permission, not chat membership —
+	// a guest pulled into a one-to-one call must be able to hang up too.
+	if ok, _ := s.log.MayJoin(ctx, callID, userID); !ok {
+		return ErrNotAllowed
+	}
+
+	// Read before leaving: once the call ends there is nobody left ringing to
+	// find, and these are the phones that need telling.
+	ringing, _ := s.log.Ringing(ctx, callID)
+
+	ended, err := s.log.Leave(ctx, callID, userID)
+	if err != nil {
+		return err
+	}
+	if ended && s.ring != nil && len(ringing) > 0 {
+		s.ring.Stopped(ctx, chatID, ringing)
+	}
+	return nil
 }
 
 func boolPtr(b bool) *bool { return &b }
@@ -285,14 +331,21 @@ func (c *Controller) PostDecline(ctx *gin.Context) {
 		return
 	}
 	userID := middleware.UserIDFrom(ctx)
+	if c.svc.log != nil {
+		if callID, running, _ := c.svc.log.Running(ctx.Request.Context(), chatID); running {
+			// The call's guest list, not the chat's. Someone pulled into a
+			// one-to-one call is not in that conversation, and could not say no
+			// to a call their phone was ringing for.
+			if ok, _ := c.svc.log.MayJoin(ctx.Request.Context(), callID, userID); ok {
+				_ = c.svc.log.Decline(ctx.Request.Context(), callID, userID)
+				ctx.Status(http.StatusNoContent)
+				return
+			}
+		}
+	}
 	if ok, err := c.svc.chats.IsParticipant(ctx.Request.Context(), chatID, userID); err != nil || !ok {
 		ctx.JSON(http.StatusNotFound, gin.H{"error": "chat_not_found"})
 		return
-	}
-	if c.svc.log != nil {
-		if callID, running, _ := c.svc.log.Running(ctx.Request.Context(), chatID); running {
-			_ = c.svc.log.Decline(ctx.Request.Context(), callID, userID)
-		}
 	}
 	ctx.Status(http.StatusNoContent)
 }
@@ -345,15 +398,44 @@ func (c *Controller) PostInvite(ctx *gin.Context) {
 	// call must not have their phone ring again.
 	if len(added) > 0 && c.svc.ring != nil {
 		name, _ := c.svc.users.DisplayName(ctx.Request.Context(), userID)
-		c.svc.ring.RingUsers(ctx.Request.Context(), chatID, added, name, "voice")
+		// The mode of the call they are joining, not a guess. Ringing a video
+		// call as voice put them on the wrong screen before a frame arrived.
+		mode, err := c.svc.log.ModeOf(ctx.Request.Context(), callID)
+		if err != nil || mode == "" {
+			mode = "voice"
+		}
+		c.svc.ring.RingUsers(ctx.Request.Context(), chatID, added, name, mode)
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"invited": len(added)})
 }
 
+// PostHangup — POST /chats/:id/call/hangup
+//
+// The end of a call, reported by the person leaving it. Idempotent: hanging up
+// twice, or on a call that already ended, is not an error — the client sends
+// this on its way out and cannot wait around to find out how it went.
+func (c *Controller) PostHangup(ctx *gin.Context) {
+	chatID, err := uuid.Parse(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+		return
+	}
+	switch err := c.svc.Hangup(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx)); {
+	case errors.Is(err, ErrNotAllowed):
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "chat_not_found"})
+		return
+	case err != nil:
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 // Register mounts the call routes on a JWT-protected group.
 func Register(rg *gin.RouterGroup, c *Controller) {
 	rg.POST("/chats/:id/call/token", c.PostToken)
+	rg.POST("/chats/:id/call/hangup", c.PostHangup)
 	rg.POST("/chats/:id/call/decline", c.PostDecline)
 	rg.POST("/chats/:id/call/invite", c.PostInvite)
 	rg.GET("/calls", c.GetHistory)

@@ -62,6 +62,22 @@ export function callHistory() {
   return api.get<CallLogEntry[]>('/api/calls');
 }
 
+/**
+ * Report leaving the call.
+ *
+ * Disconnecting from the SFU tells the server nothing — it only ever heard
+ * about a call starting. Without this the call ran until the four-hour sweep:
+ * the log showed multi-hour durations for calls that lasted seconds, offered
+ * to "join" a room that had been empty since the night before, and folded a
+ * second call in the same chat into the first.
+ *
+ * Sent on the way out and never awaited for correctness. The server treats a
+ * repeat as a no-op.
+ */
+export function hangupCall(chatId: string) {
+  return api.post<void>(`/api/chats/${chatId}/call/hangup`, {});
+}
+
 /** Say no explicitly, which reads differently in the log from never answering. */
 export function declineCall(chatId: string) {
   return api.post<void>(`/api/chats/${chatId}/call/decline`, {});
