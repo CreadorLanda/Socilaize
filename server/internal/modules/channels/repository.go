@@ -123,6 +123,28 @@ func (r *Repository) Get(ctx context.Context, id, viewer uuid.UUID) (channelRow,
 	return c, err
 }
 
+// MemberIDs is everyone following the channel.
+//
+// Needed by anything that has to reach a channel's audience without importing
+// this module's storage — announcing a live, for one.
+func (r *Repository) MemberIDs(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT user_id FROM channel_members WHERE channel_id = $1`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) HandleTaken(ctx context.Context, handle string, except *uuid.UUID) (bool, error) {
 	var n int
 	if except != nil {

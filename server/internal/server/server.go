@@ -23,12 +23,14 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/groups"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/health"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/lives"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/media"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/messages"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/notifications"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/stickers"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/stories"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
+	lkplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/livekit"
 	pgplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 	"github.com/CreadorLanda/Socilaize/server/internal/platform/realtime"
 	rdplatform "github.com/CreadorLanda/Socilaize/server/internal/platform/redis"
@@ -43,6 +45,7 @@ type Server struct {
 	rdb          *redis.Client
 	pushWorker   *notifications.Worker
 	callSweeper  *calls.Sweeper
+	liveSweeper  *lives.Sweeper
 	mediaSweeper *media.Sweeper
 	msgSweeper   *messages.Sweeper
 	pubSrv       *http.Server
@@ -174,11 +177,31 @@ func New(cfg config.Config) (*Server, error) {
 	channelsCtl := channels.NewController(channels.NewService(channelsRepo))
 	channels.Register(authed, channelsCtl)
 
+	// Live broadcasts. One person publishing to an audience that cannot
+	// publish back — enforced in the token the SFU checks, not in the client.
+	livesRepo := lives.NewRepo(pg)
+	// A host whose phone dies reports nothing, so a broadcast would stay live
+	// forever and offer an empty room. Same fault calls had, same backstop.
+	liveSweeper := lives.NewSweeper(livesRepo, 10*time.Minute, 6*time.Hour)
+	livesCtl := lives.NewController(lives.NewService(
+		lkplatform.NewSigner(lkplatform.Config{
+			URL:       cfg.LiveKit.URL,
+			APIKey:    cfg.LiveKit.APIKey,
+			APISecret: cfg.LiveKit.APISecret,
+		}),
+		livesRepo,
+		liveAudience{chats: msgRepo, channels: channelsRepo},
+		userNames{usersRepo},
+		liveAnnouncer{hub: hub},
+	))
+	lives.Register(authed, livesCtl)
+
 	return &Server{
 		cfg: cfg, router: r, pg: pg, rdb: rdb,
 		pushWorker: pushWorker, mediaSweeper: mediaSweeper, callSweeper: callSweeper,
-		msgSweeper: messages.NewSweeper(msgSvc, 5*time.Minute),
-		errCh:      make(chan error, 2),
+		liveSweeper: liveSweeper,
+		msgSweeper:  messages.NewSweeper(msgSvc, 5*time.Minute),
+		errCh:       make(chan error, 2),
 	}, nil
 }
 
@@ -277,6 +300,93 @@ func (c callRinger) Stopped(ctx context.Context, chatID uuid.UUID, users []uuid.
 	}
 }
 
+// liveAudience answers the two questions a broadcast asks, from the modules
+// that already know: who is in a chat, and what a channel lets someone do.
+//
+// The same adapter pattern as chatParticipation — the lives module imports
+// neither messages nor channels.
+type liveAudience struct {
+	chats    *messages.Repository
+	channels *channels.Repository
+}
+
+// CanBroadcastToChannel mirrors who may post: a live is a post that happens
+// now, and a channel that lets you write to it lets you speak to it.
+func (a liveAudience) CanBroadcastToChannel(ctx context.Context, channelID, userID uuid.UUID) (bool, error) {
+	c, err := a.channels.Get(ctx, channelID, userID)
+	if err != nil {
+		return false, err
+	}
+	switch c.Role {
+	case string(channels.RoleOwner), string(channels.RoleAdmin):
+		return true, nil
+	case string(channels.RolePublisher):
+		return c.WhoCanPost == string(channels.PostPublishers) ||
+			c.WhoCanPost == string(channels.PostEveryone), nil
+	default:
+		return c.WhoCanPost == string(channels.PostEveryone) && c.Following, nil
+	}
+}
+
+// CanWatchChannel: a public channel is public — that is the whole meaning of
+// the setting. A private one admits the people who joined it.
+func (a liveAudience) CanWatchChannel(ctx context.Context, channelID, userID uuid.UUID) (bool, error) {
+	c, err := a.channels.Get(ctx, channelID, userID)
+	if err != nil {
+		return false, err
+	}
+	if c.Visibility == string(channels.VisPublic) {
+		return true, nil
+	}
+	return c.Following, nil
+}
+
+func (a liveAudience) InChat(ctx context.Context, chatID, userID uuid.UUID) (bool, error) {
+	return a.chats.IsParticipant(ctx, chatID, userID)
+}
+
+func (a liveAudience) ChatMembers(ctx context.Context, chatID uuid.UUID) ([]uuid.UUID, error) {
+	return a.chats.ParticipantIDs(ctx, chatID)
+}
+
+func (a liveAudience) ChannelFollowers(ctx context.Context, channelID uuid.UUID) ([]uuid.UUID, error) {
+	return a.channels.MemberIDs(ctx, channelID)
+}
+
+// liveAnnouncer tells people over the websocket.
+//
+// No push. A broadcast is worth interrupting someone for only if they asked to
+// be interrupted, and there is no such setting yet; waking every follower of
+// every channel is how an app gets muted. The live shows up when they open it.
+type liveAnnouncer struct{ hub *realtime.Hub }
+
+func (a liveAnnouncer) Started(_ context.Context, users []uuid.UUID, live lives.Live) {
+	if a.hub == nil {
+		return
+	}
+	a.hub.PublishJSON(users, "live.started", live.ID.String(), map[string]any{
+		"type": "live.started", "live": live,
+	})
+}
+
+func (a liveAnnouncer) Ended(_ context.Context, users []uuid.UUID, liveID uuid.UUID) {
+	if a.hub == nil {
+		return
+	}
+	a.hub.PublishJSON(users, "live.ended", liveID.String(), map[string]string{
+		"type": "live.ended", "live_id": liveID.String(),
+	})
+}
+
+func (a liveAnnouncer) Viewers(_ context.Context, users []uuid.UUID, liveID uuid.UUID, n int) {
+	if a.hub == nil {
+		return
+	}
+	a.hub.PublishJSON(users, "live.viewers", liveID.String(), map[string]any{
+		"type": "live.viewers", "live_id": liveID.String(), "viewers": n,
+	})
+}
+
 func callBody(mode string) string {
 	if mode == "video" {
 		return "Incoming video call"
@@ -354,6 +464,9 @@ func (s *Server) ListenAndServe() {
 	if s.callSweeper != nil {
 		s.callSweeper.Start()
 	}
+	if s.liveSweeper != nil {
+		s.liveSweeper.Start()
+	}
 	if s.pushWorker != nil {
 		s.pushWorker.Start()
 	}
@@ -371,8 +484,14 @@ func (s *Server) Err() <-chan error { return s.errCh }
 // Close releases platform connections and stops all listeners.
 // Safe to call multiple times.
 func (s *Server) Close() {
+	// Stop, not Start. This said Start, so shutting the server down launched
+	// the sweeper's goroutine and ticker instead of cancelling them — the one
+	// thing Close exists to do, done backwards.
 	if s.callSweeper != nil {
-		s.callSweeper.Start()
+		s.callSweeper.Stop()
+	}
+	if s.liveSweeper != nil {
+		s.liveSweeper.Stop()
 	}
 	if s.pushWorker != nil {
 		s.pushWorker.Stop()

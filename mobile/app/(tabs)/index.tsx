@@ -48,6 +48,7 @@ import {
 import type { ChatPreview } from '@/data/mock';
 import { useTheme } from '@/hooks/use-theme';
 import { handleCallEvent } from '@/data/incoming-call';
+import { handleLiveEvent } from '@/data/live-store';
 import { t } from '@/i18n';
 
 const BUILTIN_IDS = ['all', 'unread', 'read', 'groups', 'pending'];
@@ -115,6 +116,8 @@ export default function ChatsScreen() {
           // A call can arrive while the chat list is on screen; the store
           // decides what to show, this handler only forwards.
           if (handleCallEvent(evt?.type, evt?.payload)) return;
+          // A broadcast likewise: it starts, ends and changes size on any screen.
+          if (handleLiveEvent(evt?.type, evt?.payload)) return;
           applyRealtimeEvent(evt?.type);
         },
         () => {

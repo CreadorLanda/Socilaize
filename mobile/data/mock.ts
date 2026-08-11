@@ -421,8 +421,13 @@ export type Story = {
   /** Optional audio duration for voice stories (seconds). */
   audioSec?: number;
   /** Live broadcast story — no auto-advance, live chat. */
-  isLive?: boolean;
-  liveViewers?: number;
+  /**
+   * Live state comes from the lives store, not from the post.
+   *
+   * These were `isLive` and `liveViewers`: written onto the optimistic post,
+   * never sent to the server, and wiped by the server's own reply one round
+   * trip later. A card asks the store what is actually on air.
+   */
   /**
    * Client-only upload lifecycle for background publish.
    * Absent / undefined once the server has accepted the story.
@@ -517,8 +522,6 @@ export type ChannelPost = {
   type?: ChannelPostType;
   gameKind?: ChannelGameKind;
   /** Live / voice hangout is currently active. */
-  isLive?: boolean;
-  liveViewers?: number;
 };
 
 export type ChannelReaction = {

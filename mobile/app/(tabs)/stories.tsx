@@ -343,12 +343,7 @@ function RailCard({ story }: { story: Story }) {
           <CachedImage url={story.coverUri} style={StyleSheet.absoluteFill} contentFit="cover" />
         )}
         <View style={styles.railScrim} />
-        {story.isLive ? (
-          <View style={styles.storyLiveBadge}>
-            <View style={styles.storyLiveDot} />
-            <Text style={styles.storyLiveText}>{t('stories.live_badge')}</Text>
-          </View>
-        ) : !story.isViewed ? (
+        {!story.isViewed ? (
           <View style={[styles.freshPip, { backgroundColor: colors.primary }]} />
         ) : null}
         {story.kind === 'video' || story.kind === 'audio' || story.kind === 'poll' ? (
@@ -367,11 +362,7 @@ function RailCard({ story }: { story: Story }) {
             style={[
               styles.railRing,
               {
-                borderColor: story.isLive
-                  ? '#EF4444'
-                  : story.isViewed
-                    ? 'rgba(255,255,255,0.35)'
-                    : story.accent,
+                borderColor: story.isViewed ? 'rgba(255,255,255,0.35)' : story.accent,
               },
             ]}
           >
@@ -458,22 +449,12 @@ function PortraitCard({ story, tall }: { story: Story; tall?: boolean }) {
             style={[
               styles.portraitRing,
               {
-                borderColor: story.isLive
-                  ? '#EF4444'
-                  : story.isViewed
-                    ? 'rgba(255,255,255,0.4)'
-                    : story.accent,
+                borderColor: story.isViewed ? 'rgba(255,255,255,0.4)' : story.accent,
               },
             ]}
           >
             <Image source={{ uri: story.avatarUri }} style={styles.portraitAvatar} contentFit="cover" />
           </View>
-          {story.isLive ? (
-            <View style={[styles.storyLiveBadge, { position: 'relative', top: 0, right: 0 }]}>
-              <View style={styles.storyLiveDot} />
-              <Text style={styles.storyLiveText}>{t('stories.live_badge')}</Text>
-            </View>
-          ) : null}
           {story.kind === 'video' ? (
             <View style={styles.kindChip}>
               <Ionicons name="play" size={10} color="#FFF" />

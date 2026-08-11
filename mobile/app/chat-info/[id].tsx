@@ -529,7 +529,7 @@ export default function ChatInfoScreen() {
           <ActionButton
             icon="home"
             label={t('hangout.open_short')}
-            onPress={() => router.push(`/hangout/${chat.id}?mode=voice`)}
+            onPress={() => router.push(`/call/${chat.id}?mode=voice`)}
           />
           {!isGroup ? (
             <>
@@ -549,7 +549,7 @@ export default function ChatInfoScreen() {
               <ActionButton
                 icon="videocam-outline"
                 label={t('call.video_call')}
-                onPress={() => router.push(`/hangout/${chat.id}?mode=video`)}
+                onPress={() => router.push(`/call/${chat.id}?mode=video`)}
               />
               <ActionButton icon="person-add-outline" label={t('chat_info.add')} />
             </>
@@ -558,12 +558,15 @@ export default function ChatInfoScreen() {
 
         {/* Houseparty-style hangout entry */}
         <Section colors={colors}>
+          {/* The room was a picture of a room: a grid filled from bundled
+              sample chats, a 900ms fake connect, and mute/camera buttons that
+              toggled a colour. This is the call screen, which carries audio. */}
           <Row
             icon="home-outline"
             label={t('hangout.open')}
             subtitle={t('hangout.open_hint')}
             colors={colors}
-            onPress={() => router.push(`/hangout/${chat.id}?mode=voice`)}
+            onPress={() => router.push(`/call/${chat.id}?mode=voice`)}
           />
           <Divider colors={colors} />
           <Row
@@ -571,7 +574,7 @@ export default function ChatInfoScreen() {
             label={t('hangout.games')}
             subtitle={t('hangout.games_hint')}
             colors={colors}
-            onPress={() => router.push(`/hangout/${chat.id}?mode=voice&game=1`)}
+            onPress={() => router.push(`/chat/${chat.id}?game=1`)}
           />
           <Divider colors={colors} />
           <Row
@@ -579,7 +582,7 @@ export default function ChatInfoScreen() {
             label={t('hangout.mode_live')}
             subtitle={t('hangout.live_hint')}
             colors={colors}
-            onPress={() => router.push(`/hangout/${chat.id}?mode=live`)}
+            onPress={() => router.push(`/live/new?chat=${chat.id}`)}
           />
         </Section>
 

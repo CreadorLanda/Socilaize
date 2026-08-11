@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS live_viewers;
+DROP TABLE IF EXISTS lives;
