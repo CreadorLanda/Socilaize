@@ -22,11 +22,24 @@ test('nada no catalogo depende de sorteio local', async () => {
   }
 });
 
-test('a sala de jogos nao desenha estado local', async () => {
-  const src = await Bun.file('app/hangout/[id].tsx').text();
-  // O painel local desenhava um dado e uma pergunta que só este telemóvel via.
-  expect(src).not.toContain('function GameRound');
-  expect(src).not.toContain('rollDice');
+/**
+ * The room is gone entirely, which is stronger than it not drawing a game.
+ *
+ * It never carried a byte of audio: a grid filled from bundled sample chats, a
+ * 900 ms fake connect, and mute/camera buttons that toggled a colour. Voice and
+ * video now open the call screen, and live opens a broadcast.
+ */
+test('a sala simulada nao voltou', async () => {
+  expect(await Bun.file('app/hangout/[id].tsx').exists()).toBe(false);
+});
+
+test('nada aponta para a sala simulada', async () => {
+  const linked: string[] = [];
+  const glob = new Bun.Glob('{app,components}/**/*.tsx');
+  for await (const file of glob.scan('.')) {
+    if ((await Bun.file(file).text()).includes('/hangout/')) linked.push(file);
+  }
+  expect(linked).toEqual([]);
 });
 
 /**

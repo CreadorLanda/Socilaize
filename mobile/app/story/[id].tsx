@@ -308,13 +308,10 @@ export default function StoryViewerScreen() {
   // dependency list both honest and stable.
   const storyId = story?.id;
   const storyDuration = story?.durationSec;
-  const storyIsLive = story?.isLive;
 
   useEffect(() => {
-    // Live stories stay open — no auto-advance.
-    if (!storyId || paused || storyIsLive) {
+    if (!storyId || paused) {
       cancelAnimation(progress);
-      if (storyIsLive) progress.value = 1;
       return;
     }
     progress.value = 0;
@@ -327,7 +324,7 @@ export default function StoryViewerScreen() {
       },
     );
     return () => cancelAnimation(progress);
-  }, [storyId, storyDuration, storyIsLive, paused, progress, goNext]);
+  }, [storyId, storyDuration, paused, progress, goNext]);
 
   const longPress = Gesture.LongPress()
     .minDuration(160)
@@ -558,21 +555,10 @@ export default function StoryViewerScreen() {
                 <Text style={styles.name} numberOfLines={1}>
                   {displayName}
                 </Text>
-                {story.isLive ? (
-                  <View style={styles.livePill}>
-                    <View style={styles.liveDot} />
-                    <Text style={styles.livePillText}>{t('stories.live_now')}</Text>
-                  </View>
-                ) : (
-                  <VisibilityPill visibility={story.visibility} />
-                )}
+                <VisibilityPill visibility={story.visibility} />
               </View>
               <Text style={styles.meta} numberOfLines={1}>
-                {story.isLive
-                  ? t('stories.live_viewers', {
-                      count: story.liveViewers ?? story.viewers,
-                    })
-                  : `${story.postedAt} · ${t('stories.expires', { time: story.expiresIn })}`}
+                {`${story.postedAt} · ${t('stories.expires', { time: story.expiresIn })}`}
               </Text>
             </View>
 
@@ -749,27 +735,12 @@ export default function StoryViewerScreen() {
             <Pressable onPress={() => setCommentsOpen(true)} style={styles.commentsBtn}>
               <Ionicons name="chatbubbles" size={17} color="#FFF" />
               <Text style={styles.commentsBtnText}>
-                {story.isLive ? t('stories.live_chat') : t('stories.view_comments')}
+                {t('stories.view_comments')}
               </Text>
             </Pressable>
           ) : null}
         </View>
 
-        {/* Live chat ticker */}
-        {story.isLive && comments.length > 0 ? (
-          <View style={styles.liveTicker}>
-            {comments.slice(0, 3).map((c) => (
-              <View key={c.id} style={styles.liveTickerRow}>
-                <Text style={styles.liveTickerAuthor}>
-                  {c.isAnonymous ? t('stories.anonymous_author') : c.author}
-                </Text>
-                <Text style={styles.liveTickerText} numberOfLines={1}>
-                  {c.text}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
 
         {/* Reply mode switcher.
 
@@ -1027,7 +998,6 @@ function CommentsSheet({
   const [draft, setDraft] = useState('');
   const [anon, setAnon] = useState(false);
   const canAnon = story.allowAnonymousReplies !== false;
-  const isLive = !!story.isLive;
 
   return (
     <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -1040,15 +1010,7 @@ function CommentsSheet({
           <View style={styles.sheetHeader}>
             <View>
               <View style={styles.sheetTitleRow}>
-                {isLive ? (
-                  <View style={styles.livePill}>
-                    <View style={styles.liveDot} />
-                    <Text style={styles.livePillText}>{t('stories.live_now')}</Text>
-                  </View>
-                ) : null}
-                <Text style={styles.sheetTitle}>
-                  {isLive ? t('stories.live_chat') : t('stories.comments')}
-                </Text>
+                <Text style={styles.sheetTitle}>{t('stories.comments')}</Text>
               </View>
               <Text style={styles.sheetCount}>
                 {t('stories.comments_count', { count: comments.length })}
@@ -1149,11 +1111,7 @@ function CommentsSheet({
                   style={[
                     styles.sheetSend,
                     {
-                      backgroundColor: draft.trim()
-                        ? isLive
-                          ? '#EF4444'
-                          : story.accent
-                        : 'rgba(255,255,255,0.15)',
+                      backgroundColor: draft.trim() ? story.accent : 'rgba(255,255,255,0.15)',
                     },
                   ]}
                 >

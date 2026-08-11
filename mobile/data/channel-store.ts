@@ -394,8 +394,6 @@ export type AddPostInput = {
   type?: ChannelPost['type'];
   mediaUri?: string;
   gameKind?: ChannelPost['gameKind'];
-  isLive?: boolean;
-  liveViewers?: number;
 };
 
 export function addChannelPost(
@@ -418,8 +416,6 @@ export function addChannelPost(
     type: input.type ?? (input.mediaUri ? 'image' : 'text'),
     mediaUri: input.mediaUri,
     gameKind: input.gameKind,
-    isLive: input.isLive,
-    liveViewers: input.liveViewers,
   };
 
   channels = channels.map((c) =>

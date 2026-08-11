@@ -66,6 +66,7 @@ import {
 import { type ChannelComment, type ChannelPost } from '@/data/mock';
 import { getCurrentUser } from '@/data/auth-store';
 import { useProfile } from '@/data/profile-store';
+import { refreshRunningLives, useRunningLives } from '@/data/live-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 import * as ImagePicker from 'expo-image-picker';
@@ -148,6 +149,9 @@ export default function ChannelScreen() {
   useEffect(() => {
     if (!id) return;
     refreshChannel(id).catch(() => {});
+    // The websocket carries changes, not the current state. Someone opening a
+    // channel after a broadcast began never saw the event that started it.
+    void refreshRunningLives();
   }, [id]);
 
   useEffect(() => {
@@ -899,9 +903,7 @@ export default function ChannelScreen() {
                 <Pressable
                   onPress={() => {
                     setComposerOpen(false);
-                    router.push(
-                      `/hangout/${channel.id}?mode=${postKind === 'live' ? 'live' : 'voice'}`,
-                    );
+                    router.push(`/live/new?channel=${channel.id}`);
                   }}
                   style={[styles.hangoutLaunch, { backgroundColor: `${colors.primary}14`, borderColor: colors.primary }]}
                 >
@@ -983,8 +985,6 @@ export default function ChannelScreen() {
                     type: postKind,
                     mediaUri,
                     gameKind: postKind === 'game' ? ('truth_or_dare' as const) : undefined,
-                    isLive: postKind === 'live' || postKind === 'voice',
-                    liveViewers: postKind === 'live' || postKind === 'voice' ? 1 : undefined,
                   });
                   if (post) {
                     setPosts((prev) => [post, ...prev]);
@@ -992,8 +992,12 @@ export default function ChannelScreen() {
                     setPostKind('text');
                     setComposerOpen(false);
                     if (postKind === 'live' || postKind === 'voice') {
+                      // The post is the announcement; this is the broadcast.
+                      // `isLive` and `liveViewers` used to be written here and
+                      // nowhere else — the server never saw them and the
+                      // server's own reply wiped them a round trip later.
                       router.push(
-                        `/hangout/${channel.id}?mode=${postKind === 'live' ? 'live' : 'voice'}`,
+                        `/live/new?channel=${channel.id}&title=${encodeURIComponent(postDraft.trim())}`,
                       );
                     }
                   }
@@ -1545,6 +1549,12 @@ function Post({
   const commentCount = post.comments?.length ?? 0;
   const kind = post.type ?? (post.mediaUri ? 'image' : 'text');
   const mediaUri = post.mediaUri ? mediaFileURL(post.mediaUri) : undefined;
+  // What is actually on air for this channel, if anything. Subscribed rather
+  // than read once: the count moves while the card is on screen.
+  const lives = useRunningLives();
+  const liveNow = kind === 'live' || kind === 'voice'
+    ? lives.find((l) => l.channel_id === channelId)
+    : undefined;
 
   return (
     <Pressable
@@ -1597,7 +1607,13 @@ function Post({
 
       {kind === 'game' ? (
         <Pressable
-          onPress={() => router.push(`/hangout/${channelId}?mode=voice&game=1`)}
+          onPress={() =>
+            // The game replays an event stream carried on a conversation's
+            // encrypted message channel. A channel is a broadcast, not a
+            // conversation — there is no such stream to replay, and the room
+            // this used to open only ever drew a picture of one.
+            appAlert(t('channel_post.kind_game'), t('game.channels_unsupported'))
+          }
           style={[styles.specialCard, { backgroundColor: `${colors.primary}12`, borderColor: colors.primary }]}
         >
           <View style={[styles.specialIcon, { backgroundColor: colors.primary }]}>
@@ -1615,16 +1631,24 @@ function Post({
         </Pressable>
       ) : null}
 
-      {(kind === 'live' || kind === 'voice') ? (
+      {kind === 'live' || kind === 'voice' ? (
         <Pressable
-          onPress={() =>
-            router.push(`/hangout/${channelId}?mode=${kind === 'live' ? 'live' : 'voice'}`)
-          }
+          onPress={() => {
+            // A post is a record; the broadcast is the thing. Tapping opens
+            // the one that is actually on air, and says so when there is
+            // none — the card used to open a room that had never existed.
+            if (!liveNow) {
+              appAlert(t('channel_post.kind_live'), t('live.ended_already'));
+              return;
+            }
+            router.push(`/live/${liveNow.id}`);
+          }}
           style={[
             styles.specialCard,
             {
               backgroundColor: kind === 'live' ? 'rgba(239,68,68,0.1)' : `${colors.primary}12`,
               borderColor: kind === 'live' ? '#EF4444' : colors.primary,
+              opacity: liveNow ? 1 : 0.6,
             },
           ]}
         >
@@ -1634,15 +1658,11 @@ function Post({
               { backgroundColor: kind === 'live' ? '#EF4444' : colors.primary },
             ]}
           >
-            <Ionicons
-              name={kind === 'live' ? 'radio' : 'mic'}
-              size={20}
-              color="#FFF"
-            />
+            <Ionicons name={kind === 'live' ? 'radio' : 'mic'} size={20} color="#FFF" />
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              {kind === 'live' && post.isLive ? (
+              {liveNow ? (
                 <View style={styles.liveMini}>
                   <View style={styles.liveMiniDot} />
                   <Text style={styles.liveMiniText}>{t('hangout.live')}</Text>
@@ -1653,9 +1673,12 @@ function Post({
               </Text>
             </View>
             <Text style={[styles.specialHint, { color: colors.textSecondary }]}>
-              {post.isLive
-                ? t('hangout.people', { count: post.liveViewers ?? 1 })
-                : t('channel_post.tap_join')}
+              {/* A real count, from rows the server holds. `liveViewers` was a
+                  number the composer wrote onto its own optimistic post; it
+                  reached no server and survived exactly one round trip. */}
+              {liveNow
+                ? t('live.watching', { count: liveNow.viewers })
+                : t('live.ended_already')}
             </Text>
           </View>
           <Ionicons

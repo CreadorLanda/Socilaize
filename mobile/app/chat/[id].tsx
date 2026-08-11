@@ -145,6 +145,7 @@ import { bubbleRadii } from '@/data/theme-store';
 import { useTheme } from '@/hooks/use-theme';
 import { useCurrentUser } from '@/data/auth-store';
 import { handleCallEvent } from '@/data/incoming-call';
+import { handleLiveEvent } from '@/data/live-store';
 import { t } from '@/i18n';
 
 const CHAT_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
@@ -549,6 +550,8 @@ export default function ChatScreen() {
     const handleEvent = (ev: RealtimeEvent) => {
         // A call can arrive on any screen; the store decides what to show.
         if (handleCallEvent(ev.type, ev.payload)) return;
+        // A broadcast likewise: it starts, ends and changes size on any screen.
+        if (handleLiveEvent(ev.type, ev.payload)) return;
       if (ev.chat_id && ev.chat_id !== id) return;
       const payload = ev.payload as Record<string, unknown> | null | undefined;
 
@@ -2305,7 +2308,7 @@ export default function ChatScreen() {
               <Pressable
                 hitSlop={8}
                 style={styles.iconBtn}
-                onPress={() => router.push(`/hangout/${id!}?mode=voice`)}
+                onPress={() => router.push(`/call/${id!}?mode=voice`)}
                 accessibilityLabel={t('hangout.open')}
               >
                 <Ionicons name="home" size={20} color={colors.text} />
