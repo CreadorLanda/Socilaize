@@ -19,6 +19,9 @@ export default {
     cta_restore: 'Restaurar',
   },
   common: {
+    back: 'Voltar',
+    close: 'Fechar',
+    send: 'Enviar',
     delete: 'Eliminar',
     save: 'Guardar',
     done: 'Concluído',
@@ -646,7 +649,6 @@ export default {
     mode_voice: 'Voz',
     mode_video: 'Vídeo',
     mode_live: 'Live',
-    mute: 'Mute',
     unmute: 'Unmute',
     cam_on: 'Cam on',
     cam_off: 'Cam off',
@@ -790,6 +792,7 @@ export default {
     title: 'Filtros',
   },
   call: {
+    unmute: 'Ativar som',
     no_answer_title: 'Sem resposta',
     no_answer_body: 'Não atenderam.',
     drop_e2ee_title: 'Adicionar alguém remove a encriptação extra',
@@ -842,6 +845,7 @@ export default {
     both_revealed: 'Os dois aceitaram — já se conhecem.',
   },
   stories: {
+    creator_need_name: 'Adiciona um nome ao teu perfil primeiro.',
     filters_soon: 'Os filtros chegam na próxima atualização.',
     capture_failed_title: 'Não foi possível capturar',
     capture_failed_body: 'A câmara não devolveu nada. Tenta outra vez.',
@@ -992,6 +996,7 @@ export default {
     anonymous_author: 'Anónimo',
   },
   profile: {
+    link_label: 'Ligação',
     title: 'Perfil',
     edit: 'Editar perfil',
     share: 'Partilhar perfil',
