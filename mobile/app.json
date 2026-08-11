@@ -11,7 +11,17 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.yo.messenger",
-      "bitcode": false
+      "bitcode": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Yo uses the camera so you can take photos and record video for your stories and chats.",
+        "NSMicrophoneUsageDescription": "Yo uses the microphone so your videos and voice notes have sound.",
+        "NSPhotoLibraryUsageDescription": "Yo accesses your photos so you can share them in chats and stories.",
+        "UIBackgroundModes": [
+          "audio",
+          "voip",
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -83,15 +93,7 @@
       ],
       "@config-plugins/react-native-webrtc",
       "expo-asset",
-      "expo-font",
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Yo uses the camera so you can take photos and record video for your stories and chats.",
-          "microphonePermission": "Yo uses the microphone so your videos and voice notes have sound.",
-          "recordAudioAndroid": true
-        }
-      ]
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
