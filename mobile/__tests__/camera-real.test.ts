@@ -10,31 +10,36 @@ import { expect, test } from 'bun:test';
  * path.
  */
 const screen = await Bun.file('app/story/create.tsx').text();
+const camera = await Bun.file('components/media/filtered-camera.tsx').text();
 
 test('o visor mostra a camara, nao um retangulo', () => {
-  expect(screen).toContain('<CameraView');
-  expect(screen).toContain('facing={frontCamera');
+  // Asserted as a property rather than as a library: the camera moved from
+  // expo-camera to VisionCamera to get the live filter, and the thing that
+  // must stay true is that a lens feeds the preview.
+  expect(screen).toContain('<FilteredCamera');
+  expect(screen).toContain('front={frontCamera}');
 });
 
 test('a captura vem da camara, nao da app do sistema', () => {
   // The library picker stays — choosing an existing photo is a real thing.
-  // What must not come back is capture-by-handoff. Matched as a call rather
-  // than as a word, so the comment explaining the old behaviour can stay.
+  // What must not come back is capture-by-handoff.
   expect(screen).not.toContain('ImagePicker.launchCameraAsync(');
   expect(screen).toContain('cameraRef.current');
-  expect(screen).toContain('takePictureAsync');
-  expect(screen).toContain('recordAsync');
+  expect(screen).toContain('cam.takePhoto()');
+  expect(screen).toContain('cam.startRecording(');
 });
 
 test('virar a lente vale tambem para video', () => {
-  // One `facing` prop drives both modes, so the two cannot disagree the way
-  // two separate call sites did.
-  const facings = screen.match(/facing=\{/g) ?? [];
-  expect(facings).toHaveLength(1);
+  // One prop drives both modes, so photo and video cannot disagree the way
+  // two separate call sites did — which is exactly how flipping ended up
+  // working for stills and doing nothing at all for video.
+  expect(screen.match(/front=\{frontCamera\}/g) ?? []).toHaveLength(1);
+  expect(camera).toContain("useCameraDevice(front ? 'front' : 'back')");
 });
 
 test('o flash deixou de ser um icone que so muda de forma', () => {
-  expect(screen).toContain('flash={flash');
+  expect(screen).toContain('torch={flash}');
+  expect(camera).toContain('torchMode=');
 });
 
 test('as duracoes dos modos sao nomeadas uma vez', () => {
@@ -45,11 +50,14 @@ test('as duracoes dos modos sao nomeadas uma vez', () => {
   expect(screen).not.toMatch(/videoMaxDuration:.*\?\s*3\s*:\s*15/);
 });
 
-test('a camara e declarada nas permissoes da build', async () => {
+test('nenhum plugin de camara fantasma na config', async () => {
+  // VisionCamera 5 ships no app.plugin.js. Naming it under `plugins` makes
+  // `expo config` exit non-zero, which fails the build with no useful error —
+  // the permissions are declared by hand instead, checked further down.
   const app = JSON.parse(await Bun.file('app.json').text());
-  const plugins: unknown[] = app.expo.plugins;
-  const cam = plugins.find((p) => Array.isArray(p) && p[0] === 'expo-camera');
-  expect(cam, 'expo-camera nao esta nos plugins — a build nativa nao o inclui').toBeDefined();
+  const named = JSON.stringify(app.expo.plugins);
+  expect(named).not.toContain('react-native-vision-camera');
+  expect(named).not.toContain('expo-camera');
 });
 
 /**
@@ -72,4 +80,52 @@ test('da para passar de story com o dedo', async () => {
   // to add one.
   expect(viewer).toContain('Gesture.LongPress()');
   expect(viewer).toContain('Gesture.Race(');
+});
+
+/**
+ * The live filtered viewfinder.
+ *
+ * expo-camera owns its preview surface and hands frames to nothing, so the
+ * filter could only ever be baked after the fact. VisionCamera exposes the
+ * frame's native buffer, which Skia can import with no copy.
+ */
+test('os fotogramas passam pela mesma matriz que o assar', () => {
+  expect(camera).toContain('MakeImageFromNativeBuffer');
+  expect(camera).toContain('ColorMatrix');
+  expect(camera).toContain("from '@/data/photo-filters'");
+});
+
+test('cada fotograma e devolvido ao lote', () => {
+  // Frames come from a fixed pool and buffers are reference-counted. One not
+  // returned is one fewer for the next capture, and the pipeline stalls after
+  // a few seconds — a leak that looks like the camera freezing.
+  expect(camera).toContain('frame.dispose()');
+  expect(camera).toContain('buffer.release()');
+  expect(camera).toContain('previous?.dispose()');
+});
+
+test('sem filtro, o caminho dos fotogramas nem e ligado', () => {
+  // The common case must not be slower than it was, and an output that is
+  // never created cannot leak.
+  expect(camera).toMatch(/matrix\s*\n?\s*\?\s*\[photoOutput, videoOutput, frameOutput\]/);
+});
+
+test('a pre-visualizacao nativa fica por baixo, para falhar em segurança', () => {
+  // If the frame pipeline yields nothing, the unfiltered native preview shows
+  // through — the failure is "not tinted", not a black rectangle.
+  const cameraTag = camera.indexOf('<Camera');
+  const overlay = camera.indexOf('<FilteredOverlay');
+  expect(cameraTag).toBeGreaterThan(-1);
+  expect(overlay).toBeGreaterThan(cameraTag);
+});
+
+test('as permissoes estao declaradas a mao, porque o pacote nao traz plugin', async () => {
+  const app = JSON.parse(await Bun.file('app.json').text());
+  const plist = app.expo.ios.infoPlist;
+  expect(plist.NSCameraUsageDescription).toBeTruthy();
+  expect(plist.NSMicrophoneUsageDescription).toBeTruthy();
+  // Without these a call or a live loses its audio the moment the app is
+  // backgrounded on iOS.
+  expect(plist.UIBackgroundModes).toContain('audio');
+  expect(app.expo.android.permissions).toContain('android.permission.CAMERA');
 });
