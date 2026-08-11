@@ -725,8 +725,8 @@ func TestDisappearingAnnouncesItself(t *testing.T) {
 	if got[0].Content != want {
 		t.Fatalf("notice body = %q, want %q", got[0].Content, want)
 	}
-	if got[0].SenderID != alice {
-		t.Fatalf("notice attributed to %s, want %s", got[0].SenderID, alice)
+	if got[0].SenderID == nil || *got[0].SenderID != alice {
+		t.Fatalf("notice attributed to %v, want %s", got[0].SenderID, alice)
 	}
 
 	// Setting the same value again is not an event, and must not fill the

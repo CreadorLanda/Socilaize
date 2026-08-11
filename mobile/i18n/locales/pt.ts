@@ -283,6 +283,7 @@ export default {
     search_hint: 'Escreve para procurar por username.',
   },
   chat: {
+    deleted_user: 'Utilizador eliminado',
     recording_audio: 'a gravar áudio…',
     e2ee_blocked_server: 'O servidor não conseguiu preparar a encriptação desta conversa. Se continuar, a app pode estar mais recente que o servidor.',
     e2ee_blocked_title: 'Não enviada',
@@ -990,6 +991,8 @@ export default {
     share_message: 'Encontra-me no Yo: {{link}}',
   },
   settings: {
+    delete_failed_title: 'Conta não eliminada',
+    delete_failed_body: 'Algo correu mal e a tua conta continua aqui. Nada foi removido — tenta outra vez, ou fala connosco se continuar a falhar.',
     read_receipts_off: 'Também não vês os dos outros',
     privacy_failed_title: 'Não foi guardado',
     privacy_failed_body: 'A definição voltou ao que estava. Tenta de novo.',

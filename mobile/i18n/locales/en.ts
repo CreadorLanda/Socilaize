@@ -283,6 +283,7 @@ export default {
     search_hint: 'Type to search by username.',
   },
   chat: {
+    deleted_user: 'Deleted user',
     recording_audio: 'recording audio…',
     e2ee_blocked_server: 'The server could not set up encryption for this conversation. If this keeps happening the app may be newer than the server.',
     e2ee_blocked_title: 'Not sent',
@@ -989,6 +990,8 @@ export default {
     share_message: 'Find me on Yo: {{link}}',
   },
   settings: {
+    delete_failed_title: 'Account not deleted',
+    delete_failed_body: 'Something went wrong and your account is still here. Nothing was removed — try again, or contact support if it keeps failing.',
     read_receipts_off: 'You stop seeing theirs too',
     privacy_failed_title: 'Not saved',
     privacy_failed_body: 'The setting went back to what it was. Try again.',

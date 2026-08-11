@@ -181,17 +181,32 @@ export default function SettingsScreen() {
               text: t('settings.delete'),
               style: 'destructive',
               onPress: () => {
+                /*
+                 * Leave only if the account actually went.
+                 *
+                 * This navigated in a `.finally`, so a failed delete looked
+                 * exactly like a successful one: a generic dialog for a
+                 * moment, then onboarding. And `clearSession()` ran only on
+                 * success, so the token stayed in the keychain — the next
+                 * launch restored the session and dropped you back into the
+                 * account you thought you had deleted.
+                 *
+                 * The server refused every delete for anyone who had ever sent
+                 * a message, so that was the normal path, not the edge case.
+                 */
                 deleteMe()
-                  .then(() => {
+                  .then(async () => {
                     // Local state has to go too: the account is gone, and
                     // leaving its history on the device would outlive it.
-                    void resetAllStores();
-                    return clearSession();
+                    await resetAllStores();
+                    await clearSession();
+                    router.replace('/onboarding');
                   })
                   .catch(() => {
-                    appAlert(t('chats.action_failed_title'), t('chats.action_failed_body'));
-                  })
-                  .finally(() => router.replace('/onboarding'));
+                    // Stay put. The account is still there, and so is the
+                    // session that reaches it.
+                    appAlert(t('settings.delete_failed_title'), t('settings.delete_failed_body'));
+                  });
               },
             },
           ]),

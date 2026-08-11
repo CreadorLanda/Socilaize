@@ -389,7 +389,9 @@ func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msg
 	if existing.DeletedAt != nil {
 		return Message{}, ErrMessageNotFound
 	}
-	if existing.SenderID != userID {
+	// Nil sender means the account is gone, and nobody inherits the right to
+	// edit what it wrote. The comparison failing is the correct answer.
+	if existing.SenderID == nil || *existing.SenderID != userID {
 		return Message{}, ErrNotSender
 	}
 	if err := s.repo.EditMessage(ctx, chatID, userID, msgID, content); err != nil {
@@ -415,7 +417,7 @@ func (s *Service) DeleteMessage(ctx context.Context, chatID, userID uuid.UUID, m
 		}
 		return Message{}, err
 	}
-	if existing.SenderID != userID {
+	if existing.SenderID == nil || *existing.SenderID != userID {
 		return Message{}, ErrNotSender
 	}
 	if err := s.repo.SoftDeleteMessage(ctx, chatID, userID, msgID); err != nil {
@@ -654,7 +656,11 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		// Everything the device needs to render the notification itself: the
 		// ciphertext to decrypt, and who it is from. A notification saying only
 		// "new message" is barely better than showing the envelope.
-		"sender_id":     msg.SenderID.String(),
+		// Guarded: SenderID is a pointer now, and calling String() on a nil one
+		// compiles and panics. A push for an unattributed message is unlikely —
+		// the sender just sent it — but "unlikely" is how a nil dereference gets
+		// into a release.
+		"sender_id":     uuidStr(msg.SenderID),
 		"sender_name":   msg.SenderName,
 		"sender_avatar": msg.SenderAvatar,
 		"content":       msg.Content,
@@ -789,6 +795,14 @@ func (s *Service) ReportChat(ctx context.Context, chatID, userID uuid.UUID, reas
 // server cannot read. Both prefixes: pairwise messages and group ones.
 func isEncryptedEnvelope(content string) bool {
 	return strings.HasPrefix(content, "soc1.") || strings.HasPrefix(content, "soc1g.")
+}
+
+// uuidStr renders an optional id, empty when there is nobody to name.
+func uuidStr(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
 }
 
 func boolStr(b bool) string {

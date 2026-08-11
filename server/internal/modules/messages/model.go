@@ -88,8 +88,9 @@ type MessagePreview struct {
 	// MessageType lets the chat list label non-text messages ("Sticker",
 	// "Photo") instead of rendering their encoded payload.
 	MessageType MessageType `json:"message_type"`
-	SenderID    uuid.UUID   `json:"sender_id"`
-	CreatedAt   time.Time   `json:"created_at"`
+	// Absent when the sender deleted their account. See Message.SenderID.
+	SenderID  *uuid.UUID `json:"sender_id,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // ── Message ─────────────────────────────────────────────────────────────────
@@ -117,9 +118,15 @@ const (
 )
 
 type Message struct {
-	ID           int64       `json:"id"`
-	ChatID       uuid.UUID   `json:"chat_id"`
-	SenderID     uuid.UUID   `json:"sender_id"`
+	ID     int64     `json:"id"`
+	ChatID uuid.UUID `json:"chat_id"`
+	// SenderID is absent when the sender deleted their account.
+	//
+	// Nil rather than a tombstone id: a zero UUID compared against a real one
+	// is the kind of thing that reads as working and produces a wrong answer
+	// later. Absent means absent, and every comparison against it fails, which
+	// is the correct outcome — nobody is the sender of an unattributed message.
+	SenderID     *uuid.UUID  `json:"sender_id,omitempty"`
 	Content      string      `json:"content"` // plaintext (client input / decrypted output)
 	MessageType  MessageType `json:"message_type"`
 	ReplyToID    *int64      `json:"reply_to_id,omitempty"`
@@ -268,7 +275,7 @@ type ListMessagesQuery struct {
 type messageRow struct {
 	ID          int64
 	ChatID      uuid.UUID
-	SenderID    uuid.UUID
+	SenderID    *uuid.UUID
 	Content     string // ciphertext hex
 	MessageType string
 	ReplyToID   *int64
