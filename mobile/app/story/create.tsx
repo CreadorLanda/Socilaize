@@ -36,7 +36,11 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { bakeFilter } from '@/data/bake-filter';
 import { appAlert } from '@/data/dialog-store';
+import type { FilterId } from '@/data/photo-filters';
+import { FilteredPhoto } from '@/components/media/filtered-photo';
+import { FilterStrip } from '@/components/media/filter-strip';
 import type { StoryVisibility } from '@/data/mock';
 import { useProfile } from '@/data/profile-store';
 import { queueStoryPublish } from '@/data/story-store';
@@ -61,7 +65,7 @@ type CaptureMode = 'type' | 'normal' | 'boomerang' | 'handsfree' | 'audio' | 'li
  */
 const BOOMERANG_SECONDS = 3;
 const HANDSFREE_SECONDS = 15;
-type EditTool = 'text' | 'sticker' | 'draw' | 'music' | null;
+type EditTool = 'text' | 'sticker' | 'draw' | 'music' | 'filter' | null;
 type StickerKind = 'poll' | 'question' | 'mention' | null;
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -123,6 +127,7 @@ export default function CreateStoryScreen() {
   const audioTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioStart = useRef(0);
   const publishLock = useRef(false);
+  const [filter, setFilter] = useState<FilterId>('none');
 
   /**
    * The camera itself.
@@ -368,7 +373,7 @@ export default function CreateStoryScreen() {
    * WhatsApp-style: close the composer immediately and publish in background.
    * Upload + API run via queueStoryPublish; a global toast reports status.
    */
-  const publish = () => {
+  const publish = async () => {
     if (publishLock.current) return;
 
     let kind: 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question' = 'text';
@@ -405,13 +410,19 @@ export default function CreateStoryScreen() {
     publishLock.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    // The filter is written into the file here, once, on the way out. Video
+    // is left alone: a colour matrix over a moving picture is per-frame work
+    // this does not do yet, and the strip is hidden for it.
+    const outUri =
+      mediaUri && !isVideo && !isAudio ? await bakeFilter(mediaUri, filter) : mediaUri;
+
     const bodyCaption =
       kind === 'poll' || kind === 'question' ? buildInteractiveCaption() : caption.trim();
 
     queueStoryPublish({
       kind,
       caption: bodyCaption,
-      localMediaUri: mediaUri,
+      localMediaUri: outUri,
       mediaMimeType:
         kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mp4' : 'image/jpeg',
       audioDurationMs: kind === 'audio' ? audioSec * 1000 : undefined,
@@ -641,8 +652,15 @@ export default function CreateStoryScreen() {
     >
       <StatusBar style="light" />
 
+      {/* Through Skia when a filter is picked, so what is on screen is what
+          the file will contain. An <Image> with a tint over it would look the
+          same here and lose the colour on save. */}
       {!solidBg && mediaUri ? (
-        <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+        isVideo || filter === 'none' ? (
+          <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+        ) : (
+          <FilteredPhoto uri={mediaUri} filter={filter} style={StyleSheet.absoluteFill} />
+        )
       ) : null}
       {!solidBg && mediaUri ? <View style={styles.editScrim} /> : null}
       {solidBg ? (
@@ -692,7 +710,24 @@ export default function CreateStoryScreen() {
             active={activeTool === 'music'}
             onPress={() => setActiveTool((cur) => (cur === 'music' ? null : 'music'))}
           />
+          {/* Photos only. A colour matrix over a moving picture is per-frame
+              work this does not do yet, and offering the tool on a video would
+              promise a filter that never reaches the file. */}
+          {!isVideo && !isAudio && !textOnly && mediaUri ? (
+            <SideTool
+              icon="color-filter-outline"
+              label={t('filters.title')}
+              active={activeTool === 'filter'}
+              onPress={() => setActiveTool((cur) => (cur === 'filter' ? null : 'filter'))}
+            />
+          ) : null}
         </View>
+
+        {activeTool === 'filter' && mediaUri ? (
+          <View style={styles.filterTray}>
+            <FilterStrip uri={mediaUri} value={filter} onChange={setFilter} />
+          </View>
+        ) : null}
 
         <View style={styles.editBody} pointerEvents="box-none">
           {isAudio ? (
@@ -1518,6 +1553,13 @@ const styles = StyleSheet.create({
   toggleDivider: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.1)' },
   toggleTitle: { ...Typography.caption, color: '#FFF', fontWeight: '700' },
   toggleHint: { ...Typography.micro, color: 'rgba(255,255,255,0.55)', marginTop: 1 },
+  filterTray: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 92,
+    backgroundColor: 'rgba(10,11,15,0.82)',
+  },
   shareBtn: {
     minHeight: 52,
     borderRadius: Radii.pill,

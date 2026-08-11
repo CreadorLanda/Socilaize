@@ -776,6 +776,18 @@ export default {
     in_group_one: '{name} is in this group and you blocked them.',
     in_group_many: '{count} people here are blocked by you.',
   },
+  filters: {
+    none: 'Original',
+    vivid: 'Vivid',
+    warm: 'Warm',
+    cool: 'Cool',
+    fade: 'Fade',
+    dusk: 'Dusk',
+    mono: 'Mono',
+    noir: 'Noir',
+    sepia: 'Sepia',
+    title: 'Filters',
+  },
   call: {
     no_answer_title: 'No answer',
     no_answer_body: 'They did not pick up.',
