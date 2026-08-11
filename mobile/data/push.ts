@@ -1,9 +1,14 @@
 import * as Device from 'expo-device';
 import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
+import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
 import { markRead } from '@/data/api/messages';
+import {
+  presentMessageNotification,
+  type MessagePushData,
+} from '@/data/notification-builder';
 import { sendQuickReply } from '@/data/quick-reply';
 import { t } from '@/i18n';
 import {
@@ -240,4 +245,45 @@ export async function notifyWelcome(displayName?: string): Promise<void> {
   } catch (err) {
     console.warn('[push] welcome notification failed:', err);
   }
+}
+
+/** Background task name — must match what registerTaskAsync is given. */
+const MESSAGE_TASK = 'yo.notifications.message';
+
+/**
+ * Handle message pushes that arrive while the app is not in front.
+ *
+ * These are data-only: the server has no text to send, because it cannot read
+ * an encrypted message. Without this task the push arrives and nothing is
+ * shown at all — which is quieter than showing the ciphertext, and just as
+ * useless.
+ */
+export function registerBackgroundMessageHandler(): void {
+  try {
+    TaskManager.defineTask(MESSAGE_TASK, async ({ data, error }) => {
+      if (error) return;
+      const payload = (data as { notification?: { data?: MessagePushData } })?.notification?.data;
+      if (payload) await presentMessageNotification(payload);
+    });
+    void Notifications.registerTaskAsync(MESSAGE_TASK);
+  } catch (err) {
+    // Older Android versions and some launchers refuse the task. The app still
+    // works; messages just arrive silently until it is opened.
+    console.warn('[push] background handler unavailable:', err);
+  }
+}
+
+/**
+ * Handle message pushes that arrive while the app is open.
+ *
+ * The server pushes to connected clients now: being connected means the app is
+ * running, not that this conversation is on screen. The builder stays quiet
+ * about the chat currently being read.
+ */
+export function listenForForegroundMessages(): () => void {
+  const sub = Notifications.addNotificationReceivedListener((n) => {
+    const payload = n.request.content.data as MessagePushData | undefined;
+    if (payload?.type === 'message.new') void presentMessageNotification(payload);
+  });
+  return () => sub.remove();
 }

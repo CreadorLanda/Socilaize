@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -619,13 +620,23 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 	if err != nil {
 		return
 	}
-	// Preview body — decrypted content is already available on msg.
+	// The body does not come from here.
+	//
+	// This used to send msg.Content, under a comment claiming the content was
+	// already decrypted. It is not: the server decrypts the at-rest layer and
+	// never the end-to-end one, so what reached the phone was the `soc1.`
+	// envelope, displayed verbatim.
+	//
+	// It cannot be fixed by decrypting — the server has no key, and the point
+	// is that it never does. So an encrypted message is sent as data only, and
+	// the device builds the notification once it has decrypted the text.
+	encrypted := isEncryptedEnvelope(msg.Content)
 	body := msg.Content
 	if len(body) > 120 {
 		body = body[:117] + "…"
 	}
-	if body == "" {
-		body = "New message"
+	if body == "" || encrypted {
+		body = ""
 	}
 	title := msg.SenderName
 	if title == "" {
@@ -640,14 +651,26 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		"type":       "message.new",
 		"chat_id":    chatID.String(),
 		"message_id": fmt.Sprintf("%d", msg.ID),
+		// Everything the device needs to render the notification itself: the
+		// ciphertext to decrypt, and who it is from. A notification saying only
+		// "new message" is barely better than showing the envelope.
+		"sender_id":     msg.SenderID.String(),
+		"sender_name":   msg.SenderName,
+		"sender_avatar": msg.SenderAvatar,
+		"content":       msg.Content,
+		"encrypted":     boolStr(encrypted),
 	}
 	for _, uid := range ids {
 		if uid == senderID {
 			continue
 		}
-		if s.hub != nil && s.hub.Online(uid) {
-			continue // live WS already delivers
-		}
+		// Sent even to someone holding a websocket.
+		//
+		// Being connected means the app is running, not that this conversation
+		// is on screen — someone reading a different thread misses the message
+		// that matters. The client decides whether to show it, because only the
+		// client knows which chat is open.
+		_ = uid
 		// Respect a per-user mute on this chat.
 		if muted, err := s.repo.IsMuted(ctx, chatID, uid); err == nil && muted {
 			continue
@@ -760,4 +783,17 @@ func (s *Service) ReportChat(ctx context.Context, chatID, userID uuid.UUID, reas
 		return s.BlockChat(ctx, chatID, userID)
 	}
 	return nil
+}
+
+// isEncryptedEnvelope reports whether the content is an E2EE payload the
+// server cannot read. Both prefixes: pairwise messages and group ones.
+func isEncryptedEnvelope(content string) bool {
+	return strings.HasPrefix(content, "soc1.") || strings.HasPrefix(content, "soc1g.")
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }

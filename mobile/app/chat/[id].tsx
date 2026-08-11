@@ -138,6 +138,7 @@ import {
 } from '@/data/crypto';
 import { CallRow } from '@/components/chat/call-row';
 import { callHistory, type CallLogEntry } from '@/data/api/calls';
+import { setOpenChat } from '@/data/notification-builder';
 import { describeE2EEBlocked, reportE2EEBlocked } from '@/data/e2ee-blocked';
 import { getGroup, type GroupMemberDTO } from '@/data/api/groups';
 import { bubbleRadii } from '@/data/theme-store';
@@ -260,7 +261,7 @@ function nowTime(): string {
 const FORWARD_MANY = 5;
 
 export default function ChatScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, game: openGame } = useLocalSearchParams<{ id: string; game?: string }>();
   const { chats: storeChats } = useChats();
   const apiChatInfo: ChatDTO | null = useMemo(
     () => storeChats.find((c) => c.id === id) ?? null,
@@ -723,6 +724,14 @@ export default function ChatScreen() {
   }, [messages.length, dandaraTyping, peerTyping, searchMode]);
 
   const isGroup = !!chat?.isGroup || apiChatInfo?.type === 'group';
+  // Tell the notification builder which conversation is on screen, so it stays
+  // quiet about this one. The server pushes to connected clients now; only the
+  // client knows what the reader is actually looking at.
+  useEffect(() => {
+    setOpenChat(id ?? null);
+    return () => setOpenChat(null);
+  }, [id]);
+
   useEffect(() => {
     if (!isGroup || !id) return;
     refreshGroup(id).catch(() => {});
@@ -1924,16 +1933,46 @@ export default function ChatScreen() {
   // ── Truth or Dare room ───────────────────────────────────────────────────
   const [gameOpen, setGameOpen] = useState(false);
 
+
+  /**
+   * Who is at the table.
+   *
+   * A one-to-one chat used to yield nobody, so the game entry in that chat's
+   * info screen led to a refusal — and the engine never needed a group in the
+   * first place. It takes a list of ids, derives the turn from
+   * (seed, round, ids), and rides the same encrypted message channel a pair
+   * already shares. Two people are a game.
+   */
   const gamePlayers = useMemo<GamePlayer[]>(() => {
-    if (!isGroup || !group?.members?.length) return [];
-    return group.members.map((m) => ({
-      id: m.id,
-      name: m.name || m.username,
-      // The store keeps the handle with its @; the room adds its own.
-      username: m.username?.replace(/^@/, '') || undefined,
-      avatarUri: m.avatarUri,
-    }));
-  }, [isGroup, group]);
+    if (isGroup) {
+      if (!group?.members?.length) return [];
+      return group.members.map((m) => ({
+        id: m.id,
+        name: m.name || m.username,
+        // The store keeps the handle with its @; the room adds its own.
+        username: m.username?.replace(/^@/, '') || undefined,
+        avatarUri: m.avatarUri,
+      }));
+    }
+    const peerId = apiChatInfo?.peer_user_id;
+    if (!peerId || !currentUser?.id || isAIChat) return [];
+    // Ordered by id so both phones build the same list — the roulette is
+    // derived from the order, and two different orders are two different games.
+    return [
+      {
+        id: currentUser.id,
+        name: currentUser.display_name || currentUser.username || '',
+        username: currentUser.username?.replace(/^@/, '') || undefined,
+        avatarUri: currentUser.avatar_uri ?? undefined,
+      },
+      {
+        id: peerId,
+        name: apiChatInfo?.title || apiChatInfo?.peer_username || '',
+        username: apiChatInfo?.peer_username?.replace(/^@/, '') || undefined,
+        avatarUri: apiChatInfo?.avatar_url ?? undefined,
+      },
+    ].sort((a, b) => a.id.localeCompare(b.id));
+  }, [isGroup, group, apiChatInfo, currentUser, isAIChat]);
 
   const gamePayloads = useMemo<GameMessagePayload[]>(
     () => extractGamePayloads(messages),
@@ -1965,6 +2004,32 @@ export default function ChatScreen() {
         })),
     [messages, gamePlayers],
   );
+
+  /**
+   * Opened straight from the room, via `?game=1`.
+   *
+   * The game runs on this screen's message stream, so the room cannot host it
+   * — it would need a second, unsynchronised copy. It sends people here
+   * instead.
+   *
+   * Waits for the players: arriving before the chat has loaded would refuse a
+   * game that is perfectly playable a second later. Once the chat is known and
+   * still cannot seat two, say so — the route was a promise of a game, and
+   * doing nothing at all is how the old games failed.
+   */
+  const gameRouteHandled = useRef(false);
+  useEffect(() => {
+    if (openGame !== '1' || gameRouteHandled.current) return;
+    if (gamePlayers.length >= 2) {
+      gameRouteHandled.current = true;
+      setGameOpen(true);
+      return;
+    }
+    if (!apiChatInfo) return; // chat not loaded yet
+    if (isGroup && !group) return; // members still arriving
+    gameRouteHandled.current = true;
+    appAlert(t('game.title'), t('game.need_two'));
+  }, [openGame, gamePlayers.length, apiChatInfo, isGroup, group]);
 
   const sendGame = (payload: GameMessagePayload) => {
     // The invite bubble and the engine share the same message shape; the

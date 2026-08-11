@@ -108,9 +108,6 @@ export default function ChannelScreen() {
   const [postKind, setPostKind] = useState<
     'text' | 'image' | 'video' | 'game' | 'live' | 'voice'
   >('text');
-  const [postGame, setPostGame] = useState<
-    'trivia' | 'dice' | 'would_you_rather' | 'quick_draw' | 'emoji_race'
-  >('trivia');
   const [actionPostId, setActionPostId] = useState<string | null>(null);
   const [actionAnchor, setActionAnchor] = useState<{ x: number; y: number } | null>(null);
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
@@ -897,47 +894,6 @@ export default function ChannelScreen() {
                 })}
               </ScrollView>
 
-              {postKind === 'game' ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.postKindRow}
-                >
-                  {(
-                    [
-                      ['trivia', t('hangout.game_trivia')],
-                      ['dice', t('hangout.game_dice')],
-                      ['would_you_rather', t('hangout.game_wyr')],
-                      ['quick_draw', t('hangout.game_draw')],
-                      ['emoji_race', t('hangout.game_emoji')],
-                    ] as const
-                  ).map(([g, label]) => {
-                    const active = postGame === g;
-                    return (
-                      <Pressable
-                        key={g}
-                        onPress={() => setPostGame(g)}
-                        style={[
-                          styles.postKindChip,
-                          {
-                            borderColor: active ? colors.primary : colors.border,
-                            backgroundColor: active ? `${colors.primary}14` : colors.surface,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.postKindText,
-                            { color: active ? colors.primary : colors.textSecondary },
-                          ]}
-                        >
-                          {label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              ) : null}
 
               {(postKind === 'live' || postKind === 'voice') && channel ? (
                 <Pressable
@@ -1026,7 +982,7 @@ export default function ChannelScreen() {
                     text: postDraft.trim() || defaults[postKind] || t('channel_create.post_placeholder'),
                     type: postKind,
                     mediaUri,
-                    gameKind: postKind === 'game' ? postGame : undefined,
+                    gameKind: postKind === 'game' ? ('truth_or_dare' as const) : undefined,
                     isLive: postKind === 'live' || postKind === 'voice',
                     liveViewers: postKind === 'live' || postKind === 'voice' ? 1 : undefined,
                   });
@@ -1641,9 +1597,7 @@ function Post({
 
       {kind === 'game' ? (
         <Pressable
-          onPress={() =>
-            router.push(`/hangout/${channelId}?mode=voice&game=${post.gameKind ?? 'trivia'}`)
-          }
+          onPress={() => router.push(`/hangout/${channelId}?mode=voice&game=1`)}
           style={[styles.specialCard, { backgroundColor: `${colors.primary}12`, borderColor: colors.primary }]}
         >
           <View style={[styles.specialIcon, { backgroundColor: colors.primary }]}>
@@ -1651,20 +1605,7 @@ function Post({
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[styles.specialTitle, { color: colors.text }]}>
-              {t('channel_post.kind_game')}
-              {post.gameKind
-                ? ` · ${t(
-                    post.gameKind === 'would_you_rather'
-                      ? 'hangout.game_wyr'
-                      : post.gameKind === 'quick_draw'
-                        ? 'hangout.game_draw'
-                        : post.gameKind === 'emoji_race'
-                          ? 'hangout.game_emoji'
-                          : post.gameKind === 'dice'
-                            ? 'hangout.game_dice'
-                            : 'hangout.game_trivia',
-                  )}`
-                : ''}
+              {t('channel_post.kind_game')} · {t('hangout.game_tod')}
             </Text>
             <Text style={[styles.specialHint, { color: colors.textSecondary }]}>
               {t('channel_post.tap_play')}

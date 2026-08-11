@@ -494,7 +494,13 @@ export type ChannelCategory = (typeof CHANNEL_CATEGORIES)[number];
 
 export type ChannelPostType = 'text' | 'image' | 'video' | 'game' | 'live' | 'voice';
 
-export type ChannelGameKind = 'trivia' | 'dice' | 'would_you_rather' | 'quick_draw' | 'emoji_race';
+/**
+ * The one game a channel can post.
+ *
+ * There were five. Four of them drew their state from local random calls, so
+ * every phone showed a different question — see data/games.ts.
+ */
+export type ChannelGameKind = 'truth_or_dare';
 
 export type ChannelPost = {
   id: string;
