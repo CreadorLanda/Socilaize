@@ -50,6 +50,7 @@ import { refreshGroup, useGroup } from '@/data/group-store';
 import { clearMediaCache, formatBytes, mediaCacheSize } from '@/data/media-cache';
 import { mapApiMessage } from '@/data/message-map';
 import { type ChatPreview, type Message } from '@/data/mock';
+import { block, blockedAmong, refreshBlocks, useBlocked } from '@/data/block-store';
 import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
@@ -73,9 +74,18 @@ export default function ChatInfoScreen() {
 
   const isGroup = apiChat?.type === 'group';
   const group = useGroup(isGroup ? id : undefined);
+  const allBlocked = useBlocked();
+  // Recomputed as the roster or the block list changes — someone can be added
+  // to the group, or unblocked, while this screen is open.
+  const blockedHere = useMemo(
+    () => blockedAmong((group?.members ?? []).map((m) => m.id)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- blockedAmong reads the store
+    [group?.members, allBlocked],
+  );
 
   useEffect(() => {
     if (isGroup && id) refreshGroup(id).catch(() => {});
+    void refreshBlocks();
   }, [isGroup, id]);
 
   const chat: ChatPreview | undefined = apiChat
@@ -388,7 +398,11 @@ export default function ChatInfoScreen() {
         style: 'destructive',
         onPress: () => {
           if (!id) return;
-          blockChat(id)
+          // The person, not the conversation. Blocking used to set a status on
+          // the chat, which stopped you writing to them as well and could
+          // never be undone.
+          const peer = apiChat?.peer_user_id;
+          (peer ? block(peer) : blockChat(id))
             .then(() => {
               void refreshChats();
               router.back();
@@ -764,6 +778,29 @@ export default function ChatInfoScreen() {
                   colors={colors}
                   onPress={() => setAddingMembers(true)}
                 />
+              ) : null}
+              {/*
+                Someone here is someone you blocked.
+                
+                A block deliberately does not reach groups — a group is a place
+                with other people in it, and one member's decision about
+                another is not a reason to end their conversation. Being told
+                is what makes allowing it fair.
+              */}
+              {blockedHere.length > 0 ? (
+                <>
+                  <Divider colors={colors} />
+                  <View style={[styles.row, { gap: Spacing.sm }]}>
+                    <Ionicons name="ban-outline" size={18} color={colors.textSecondary} />
+                    <Text style={[styles.blockNotice, { color: colors.textSecondary }]}>
+                      {blockedHere.length === 1
+                        ? t('blocked.in_group_one', {
+                            name: blockedHere[0].display_name || blockedHere[0].username,
+                          })
+                        : t('blocked.in_group_many', { count: blockedHere.length })}
+                    </Text>
+                  </View>
+                </>
               ) : null}
               {(group?.members ?? []).slice(0, 8).map((m) => (
                 <View key={m.id}>
@@ -1195,6 +1232,7 @@ const styles = StyleSheet.create({
   },
   mediaImg: { width: '100%', height: '100%' },
   emptyText: { ...Typography.caption, padding: Spacing.md },
+  blockNotice: { ...Typography.caption, flex: 1 },
 });
 
 /** First non-empty line, trimmed for a one-line subtitle. */

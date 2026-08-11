@@ -8,6 +8,7 @@ import {
   syncGroupKeys,
 } from '@/data/crypto';
 import type { MediaAttachment, Message, MessageAttachment } from '@/data/mock';
+import { t } from '@/i18n';
 
 /**
  * On-screen size of a sticker bubble, shared by send and reload paths.
@@ -31,7 +32,10 @@ export function mapApiMessage(m: MessageDTO, meId?: string | null): Message {
     text: deleted ? '' : m.content,
     fromMe: !!meId && m.sender_id === meId,
     timestamp: formatMsgTime(m.created_at),
-    senderName: m.sender_name,
+    // A message whose sender deleted their account keeps its place in the
+    // conversation and loses its name. Falling through to the chat title would
+    // be worse than blank: it would attribute the message to whoever is left.
+    senderName: m.sender_id ? m.sender_name : t('chat.deleted_user'),
     senderId: m.sender_id,
     replyToId: m.reply_to_id,
     senderAvatarUri: m.sender_avatar,
@@ -209,11 +213,9 @@ export async function decryptMessageContent(
   }
 
   if (!isEnvelope(m.content)) return m.content;
-  const peer =
-    peerUserId ||
-    (meId && m.sender_id !== meId ? m.sender_id : null) ||
-    (meId && m.sender_id === meId ? peerUserId : null);
-  // For messages we sent, peer is the other party; for received, sender is peer.
+  // For messages we sent, peer is the other party; for received, sender is
+  // peer. A message with no sender has no session to look up: the account is
+  // gone and so is the pairwise state, so it stays sealed.
   const sessionPeer =
     meId && m.sender_id === meId ? peerUserId ?? undefined : m.sender_id;
   if (!sessionPeer) return m.content;

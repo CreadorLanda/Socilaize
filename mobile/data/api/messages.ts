@@ -16,7 +16,8 @@ export interface ChatDTO {
     content: string;
     /** Lets the list label non-text messages instead of showing the payload. */
     message_type?: string;
-    sender_id: string;
+    /** Absent when the sender deleted their account. */
+    sender_id?: string;
     created_at: string;
   };
   unread_count: number;
@@ -58,7 +59,14 @@ export interface MessageDTO {
    */
   reactions?: ReactionDTO[];
   chat_id: string;
-  sender_id: string;
+  /**
+   * Absent when the sender deleted their account.
+   *
+   * The message stays — it belongs to the conversation it was sent to — but
+   * there is nobody left to attribute it to. Every comparison against a
+   * missing id fails, which is the right answer: nobody is its sender.
+   */
+  sender_id?: string;
   content: string;
   message_type: string;
   reply_to_id?: number;

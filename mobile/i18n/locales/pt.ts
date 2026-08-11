@@ -283,6 +283,7 @@ export default {
     search_hint: 'Escreve para procurar por username.',
   },
   chat: {
+    deleted_user: 'Utilizador eliminado',
     recording_audio: 'a gravar áudio…',
     e2ee_blocked_server: 'O servidor não conseguiu preparar a encriptação desta conversa. Se continuar, a app pode estar mais recente que o servidor.',
     e2ee_blocked_title: 'Não enviada',
@@ -766,6 +767,16 @@ export default {
     not_e2ee: 'Uma emissão não é cifrada ponta a ponta — o servidor retransmite-a.',
     go_live: 'Ir para direto',
   },
+  blocked: {
+    title: 'Pessoas bloqueadas',
+    explain: 'Quem bloqueaste não te pode enviar mensagens nem ligar-te em privado. Pode continuar no mesmo grupo ou direto que tu — a app avisa-te quando isso acontece.',
+    empty: 'Não bloqueaste ninguém.',
+    unblock_action: 'Desbloquear',
+    unblock_title: 'Desbloquear {name}?',
+    unblock_body: 'Volta a poder enviar-te mensagens e ligar-te. Se também te bloqueou, isso mantém-se.',
+    in_group_one: '{name} está neste grupo e tu bloqueaste esta pessoa.',
+    in_group_many: '{count} pessoas aqui estão bloqueadas por ti.',
+  },
   call: {
     no_answer_title: 'Sem resposta',
     no_answer_body: 'Não atenderam.',
@@ -990,6 +1001,9 @@ export default {
     share_message: 'Encontra-me no Yo: {{link}}',
   },
   settings: {
+    blocked: 'Pessoas bloqueadas',
+    delete_failed_title: 'Conta não eliminada',
+    delete_failed_body: 'Algo correu mal e a tua conta continua aqui. Nada foi removido — tenta outra vez, ou fala connosco se continuar a falhar.',
     read_receipts_off: 'Também não vês os dos outros',
     privacy_failed_title: 'Não foi guardado',
     privacy_failed_body: 'A definição voltou ao que estava. Tenta de novo.',

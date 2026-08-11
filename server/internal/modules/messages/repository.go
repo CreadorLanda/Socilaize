@@ -249,12 +249,14 @@ func (r *Repository) scanChatRows(rows pgx.Rows) ([]Chat, error) {
 		); err != nil {
 			return nil, err
 		}
-		if lmContent != nil && lmSender != nil && lmAt != nil {
+		// lmSender may be NULL — the sender deleted their account. The preview
+		// is still worth showing; it simply has nobody to attribute it to.
+		if lmContent != nil && lmAt != nil {
 			preview := &MessagePreview{
 				// Same at-rest decryption LastMessage did; without this the
 				// list preview would render raw ciphertext.
 				Content:   r.decrypt(*lmContent),
-				SenderID:  *lmSender,
+				SenderID:  lmSender,
 				CreatedAt: *lmAt,
 			}
 			if lmType != nil {

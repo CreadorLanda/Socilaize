@@ -283,6 +283,7 @@ export default {
     search_hint: 'Type to search by username.',
   },
   chat: {
+    deleted_user: 'Deleted user',
     recording_audio: 'recording audio…',
     e2ee_blocked_server: 'The server could not set up encryption for this conversation. If this keeps happening the app may be newer than the server.',
     e2ee_blocked_title: 'Not sent',
@@ -765,6 +766,16 @@ export default {
     not_e2ee: 'A broadcast is not end-to-end encrypted — the server relays it.',
     go_live: 'Go live',
   },
+  blocked: {
+    title: 'Blocked people',
+    explain: 'A blocked person cannot message or call you one to one. They can still be in the same group or live as you — the app tells you when they are.',
+    empty: 'You have not blocked anyone.',
+    unblock_action: 'Unblock',
+    unblock_title: 'Unblock {name}?',
+    unblock_body: 'They will be able to message and call you again. If they blocked you too, that stays.',
+    in_group_one: '{name} is in this group and you blocked them.',
+    in_group_many: '{count} people here are blocked by you.',
+  },
   call: {
     no_answer_title: 'No answer',
     no_answer_body: 'They did not pick up.',
@@ -989,6 +1000,9 @@ export default {
     share_message: 'Find me on Yo: {{link}}',
   },
   settings: {
+    blocked: 'Blocked people',
+    delete_failed_title: 'Account not deleted',
+    delete_failed_body: 'Something went wrong and your account is still here. Nothing was removed — try again, or contact support if it keeps failing.',
     read_receipts_off: 'You stop seeing theirs too',
     privacy_failed_title: 'Not saved',
     privacy_failed_body: 'The setting went back to what it was. Try again.',

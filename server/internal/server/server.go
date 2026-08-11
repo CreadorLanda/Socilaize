@@ -18,6 +18,7 @@ import (
 	"github.com/CreadorLanda/Socilaize/server/internal/config"
 	"github.com/CreadorLanda/Socilaize/server/internal/middleware"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/auth"
+	"github.com/CreadorLanda/Socilaize/server/internal/modules/blocks"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/calls"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/channels"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/groups"
@@ -117,7 +118,15 @@ func New(cfg config.Config) (*Server, error) {
 
 	// Native E2E-encrypted messaging (push for offline peers via notifSvc).
 	msgRepo := messages.NewRepository(pg, cfg.Crypto.MessageKey)
-	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo, hub, notifSvc)
+	// Blocking, which both messages and calls consult through a narrow
+	// interface rather than importing this module.
+	blocksRepo := blocks.NewRepo(pg)
+	blocksCtl := blocks.NewController(blocks.NewService(blocksRepo, blockDirectory{
+		users: usersRepo, chats: msgRepo,
+	}))
+
+	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo, hub, notifSvc).
+		WithBlocks(blocksRepo)
 	msgCtl := messages.NewController(msgSvc, hub, []byte(cfg.JWT.Secret))
 	messages.Register(authed, msgCtl)
 	// WS lives on the public /api group — token is validated inside the handler.
@@ -169,8 +178,9 @@ func New(cfg config.Config) (*Server, error) {
 		callRinger{repo: msgRepo, hub: hub, push: notifSvc},
 		callsHistory,
 		callTrace{repo: msgRepo, hub: hub},
-	))
+	).WithBlocks(callBlocks{blocks: blocksRepo, chats: msgRepo}))
 	calls.Register(authed, callsCtl)
+	blocks.Register(authed, blocksCtl)
 
 	// Discover channels + posts.
 	channelsRepo := channels.NewRepository(pg)
@@ -298,6 +308,50 @@ func (c callRinger) Stopped(ctx context.Context, chatID uuid.UUID, users []uuid.
 			c.hub.PublishJSON([]uuid.UUID{uid}, "call.ended", chatID.String(), data)
 		}
 	}
+}
+
+// blockDirectory lets the blocks module ask whether a person exists and who
+// the other side of a chat is, without importing users or messages.
+type blockDirectory struct {
+	users *users.Repository
+	chats *messages.Repository
+}
+
+func (d blockDirectory) Exists(ctx context.Context, userID uuid.UUID) (bool, error) {
+	_, err := d.users.ByID(ctx, userID)
+	if err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (d blockDirectory) PeerOf(ctx context.Context, chatID, userID uuid.UUID) (uuid.UUID, error) {
+	peer, err := d.chats.PeerUser(ctx, chatID, userID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if peer == nil {
+		// A group, which has no single peer. Calls read this as "not a
+		// one-to-one call" and let it through, which is the intended rule.
+		return uuid.Nil, errNoPeer
+	}
+	return peer.ID, nil
+}
+
+var errNoPeer = errors.New("no_peer")
+
+// callBlocks is the same pair of questions, for the calls module.
+type callBlocks struct {
+	blocks *blocks.Repo
+	chats  *messages.Repository
+}
+
+func (c callBlocks) EitherWay(ctx context.Context, a, b uuid.UUID) (bool, error) {
+	return c.blocks.EitherWay(ctx, a, b)
+}
+
+func (c callBlocks) PeerOf(ctx context.Context, chatID, userID uuid.UUID) (uuid.UUID, error) {
+	return blockDirectory{chats: c.chats}.PeerOf(ctx, chatID, userID)
 }
 
 // liveAudience answers the two questions a broadcast asks, from the modules
