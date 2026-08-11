@@ -747,6 +747,8 @@ export default {
     admin: 'Admin',
   },
   call: {
+    no_answer_title: 'Sem resposta',
+    no_answer_body: 'Não atenderam.',
     drop_e2ee_title: 'Adicionar alguém remove a encriptação extra',
     drop_e2ee_body: 'O áudio desta chamada está protegido por uma chave que só tu e a outra pessoa têm. Uma terceira não tem parte nela e não ouviria nada. Continuar abdica dessa proteção para o resto da chamada — o servidor passaria a poder ler os fluxos.',
     drop_e2ee_confirm: 'Adicionar mesmo assim',

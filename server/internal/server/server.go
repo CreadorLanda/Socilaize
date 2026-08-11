@@ -257,6 +257,26 @@ func (c callRinger) RingUsers(ctx context.Context, chatID uuid.UUID, users []uui
 	}
 }
 
+// Stopped tells the phones still ringing that the call is over.
+//
+// Only over the websocket, and deliberately: a push saying "the call you were
+// never told about has ended" is worse than silence. A phone that was asleep
+// gets the missed call in the log, which is where it belongs.
+func (c callRinger) Stopped(ctx context.Context, chatID uuid.UUID, users []uuid.UUID) {
+	if c.hub == nil {
+		return
+	}
+	data := map[string]string{
+		"type":    "call.ended",
+		"chat_id": chatID.String(),
+	}
+	for _, uid := range users {
+		if c.hub.Online(uid) {
+			c.hub.PublishJSON([]uuid.UUID{uid}, "call.ended", chatID.String(), data)
+		}
+	}
+}
+
 func callBody(mode string) string {
 	if mode == "video" {
 		return "Incoming video call"

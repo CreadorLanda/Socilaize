@@ -30,13 +30,15 @@ func (f fakeChats) MemberIDs(context.Context, uuid.UUID) ([]uuid.UUID, error) {
 	return out, nil
 }
 
-type fakeRinger struct{ rang, rangUsers int }
+type fakeRinger struct{ rang, rangUsers, stopped int }
 
 func (f *fakeRinger) Ring(context.Context, uuid.UUID, uuid.UUID, string, string) { f.rang++ }
 
 func (f *fakeRinger) RingUsers(context.Context, uuid.UUID, []uuid.UUID, string, string) {
 	f.rangUsers++
 }
+
+func (f *fakeRinger) Stopped(context.Context, uuid.UUID, []uuid.UUID) { f.stopped++ }
 
 type fakeUsers struct{ name string }
 

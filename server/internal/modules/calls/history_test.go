@@ -2,6 +2,7 @@ package calls
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -309,4 +310,258 @@ func participantCount(t *testing.T, pool *pgxpool.Pool, chat uuid.UUID) int {
 		t.Fatalf("count participants: %v", err)
 	}
 	return n
+}
+
+// TestHangingUpEndsTheCall is the fault this file previously had no opinion
+// about.
+//
+// Nothing ever called End. The client disconnected from the SFU and told the
+// server nothing, so the only thing that ever closed a call was the four-hour
+// sweep. In production, four real calls recorded durations of 242, 246, 248
+// and 249 minutes; every one of them lasted seconds.
+func TestHangingUpEndsTheCall(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob := mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob)
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	if err := repo.Join(ctx, callID, bob); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+
+	// One of two leaving does not end anything — the other is still talking.
+	ended, err := repo.Leave(ctx, callID, bob)
+	if err != nil {
+		t.Fatalf("Leave: %v", err)
+	}
+	if ended {
+		t.Fatal("one person leaving ended a call the other is still in")
+	}
+	if _, running, _ := repo.Running(ctx, chat); !running {
+		t.Fatal("the call ended while someone was still in it")
+	}
+
+	// The last one out closes it.
+	ended, err = repo.Leave(ctx, callID, alice)
+	if err != nil {
+		t.Fatalf("Leave: %v", err)
+	}
+	if !ended {
+		t.Fatal("the last person leaving did not end the call")
+	}
+	if _, running, _ := repo.Running(ctx, chat); running {
+		t.Fatal("an empty call is still offered as joinable")
+	}
+
+	// And the duration is the call, not the sweep interval.
+	e := find(t, mustHistory(t, repo, alice), callID)
+	if e.Running {
+		t.Fatal("an ended call still reads as running")
+	}
+	if e.DurationSec > 60 {
+		t.Fatalf("duration = %ds for a call that lasted milliseconds", e.DurationSec)
+	}
+}
+
+// TestUnansweredCallEndsWhenTheCallerGivesUp: nobody answered, so nobody but
+// the caller is in the room. Their hang-up is the end of it.
+func TestUnansweredCallEndsWhenTheCallerGivesUp(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob := mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob)
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+
+	// Bob is the phone still ringing, and the only one worth telling.
+	ringing, err := repo.Ringing(ctx, callID)
+	if err != nil {
+		t.Fatalf("Ringing: %v", err)
+	}
+	if len(ringing) != 1 || ringing[0] != bob {
+		t.Fatalf("Ringing = %v, want [bob]", ringing)
+	}
+
+	ended, err := repo.Leave(ctx, callID, alice)
+	if err != nil || !ended {
+		t.Fatalf("Leave = %v,%v; the caller giving up must end an unanswered call", ended, err)
+	}
+
+	// And Bob's log says missed, not ringing.
+	e := find(t, mustHistory(t, repo, bob), callID)
+	if e.Outcome != OutcomeMissed {
+		t.Fatalf("outcome = %q, want %q", e.Outcome, OutcomeMissed)
+	}
+}
+
+// TestRejoiningKeepsTheCallAlive: leaving and coming back is common on a
+// patchy connection. If left_at stayed set, the next person's hang-up would
+// end a call this person is sitting in.
+func TestRejoiningKeepsTheCallAlive(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob := mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob)
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	_ = repo.Join(ctx, callID, bob)
+
+	if _, err := repo.Leave(ctx, callID, bob); err != nil {
+		t.Fatalf("Leave: %v", err)
+	}
+	if err := repo.Join(ctx, callID, bob); err != nil {
+		t.Fatalf("re-Join: %v", err)
+	}
+
+	ended, err := repo.Leave(ctx, callID, alice)
+	if err != nil {
+		t.Fatalf("Leave: %v", err)
+	}
+	if ended {
+		t.Fatal("the call ended while the person who rejoined was still in it")
+	}
+}
+
+// TestHangingUpTwiceIsNotAnError: the client sends this on its way out and
+// cannot wait to see how it went, so it may well arrive twice.
+func TestHangingUpTwiceIsNotAnError(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice := mkUser(t, pool)
+	chat := mkChat(t, pool, alice)
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice})
+
+	first, err := repo.Leave(ctx, callID, alice)
+	if err != nil || !first {
+		t.Fatalf("first Leave = %v,%v", first, err)
+	}
+	second, err := repo.Leave(ctx, callID, alice)
+	if err != nil {
+		t.Fatalf("second Leave: %v", err)
+	}
+	if second {
+		t.Fatal("hanging up twice reported ending the call twice — the other phones would be told twice")
+	}
+}
+
+// TestModeOfTheRunningCall: someone pulled into a video call must be rung as
+// video. They were rung as voice regardless of what was happening.
+func TestModeOfTheRunningCall(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice := mkUser(t, pool)
+	chat := mkChat(t, pool, alice)
+	callID, _, _ := repo.Start(ctx, chat, alice, "video", []uuid.UUID{alice})
+
+	mode, err := repo.ModeOf(ctx, callID)
+	if err != nil {
+		t.Fatalf("ModeOf: %v", err)
+	}
+	if mode != "video" {
+		t.Fatalf("mode = %q, want video", mode)
+	}
+}
+
+// TestGuestCannotRingTheWholeChat covers the one path the fake-only tests
+// cannot reach: a guest is not in the chat, so `invited` requires a real
+// guest list.
+//
+// Ringing was guarded by `ring` alone while starting a call was guarded by
+// `ring && inChat`. Someone pulled into a one-to-one call could therefore make
+// every member of a conversation they are not part of ring.
+func TestGuestCannotRingTheWholeChat(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob, carol := mkUser(t, pool), mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob) // carol is not in the conversation
+	callID, _, err := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := repo.Invite(ctx, callID, []uuid.UUID{carol}); err != nil {
+		t.Fatalf("Invite: %v", err)
+	}
+
+	ringer := &fakeRinger{}
+	svc := NewService(
+		Config{URL: "wss://calls.example", APIKey: testKey, APISecret: testSecret},
+		fakeChats{members: map[uuid.UUID]bool{alice: true, bob: true}},
+		fakeUsers{name: "Carol"},
+		ringer,
+		repo,
+		nil,
+	)
+
+	// She may join — that is the whole point of the guest list.
+	grant, err := svc.TokenFor(ctx, chat, carol, true, "voice")
+	if err != nil {
+		t.Fatalf("TokenFor(guest): %v", err)
+	}
+	if grant.Room != callID.String() {
+		t.Fatalf("room = %q, want the call %s", grant.Room, callID)
+	}
+
+	// But asking to ring must do nothing: she is not in this conversation.
+	if ringer.rang != 0 {
+		t.Fatalf("a guest rang the chat %d times", ringer.rang)
+	}
+}
+
+// TestGuestCanDeclineAndHangUp: the guest list is the permission for every
+// verb, not just joining. Declining was gated on chat membership, so a guest
+// whose phone was ringing could not say no.
+func TestGuestCanDeclineAndHangUp(t *testing.T) {
+	pool := historyDB(t)
+	ctx := context.Background()
+	repo := NewHistoryRepo(pool)
+
+	alice, bob, carol := mkUser(t, pool), mkUser(t, pool), mkUser(t, pool)
+	chat := mkChat(t, pool, alice, bob)
+	callID, _, _ := repo.Start(ctx, chat, alice, "voice", []uuid.UUID{alice, bob})
+	if _, err := repo.Invite(ctx, callID, []uuid.UUID{carol}); err != nil {
+		t.Fatalf("Invite: %v", err)
+	}
+
+	if err := repo.Decline(ctx, callID, carol); err != nil {
+		t.Fatalf("Decline: %v", err)
+	}
+	e := find(t, mustHistory(t, repo, carol), callID)
+	if e.Outcome != OutcomeDeclined {
+		t.Fatalf("outcome = %q, want %q", e.Outcome, OutcomeDeclined)
+	}
+
+	// And a guest who joined can hang up like anyone else.
+	svc := NewService(
+		Config{URL: "wss://calls.example", APIKey: testKey, APISecret: testSecret},
+		fakeChats{members: map[uuid.UUID]bool{alice: true, bob: true}},
+		fakeUsers{name: "Carol"},
+		&fakeRinger{},
+		repo,
+		nil,
+	)
+	if err := repo.Join(ctx, callID, carol); err != nil {
+		t.Fatalf("Join: %v", err)
+	}
+	if err := svc.Hangup(ctx, chat, carol); err != nil {
+		t.Fatalf("Hangup(guest): %v", err)
+	}
+
+	// Someone with no part in the call cannot end other people's calls.
+	dave := mkUser(t, pool)
+	if err := svc.Hangup(ctx, chat, dave); !errors.Is(err, ErrNotAllowed) {
+		t.Fatalf("Hangup(stranger) = %v, want ErrNotAllowed", err)
+	}
+	if _, running, _ := repo.Running(ctx, chat); !running {
+		t.Fatal("a stranger ended the call")
+	}
 }

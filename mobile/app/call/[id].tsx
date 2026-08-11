@@ -13,13 +13,14 @@ import {
 } from '@livekit/react-native';
 import { Track } from 'livekit-client';
 import type { TrackReference } from '@livekit/react-native';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PeoplePicker, type PickablePerson } from '@/components/ui/people-picker';
 import { Palette, Radii, Spacing, Typography } from '@/constants/theme';
-import { callToken, inviteToCall, type CallGrant } from '@/data/api/calls';
+import { callToken, hangupCall, inviteToCall, type CallGrant } from '@/data/api/calls';
+import { RING_TIMEOUT_MS } from '@/data/incoming-call';
 import { listChats } from '@/data/api/messages';
 import { callKeyFingerprint, callKeyFor } from '@/data/crypto/call-key';
 import { appAlert } from '@/data/dialog-store';
@@ -251,10 +252,66 @@ function CallStage({
     }
   };
 
-  const hangUp = () => {
+  /**
+   * Leave the call.
+   *
+   * Disconnecting from the SFU used to be the whole of it, and the server was
+   * never told — so the call ran on until the four-hour sweep. The report goes
+   * first, because router.back() unmounts this screen and anything started
+   * after it may never run.
+   *
+   * Not awaited: hanging up must not wait on the network, and the server
+   * treats a repeat or a miss as a no-op. The sweep is still there for the
+   * phone that dies mid-call.
+   */
+  const reported = useRef(false);
+  const reportLeaving = useCallback(() => {
+    if (reported.current) return;
+    reported.current = true;
+    void hangupCall(chatId).catch(() => {});
+  }, [chatId]);
+
+  const hangUp = useCallback(() => {
+    reportLeaving();
     void room.disconnect();
     router.back();
-  };
+  }, [reportLeaving, room]);
+
+  // Every other way out: the back gesture, a notification, the system taking
+  // the screen away. The button is not the only exit, and a call left by any
+  // other door was still running as far as the server knew.
+  useEffect(() => reportLeaving, [reportLeaving]);
+
+  /**
+   * Nobody came.
+   *
+   * The caller had no timeout at all: a call declined, ignored, or ringing a
+   * phone that was switched off left them watching "waiting for others"
+   * indefinitely. The other phone stops ringing after RING_TIMEOUT_MS, so
+   * this is the same moment seen from the other end — one number for one
+   * decision, rather than two that can disagree.
+   */
+  useEffect(() => {
+    if (connected) return;
+    const giveUp = setTimeout(() => {
+      appAlert(t('call.no_answer_title'), t('call.no_answer_body'));
+      hangUp();
+    }, RING_TIMEOUT_MS);
+    return () => clearTimeout(giveUp);
+  }, [connected, hangUp]);
+
+  /**
+   * Everyone else left.
+   *
+   * The room does not close itself: the last person sat in an empty call
+   * watching a timer count up, with no sign the other side had gone. Only
+   * after connecting, or the caller would hang up on themselves in the second
+   * before the callee answers.
+   */
+  useEffect(() => {
+    if (!connected || others.length > 0) return;
+    hangUp();
+  }, [connected, others.length, hangUp]);
 
   // useTracks hands back placeholders for participants who have not published
   // yet — they have no publication at all. VideoTrack needs a real one, so the
@@ -296,10 +353,6 @@ function CallStage({
 
   const doInvite = async (people: PickablePerson[]) => {
     try {
-      // The room is the chat. Adding someone to the call means adding them to
-      // the conversation — there is no separate guest list, and inventing one
-      // would let people into a room whose messages they cannot read.
-      //
       // The call's guest list, not the chat's. A one-to-one conversation stays
       // one-to-one; only the room grows.
       await inviteToCall(chatId, people.map((p) => p.id));

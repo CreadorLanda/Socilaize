@@ -116,7 +116,12 @@ func (r *HistoryRepo) Join(ctx context.Context, callID, user uuid.UUID) error {
 		ON CONFLICT (call_id, user_id)
 		-- Only the first join counts. Rejoining after a dropped connection
 		-- must not rewrite when they answered.
+		--
+		-- left_at is cleared, though: someone who hung up and came back is in
+		-- the call again, and leaving it set would let the next person's
+		-- hang-up end a call this person is still in.
 		DO UPDATE SET joined_at = COALESCE(call_participants.joined_at, NOW()),
+		              left_at   = NULL,
 		              declined  = FALSE
 	`, callID, user)
 	return err
@@ -192,6 +197,82 @@ func (r *HistoryRepo) End(ctx context.Context, callID uuid.UUID) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE calls SET ended_at = NOW() WHERE id = $1 AND ended_at IS NULL`, callID)
 	return err
+}
+
+// Leave records someone hanging up, and closes the call when they were the
+// last one in it.
+//
+// Nothing wrote left_at before. The column existed, the client disconnected
+// from the SFU, and the server was never told — so every call ran until the
+// four-hour sweep. Four real calls in production ended at 242, 246, 248 and
+// 249 minutes; all four lasted seconds.
+//
+// The sweep stays, because a phone that dies mid-call still reports nothing.
+// It is the backstop, not the mechanism.
+//
+// Reports whether this hang-up ended the call, so the caller knows whether to
+// tell the other phones to stop ringing.
+func (r *HistoryRepo) Leave(ctx context.Context, callID, user uuid.UUID) (bool, error) {
+	if _, err := r.db.Exec(ctx, `
+		UPDATE call_participants SET left_at = NOW()
+		WHERE call_id = $1 AND user_id = $2 AND left_at IS NULL
+	`, callID, user); err != nil {
+		return false, err
+	}
+
+	// The call is over when nobody who joined is still in it. Someone who was
+	// only ever rung does not keep it alive — otherwise a call nobody answered
+	// would run until the sweep, which is exactly the bug.
+	//
+	// Two people hanging up at the same instant both run this; `ended_at IS
+	// NULL` means only one of them reports having ended it.
+	tag, err := r.db.Exec(ctx, `
+		UPDATE calls SET ended_at = NOW()
+		WHERE id = $1 AND ended_at IS NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM call_participants
+		      WHERE call_id = $1 AND joined_at IS NOT NULL AND left_at IS NULL
+		  )
+	`, callID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// ModeOf reports whether a call is voice or video.
+//
+// Needed when ringing someone pulled into a call already running: they were
+// rung as "voice" regardless, so joining a video call showed them the wrong
+// screen before a single frame arrived.
+func (r *HistoryRepo) ModeOf(ctx context.Context, callID uuid.UUID) (string, error) {
+	var mode string
+	err := r.db.QueryRow(ctx, `SELECT mode FROM calls WHERE id = $1`, callID).Scan(&mode)
+	return mode, err
+}
+
+// Ringing lists everyone a call reached who has not joined or declined it.
+//
+// They are the phones still ringing, and the only ones that need telling when
+// the caller gives up.
+func (r *HistoryRepo) Ringing(ctx context.Context, callID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT user_id FROM call_participants
+		WHERE call_id = $1 AND joined_at IS NULL AND declined = FALSE
+	`, callID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // SweepStale closes calls nobody can still be in.

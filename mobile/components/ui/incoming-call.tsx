@@ -6,6 +6,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { declineCall } from '@/data/api/calls';
 import { dismissIncoming, useIncomingCall } from '@/data/incoming-call';
 import { t } from '@/i18n';
 
@@ -42,8 +43,25 @@ export function IncomingCallHost() {
     router.push(`/call/${chatId}?mode=${mode}&incoming=1`);
   };
 
+  /**
+   * Say no, out loud.
+   *
+   * The button only closed this screen. `declineCall` existed and nothing
+   * called it, so no refusal was ever recorded — eight participations in
+   * production, not one of them declined. Every "no" read as "missed", and
+   * the caller waited out the full ring for someone who had already answered.
+   *
+   * Not awaited: refusing must not wait on the network, and the screen closing
+   * is the part the person is looking at.
+   */
+  const decline = () => {
+    const { chatId } = call;
+    void declineCall(chatId).catch(() => {});
+    dismissIncoming();
+  };
+
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={dismissIncoming}>
+    <Modal visible transparent animationType="fade" onRequestClose={decline}>
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.who}>
           <View style={styles.avatar}>
@@ -60,7 +78,7 @@ export function IncomingCallHost() {
         <View style={styles.actions}>
           <View style={styles.action}>
             <Pressable
-              onPress={dismissIncoming}
+              onPress={decline}
               style={({ pressed }) => [styles.circle, styles.decline, pressed && styles.pressed]}
               accessibilityRole="button"
               accessibilityLabel={t('call.decline')}
