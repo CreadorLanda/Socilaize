@@ -15,26 +15,13 @@ import {
 // StyleSheet used throughout
 import Animated, {
   FadeIn,
-  FadeInDown,
   ZoomIn,
-  useAnimatedStyle,
-  useSharedValue,
-  withSequence,
-  withSpring,
 } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
-import {
-  GAMES,
-  pickNhie,
-  pickTrivia,
-  pickWyr,
-  rollDice,
-  type GameId,
-} from '@/data/games';
+import { GAMES, type GameId } from '@/data/games';
 import { CHATS } from '@/data/mock';
-import { useTheme } from '@/hooks/use-theme';
 import { t } from '@/i18n';
 
 type Mode = 'voice' | 'video' | 'live';
@@ -72,7 +59,6 @@ export default function HangoutScreen() {
   // the route and the games run on it.
   const chat = useMemo(() => CHATS.find((c) => c.id === id) ?? null, [id]);
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
 
   const initialMode: Mode =
     modeParam === 'video' ? 'video' : modeParam === 'live' ? 'live' : 'voice';
@@ -80,19 +66,10 @@ export default function HangoutScreen() {
   const [phase, setPhase] = useState<Phase>('lobby');
   const [muted, setMuted] = useState(false);
   const [camOff, setCamOff] = useState(mode === 'voice');
-  const [activeGame, setActiveGame] = useState<GameId | null>(
-    (gameParam as GameId) || null,
-  );
+  // `?game=1` opens the room with the tray already down. It is a flag, not a
+  // game id: the room no longer runs a game, it hands you off to the chat that
+  // does.
   const [gamePanel, setGamePanel] = useState(!!gameParam);
-  const [roundKey, setRoundKey] = useState(0);
-
-  // Game round state
-  const [dice, setDice] = useState<[number, number]>([3, 4]);
-  const [trivia, setTrivia] = useState(pickTrivia());
-  const [wyr, setWyr] = useState(pickWyr());
-  const [nhie, setNhie] = useState(pickNhie());
-  const [wyrPick, setWyrPick] = useState<0 | 1 | null>(null);
-  const [showAnswer, setShowAnswer] = useState(false);
 
   const peers = useMemo(
     () =>
@@ -119,22 +96,18 @@ export default function HangoutScreen() {
     );
   }
 
+  /**
+   * Open the game.
+   *
+   * It runs in the conversation, not here. The room used to draw the round
+   * itself from local state — a die this phone rolled, a question this phone
+   * picked — so two people in the same room saw different games and neither
+   * could tell. Truth or Dare replays a shared event stream carried on the
+   * encrypted message channel, and that stream belongs to the chat.
+   */
   const startGame = (gid: GameId) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setActiveGame(gid);
-    setGamePanel(true);
-    setRoundKey((k) => k + 1);
-    setShowAnswer(false);
-    setWyrPick(null);
-    if (gid === 'dice') setDice(rollDice());
-    if (gid === 'trivia') setTrivia(pickTrivia());
-    if (gid === 'would_you_rather') setWyr(pickWyr());
-    if (gid === 'never_have_i') setNhie(pickNhie());
-  };
-
-  const nextRound = () => {
-    if (!activeGame) return;
-    startGame(activeGame);
+    router.replace(`/chat/${id}?game=1`);
   };
 
   const leave = () => {
@@ -232,42 +205,19 @@ export default function HangoutScreen() {
           ))}
         </View>
 
-        {/* Active game board */}
-        {activeGame && gamePanel ? (
-          <Animated.View entering={FadeInDown.springify()} style={styles.gameBoard}>
-            <View style={styles.gameBoardHead}>
-              <Text style={styles.gameBoardTitle}>
-                {t(`hangout.${GAMES.find((g) => g.id === activeGame)?.nameKey}`)}
-              </Text>
-              <Pressable onPress={() => setActiveGame(null)} hitSlop={8}>
-                <Ionicons name="close" size={18} color="rgba(255,255,255,0.7)" />
-              </Pressable>
-            </View>
-            <GameRound
-              key={roundKey}
-              game={activeGame}
-              dice={dice}
-              trivia={trivia}
-              wyr={wyr}
-              nhie={nhie}
-              wyrPick={wyrPick}
-              showAnswer={showAnswer}
-              onWyr={(i) => setWyrPick(i)}
-              onReveal={() => setShowAnswer(true)}
-              onRoll={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                setDice(rollDice());
-              }}
-            />
-            <Pressable onPress={nextRound} style={styles.nextRound}>
-              <Text style={styles.nextRoundText}>{t('hangout.next_round')}</Text>
-              <Ionicons name="refresh" size={16} color="#FFF" />
-            </Pressable>
-          </Animated.View>
-        ) : null}
+        {/*
+          The game lives in the conversation, not here.
+          
+          This panel used to draw the round itself from local state — a die
+          this phone rolled, a question this phone picked — so two people in
+          the same room saw different games. Truth or Dare replays a shared
+          event stream carried on the encrypted message channel, and that
+          stream is the chat's. So the room opens the chat rather than growing
+          a second, unsynchronised copy of the game.
+        */}
 
         {/* Games tray */}
-        {gamePanel && !activeGame ? (
+        {gamePanel ? (
           <Animated.View entering={FadeIn.duration(180)} style={styles.gamesTray}>
             <Text style={styles.gamesTrayTitle}>{t('hangout.pick_game')}</Text>
             <ScrollView
@@ -390,124 +340,6 @@ function Ctrl({
       </View>
       <Text style={styles.ctrlLabel}>{label}</Text>
     </Pressable>
-  );
-}
-
-function GameRound({
-  game,
-  dice,
-  trivia,
-  wyr,
-  nhie,
-  wyrPick,
-  showAnswer,
-  onWyr,
-  onReveal,
-  onRoll,
-}: {
-  game: GameId;
-  dice: [number, number];
-  trivia: { q: string; a: string };
-  wyr: [string, string];
-  nhie: string;
-  wyrPick: 0 | 1 | null;
-  showAnswer: boolean;
-  onWyr: (i: 0 | 1) => void;
-  onReveal: () => void;
-  onRoll: () => void;
-}) {
-  if (game === 'dice') {
-    return (
-      <View style={styles.roundBody}>
-        <View style={styles.diceRow}>
-          <DiceFace n={dice[0]} />
-          <DiceFace n={dice[1]} />
-        </View>
-        <Text style={styles.roundResult}>
-          {t('hangout.dice_total', { n: dice[0] + dice[1] })}
-        </Text>
-        <Pressable onPress={onRoll} style={styles.secondaryBtn}>
-          <Text style={styles.secondaryBtnText}>{t('hangout.roll_again')}</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (game === 'trivia') {
-    return (
-      <View style={styles.roundBody}>
-        <Text style={styles.prompt}>{trivia.q}</Text>
-        {showAnswer ? (
-          <Text style={styles.answer}>{trivia.a}</Text>
-        ) : (
-          <Pressable onPress={onReveal} style={styles.secondaryBtn}>
-            <Text style={styles.secondaryBtnText}>{t('hangout.reveal')}</Text>
-          </Pressable>
-        )}
-      </View>
-    );
-  }
-
-  if (game === 'would_you_rather') {
-    return (
-      <View style={styles.roundBody}>
-        <Text style={styles.promptSm}>{t('hangout.wyr_prompt')}</Text>
-        <View style={styles.wyrRow}>
-          {([0, 1] as const).map((i) => (
-            <Pressable
-              key={i}
-              onPress={() => onWyr(i)}
-              style={[
-                styles.wyrCard,
-                wyrPick === i && styles.wyrCardOn,
-              ]}
-            >
-              <Text style={styles.wyrText}>{wyr[i]}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  if (game === 'never_have_i') {
-    return (
-      <View style={styles.roundBody}>
-        <Text style={styles.prompt}>{nhie}</Text>
-        <View style={styles.wyrRow}>
-          <Pressable style={styles.wyrCard} onPress={() => Haptics.selectionAsync()}>
-            <Text style={styles.wyrText}>{t('hangout.i_have')}</Text>
-          </Pressable>
-          <Pressable style={styles.wyrCard} onPress={() => Haptics.selectionAsync()}>
-            <Text style={styles.wyrText}>{t('hangout.never')}</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  // Generic placeholder for draw / emoji race / two truths
-  return (
-    <View style={styles.roundBody}>
-      <Text style={styles.prompt}>{t('hangout.game_ready')}</Text>
-      <Text style={styles.promptSm}>{t('hangout.game_ready_hint')}</Text>
-    </View>
-  );
-}
-
-function DiceFace({ n }: { n: number }) {
-  const scale = useSharedValue(1);
-  useEffect(() => {
-    scale.value = withSequence(
-      withSpring(1.15, { damping: 8 }),
-      withSpring(1, { damping: 12 }),
-    );
-  }, [n, scale]);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-  return (
-    <Animated.View style={[styles.dice, style]}>
-      <Text style={styles.diceN}>{n}</Text>
-    </Animated.View>
   );
 }
 
