@@ -777,6 +777,18 @@ export default {
     in_group_one: '{name} está neste grupo e tu bloqueaste esta pessoa.',
     in_group_many: '{count} pessoas aqui estão bloqueadas por ti.',
   },
+  filters: {
+    none: 'Original',
+    vivid: 'Vivo',
+    warm: 'Quente',
+    cool: 'Frio',
+    fade: 'Desbotado',
+    dusk: 'Anoitecer',
+    mono: 'Mono',
+    noir: 'Noir',
+    sepia: 'Sépia',
+    title: 'Filtros',
+  },
   call: {
     no_answer_title: 'Sem resposta',
     no_answer_body: 'Não atenderam.',

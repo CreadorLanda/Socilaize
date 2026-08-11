@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useCameraPermission, useMicrophonePermission } from 'react-native-vision-camera';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -7,7 +8,6 @@ import {
 } from 'expo-audio';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -36,7 +36,12 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radii, Spacing, Typography } from '@/constants/theme';
+import { bakeFilter } from '@/data/bake-filter';
 import { appAlert } from '@/data/dialog-store';
+import type { FilterId } from '@/data/photo-filters';
+import { FilteredPhoto } from '@/components/media/filtered-photo';
+import { FilterStrip } from '@/components/media/filter-strip';
+import { FilteredCamera, type FilteredCameraHandle } from '@/components/media/filtered-camera';
 import type { StoryVisibility } from '@/data/mock';
 import { useProfile } from '@/data/profile-store';
 import { queueStoryPublish } from '@/data/story-store';
@@ -61,7 +66,7 @@ type CaptureMode = 'type' | 'normal' | 'boomerang' | 'handsfree' | 'audio' | 'li
  */
 const BOOMERANG_SECONDS = 3;
 const HANDSFREE_SECONDS = 15;
-type EditTool = 'text' | 'sticker' | 'draw' | 'music' | null;
+type EditTool = 'text' | 'sticker' | 'draw' | 'music' | 'filter' | null;
 type StickerKind = 'poll' | 'question' | 'mention' | null;
 
 const { width: W, height: H } = Dimensions.get('window');
@@ -123,6 +128,7 @@ export default function CreateStoryScreen() {
   const audioTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioStart = useRef(0);
   const publishLock = useRef(false);
+  const [filter, setFilter] = useState<FilterId>('none');
 
   /**
    * The camera itself.
@@ -133,10 +139,11 @@ export default function CreateStoryScreen() {
    * nothing at all for video, because launchCameraAsync was called without
    * cameraType on that path.
    */
-  const cameraRef = useRef<CameraView>(null);
+  const cameraRef = useRef<FilteredCameraHandle>(null);
+  const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isVideoMode = captureMode === 'boomerang' || captureMode === 'handsfree';
-  const [camPerm, requestCamPerm] = useCameraPermissions();
-  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const { hasPermission: hasCam, requestPermission: askCam } = useCameraPermission();
+  const { hasPermission: hasMic, requestPermission: askMic } = useMicrophonePermission();
   const [camReady, setCamReady] = useState(false);
   const [zoom, setZoom] = useState(0);
 
@@ -146,7 +153,7 @@ export default function CreateStoryScreen() {
   /**
    * Pinch to zoom.
    *
-   * expo-camera takes zoom as 0–1 rather than a lens factor, so the gesture's
+   * The camera takes zoom as 0–1 rather than a lens factor, so the gesture's
    * scale is folded in as a delta from where the pinch started. Clamped, or a
    * fast pinch drives it past the end and the next one starts from nowhere.
    */
@@ -292,17 +299,17 @@ export default function CreateStoryScreen() {
 
     // Permission is asked here rather than on mount: someone who opens the
     // composer to type a text story should not be met with a camera prompt.
-    if (!camPerm?.granted) {
-      const granted = (await requestCamPerm())?.granted;
+    if (!hasCam) {
+      const granted = await askCam();
       if (!granted) {
         await pickFromLibrary();
         return;
       }
     }
-    if (wantsVideo && !micPerm?.granted) {
+    if (wantsVideo && !hasMic) {
       // A silent video is worth more than no video, so a refused microphone
       // does not stop the recording — it just records without sound.
-      await requestMicPerm();
+      await askMic();
     }
 
     const cam = cameraRef.current;
@@ -313,26 +320,31 @@ export default function CreateStoryScreen() {
       // it was never true: the old path handed off to the system camera, which
       // has its own button and its own idea of how long a recording lasts.
       if (recording) {
-        cam.stopRecording();
+        await cam.stopRecording();
         return;
       }
       setRecording(true);
       try {
-        const clip = await cam.recordAsync({
-          maxDuration: captureMode === 'boomerang' ? BOOMERANG_SECONDS : HANDSFREE_SECONDS,
+        await cam.startRecording((path: string) => {
+          setRecording(false);
+          enterEdit({ uri: path, video: true });
         });
-        if (clip?.uri) enterEdit({ uri: clip.uri, video: true });
+        // The cap is ours to enforce: the recorder runs until told to stop, so
+        // a mode that promises three seconds has to hold itself to it.
+        const cap = captureMode === 'boomerang' ? BOOMERANG_SECONDS : HANDSFREE_SECONDS;
+        stopTimer.current = setTimeout(() => {
+          void cam.stopRecording();
+        }, cap * 1000);
       } catch {
-        appAlert(t('stories.capture_failed_title'), t('stories.capture_failed_body'));
-      } finally {
         setRecording(false);
+        appAlert(t('stories.capture_failed_title'), t('stories.capture_failed_body'));
       }
       return;
     }
 
     try {
-      const shot = await cam.takePictureAsync({ quality: 0.9, skipProcessing: false });
-      if (shot?.uri) enterEdit({ uri: shot.uri });
+      const path = await cam.takePhoto();
+      if (path) enterEdit({ uri: path });
     } catch {
       appAlert(t('stories.capture_failed_title'), t('stories.capture_failed_body'));
     }
@@ -368,7 +380,7 @@ export default function CreateStoryScreen() {
    * WhatsApp-style: close the composer immediately and publish in background.
    * Upload + API run via queueStoryPublish; a global toast reports status.
    */
-  const publish = () => {
+  const publish = async () => {
     if (publishLock.current) return;
 
     let kind: 'image' | 'video' | 'text' | 'audio' | 'poll' | 'question' = 'text';
@@ -405,13 +417,19 @@ export default function CreateStoryScreen() {
     publishLock.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    // The filter is written into the file here, once, on the way out. Video
+    // is left alone: a colour matrix over a moving picture is per-frame work
+    // this does not do yet, and the strip is hidden for it.
+    const outUri =
+      mediaUri && !isVideo && !isAudio ? await bakeFilter(mediaUri, filter) : mediaUri;
+
     const bodyCaption =
       kind === 'poll' || kind === 'question' ? buildInteractiveCaption() : caption.trim();
 
     queueStoryPublish({
       kind,
       caption: bodyCaption,
-      localMediaUri: mediaUri,
+      localMediaUri: outUri,
       mediaMimeType:
         kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mp4' : 'image/jpeg',
       audioDurationMs: kind === 'audio' ? audioSec * 1000 : undefined,
@@ -451,24 +469,20 @@ export default function CreateStoryScreen() {
             holding the camera open would spend battery and keep the lens
             busy for a recording that only wants the microphone.
           */}
-          {captureMode !== 'audio' && camPerm?.granted ? (
-            <CameraView
+          {captureMode !== 'audio' && hasCam ? (
+            <FilteredCamera
               ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              facing={frontCamera ? 'front' : 'back'}
+              front={frontCamera}
+              /* The same matrix as the thumbnail strip and the bake. The
+                 preview is the picture, not an approximation of it. */
+              filter={filter}
+              video={isVideoMode}
               /* `flash` was state nothing read — the button toggled its own
-                 icon and no light came on. A photo fires the flash; a video
-                 needs the torch, which is a different thing to the hardware
-                 and the same thing to the person pressing it. */
-              flash={flash ? 'on' : 'off'}
-              enableTorch={flash && isVideoMode && !frontCamera}
+                 icon and no light came on. */
+              torch={flash}
               zoom={zoom}
-              mode={
-                captureMode === 'boomerang' || captureMode === 'handsfree'
-                  ? 'video'
-                  : 'picture'
-              }
-              onCameraReady={() => setCamReady(true)}
+              isActive={phase === 'capture'}
+              onReady={() => setCamReady(true)}
             />
           ) : null}
           <View style={styles.viewfinderGrain} pointerEvents="none" />
@@ -492,7 +506,7 @@ export default function CreateStoryScreen() {
               {/* Only while there is nothing to see: no permission yet, or the
                   lens still warming up. Over a live preview it would be noise
                   on top of the picture. */}
-              {camPerm?.granted && camReady ? null : (
+              {hasCam && camReady ? null : (
                 <>
               <Ionicons
                 name={frontCamera ? 'person-outline' : 'camera-outline'}
@@ -641,8 +655,15 @@ export default function CreateStoryScreen() {
     >
       <StatusBar style="light" />
 
+      {/* Through Skia when a filter is picked, so what is on screen is what
+          the file will contain. An <Image> with a tint over it would look the
+          same here and lose the colour on save. */}
       {!solidBg && mediaUri ? (
-        <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+        isVideo || filter === 'none' ? (
+          <Image source={{ uri: mediaUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+        ) : (
+          <FilteredPhoto uri={mediaUri} filter={filter} style={StyleSheet.absoluteFill} />
+        )
       ) : null}
       {!solidBg && mediaUri ? <View style={styles.editScrim} /> : null}
       {solidBg ? (
@@ -692,7 +713,24 @@ export default function CreateStoryScreen() {
             active={activeTool === 'music'}
             onPress={() => setActiveTool((cur) => (cur === 'music' ? null : 'music'))}
           />
+          {/* Photos only. A colour matrix over a moving picture is per-frame
+              work this does not do yet, and offering the tool on a video would
+              promise a filter that never reaches the file. */}
+          {!isVideo && !isAudio && !textOnly && mediaUri ? (
+            <SideTool
+              icon="color-filter-outline"
+              label={t('filters.title')}
+              active={activeTool === 'filter'}
+              onPress={() => setActiveTool((cur) => (cur === 'filter' ? null : 'filter'))}
+            />
+          ) : null}
         </View>
+
+        {activeTool === 'filter' && mediaUri ? (
+          <View style={styles.filterTray}>
+            <FilterStrip uri={mediaUri} value={filter} onChange={setFilter} />
+          </View>
+        ) : null}
 
         <View style={styles.editBody} pointerEvents="box-none">
           {isAudio ? (
@@ -1518,6 +1556,13 @@ const styles = StyleSheet.create({
   toggleDivider: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.1)' },
   toggleTitle: { ...Typography.caption, color: '#FFF', fontWeight: '700' },
   toggleHint: { ...Typography.micro, color: 'rgba(255,255,255,0.55)', marginTop: 1 },
+  filterTray: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 92,
+    backgroundColor: 'rgba(10,11,15,0.82)',
+  },
   shareBtn: {
     minHeight: 52,
     borderRadius: Radii.pill,

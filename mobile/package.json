@@ -20,12 +20,12 @@
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/material-top-tabs": "^7.4.27",
     "@react-navigation/native": "^7.1.8",
+    "@shopify/react-native-skia": "2.2.12",
     "expo": "~54.0.36",
     "expo-asset": "~12.0.13",
     "expo-audio": "~1.1.1",
     "expo-blur": "~15.0.8",
     "expo-build-properties": "~1.0.10",
-    "expo-camera": "~17.0.10",
     "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.13",
     "expo-crypto": "~15.0.9",
@@ -60,14 +60,18 @@
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-keyboard-controller": "1.18.5",
+    "react-native-nitro-image": "^0.15.1",
+    "react-native-nitro-modules": "^0.36.5",
     "react-native-pager-view": "6.9.1",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
     "react-native-view-shot": "4.0.3",
+    "react-native-vision-camera": "^5.2.2",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.5.1",
+    "react-native-worklets-core": "^1.6.3",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
@@ -81,5 +85,14 @@
   "op-sqlite": {
     "sqlcipher": true,
     "fts5": true
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "react-native-nitro-image"
+        ]
+      }
+    }
   }
 }
