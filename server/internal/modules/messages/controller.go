@@ -333,20 +333,6 @@ func (c *Controller) PostAcceptChat(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, chat)
 }
 
-// PostBlockChat — POST /chats/:id/block
-func (c *Controller) PostBlockChat(ctx *gin.Context) {
-	chatID, err := uuid.Parse(ctx.Param("id"))
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_chat_id"})
-		return
-	}
-	if err := c.svc.BlockChat(ctx.Request.Context(), chatID, middleware.UserIDFrom(ctx)); err != nil {
-		writeErr(ctx, err)
-		return
-	}
-	ctx.Status(http.StatusNoContent)
-}
-
 // GetMessages — GET /chats/:id/messages?limit=50&before=<id>
 func (c *Controller) GetMessages(ctx *gin.Context) {
 	chatID, err := uuid.Parse(ctx.Param("id"))

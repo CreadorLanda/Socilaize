@@ -56,6 +56,21 @@ type Identity interface {
 	DisplayName(ctx context.Context, userID uuid.UUID) (string, error)
 }
 
+// BlockList is how a call finds out it should not happen.
+//
+// The module asked one question — are you a participant — and never looked at
+// blocking at all, so someone you had blocked could still make your phone
+// ring. Optional: a server wired without it enforces no blocks.
+type BlockList interface {
+	// EitherWay reports whether either person has blocked the other. Both
+	// directions, because a call needs both sides willing and it must not
+	// matter who pressed the button.
+	EitherWay(ctx context.Context, a, b uuid.UUID) (bool, error)
+	// PeerOf is the other side of a one-to-one chat. A group has none, and a
+	// group call is deliberately not blocked.
+	PeerOf(ctx context.Context, chatID, userID uuid.UUID) (uuid.UUID, error)
+}
+
 // Trace writes the row a call leaves in the conversation.
 //
 // Separate from Ringer because ringing is transient and this is permanent:
@@ -90,10 +105,11 @@ func (c Config) enabled() bool {
 }
 
 type Service struct {
-	cfg   Config
-	chats Participation
-	users Identity
-	ring  Ringer
+	cfg    Config
+	chats  Participation
+	users  Identity
+	ring   Ringer
+	blocks BlockList
 	// log records what happened. Optional: without it calls still work, they
 	// simply leave no trace.
 	log   *HistoryRepo
@@ -102,6 +118,37 @@ type Service struct {
 
 func NewService(cfg Config, chats Participation, users Identity, ring Ringer, log *HistoryRepo, trace Trace) *Service {
 	return &Service{cfg: cfg, chats: chats, users: users, ring: ring, log: log, trace: trace}
+}
+
+// WithBlocks wires block enforcement. Separate from NewService so existing
+// call sites and tests keep working unchanged.
+func (s *Service) WithBlocks(b BlockList) *Service {
+	s.blocks = b
+	return s
+}
+
+// ErrBlocked means one of the two has blocked the other.
+//
+// Reported to the caller as not-found, like every other refusal here: telling
+// someone they have been blocked is information the other person did not agree
+// to share.
+var ErrBlocked = errors.New("blocked")
+
+// blocked reports whether this one-to-one call must not happen.
+//
+// One-to-one only. A group call is a room with other people in it, and one
+// member's decision about another is not a reason to keep them out of it —
+// the app shows who in the room they blocked instead.
+func (s *Service) blocked(ctx context.Context, chatID, userID uuid.UUID) bool {
+	if s.blocks == nil {
+		return false
+	}
+	peer, err := s.blocks.PeerOf(ctx, chatID, userID)
+	if err != nil {
+		return false // not a one-to-one chat, or no peer to check
+	}
+	yes, err := s.blocks.EitherWay(ctx, userID, peer)
+	return err == nil && yes
 }
 
 // Grant is what the client needs to join.
@@ -150,6 +197,13 @@ func (s *Service) TokenFor(ctx context.Context, chatID, userID uuid.UUID, ring b
 	if !inChat && !invited {
 		// Reported as not-found rather than forbidden: "you may not join this"
 		// also confirms the call exists.
+		return Grant{}, ErrNotAllowed
+	}
+
+	// A blocked one-to-one call does not happen — in either direction, and
+	// before anything rings. This module never asked the question, so blocking
+	// someone left them able to call you.
+	if s.blocked(ctx, chatID, userID) {
 		return Grant{}, ErrNotAllowed
 	}
 

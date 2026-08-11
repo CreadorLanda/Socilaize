@@ -45,16 +45,41 @@ type PushNotifier interface {
 	NotifyUser(ctx context.Context, userID uuid.UUID, category, title, body string, data map[string]string) error
 }
 
+// BlockList answers the one question this module asks about blocking.
+//
+// An interface rather than an import: modules here do not reach into each
+// other's storage. Optional — a server wired without it simply enforces no
+// blocks, which is what it did before there were any.
+type BlockList interface {
+	// EitherWay reports whether either person has blocked the other. A
+	// one-to-one channel needs both sides willing; who pressed the button does
+	// not change who should be spared.
+	EitherWay(ctx context.Context, a, b uuid.UUID) (bool, error)
+	// Block is for reporting someone and blocking them in the same tap.
+	Block(ctx context.Context, blocker, blocked uuid.UUID) error
+}
+
 type Service struct {
 	repo    *Repository
 	keysSvc *keys.Service
 	users   *users.Repository
 	hub     Broadcaster
 	push    PushNotifier
+	blocks  BlockList
 }
 
 func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
 	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo, hub: hub, push: push}
+}
+
+// WithBlocks wires block enforcement.
+//
+// Separate from NewService so the existing call sites and every test that
+// builds a Service keep working unchanged — a block list is not something most
+// of them have an opinion about.
+func (s *Service) WithBlocks(b BlockList) *Service {
+	s.blocks = b
+	return s
 }
 
 // ── Session Init ────────────────────────────────────────────────────────────
@@ -192,13 +217,6 @@ func (s *Service) notifyChatAccepted(ctx context.Context, chatID, requester uuid
 }
 
 // BlockChat marks a chat blocked. Any participant may block.
-func (s *Service) BlockChat(ctx context.Context, chatID, userID uuid.UUID) error {
-	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
-		return err
-	}
-	return s.repo.UpdateChatStatus(ctx, chatID, ChatStatusBlocked)
-}
-
 // ListChats returns one page of the caller's chats. The preview, unread
 // count and peer are resolved inside the repository query — no per-chat
 // round trips.
@@ -310,8 +328,28 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 		}
 		return Message{}, err
 	}
+	// A block stops a one-to-one conversation and nothing else.
+	//
+	// Groups are deliberately untouched: a group is a place with other people
+	// in it, and one member's decision about another is not a reason to take
+	// their conversation away. The app tells you who in the room you blocked.
+	if s.blocks != nil {
+		chat, err := s.repo.GetChat(ctx, chatID)
+		if err == nil && chat != nil && chat.Type == ChatDirect {
+			peer, err := s.repo.PeerUser(ctx, chatID, senderID)
+			if err == nil && peer != nil {
+				blocked, err := s.blocks.EitherWay(ctx, senderID, peer.ID)
+				if err == nil && blocked {
+					return Message{}, ErrChatBlocked
+				}
+			}
+		}
+	}
+
 	switch status {
 	case ChatStatusBlocked:
+		// No longer written by anything — kept so conversations blocked before
+		// migration 0039, on a server that has not run it yet, still refuse.
 		return Message{}, ErrChatBlocked
 	case ChatStatusPending:
 		// Only 1 message per user allowed until the recipient accepts.
@@ -786,7 +824,18 @@ func (s *Service) ReportChat(ctx context.Context, chatID, userID uuid.UUID, reas
 		return err
 	}
 	if alsoBlock {
-		return s.BlockChat(ctx, chatID, userID)
+		// A block belongs to a person now, not to the conversation, so
+		// reporting a group and blocking cannot mean "block the group". It
+		// blocks the peer of a one-to-one chat and does nothing otherwise —
+		// the report still stands, which is the part that matters.
+		if s.blocks == nil {
+			return nil
+		}
+		peer, err := s.repo.PeerUser(ctx, chatID, userID)
+		if err != nil || peer == nil {
+			return nil
+		}
+		return s.blocks.Block(ctx, userID, peer.ID)
 	}
 	return nil
 }
