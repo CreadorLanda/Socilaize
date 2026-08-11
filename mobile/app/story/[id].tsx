@@ -338,6 +338,30 @@ export default function StoryViewerScreen() {
       runOnJS(setPaused)(false);
     });
 
+  /**
+   * Swipe sideways to move between stories.
+   *
+   * The only way through a set was tapping the left or right half, which is
+   * discoverable but blunt: every move is the same canned turn regardless of
+   * intent. A drag says which way and how much you meant it.
+   *
+   * Composed with the long press rather than replacing it — holding still
+   * pauses, and a hold that turns into a drag becomes a swipe.
+   */
+  const swipe = Gesture.Pan()
+    .activeOffsetX([-18, 18])
+    // Vertical slack, or a thumb dragging down the reply sheet takes a story
+    // with it. The comment sheet and the reply box both live below.
+    .failOffsetY([-24, 24])
+    .onEnd((e) => {
+      const far = Math.abs(e.translationX) > 60;
+      const fast = Math.abs(e.velocityX) > 500;
+      if (!far && !fast) return;
+      runOnJS(e.translationX < 0 ? goNext : goPrev)();
+    });
+
+  const storyGestures = Gesture.Race(swipe, longPress);
+
   const fireReact = (emoji: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setReactBurst(emoji);
@@ -521,7 +545,16 @@ export default function StoryViewerScreen() {
           </>
         )}
 
-        <SafeAreaView style={styles.safe} edges={['top']}>
+      </SlideSwap>
+
+      {/*
+        The chrome stays put.
+        
+        All of this used to be inside the transition, so the progress bar, the
+        avatar and the reply row turned away with the photo. Only the picture
+        is changing; the frame around it is not.
+      */}
+      <SafeAreaView style={[styles.safe, StyleSheet.absoluteFill]} edges={['top']}>
           <View style={styles.progressRow}>
             {visibleStories.map((item, i) => (
               <View key={item.id} style={styles.progressTrack}>
@@ -614,7 +647,7 @@ export default function StoryViewerScreen() {
             </Pressable>
           </View>
 
-          <GestureDetector gesture={longPress}>
+          <GestureDetector gesture={storyGestures}>
             <View style={styles.tapLayer}>
               <Pressable onPress={goPrev} style={styles.tapZone} accessibilityLabel={t('stories.previous')} />
               <Pressable onPress={goNext} style={styles.tapZone} accessibilityLabel={t('stories.next')} />
@@ -681,8 +714,7 @@ export default function StoryViewerScreen() {
               <Text style={styles.toastText}>{toast}</Text>
             </Animated.View>
           ) : null}
-        </SafeAreaView>
-      </SlideSwap>
+      </SafeAreaView>
 
 
       <AnonInbox

@@ -7,6 +7,7 @@ import {
 } from 'expo-audio';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -22,9 +23,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
   FadeInDown,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSequence,
@@ -48,6 +51,16 @@ import { t } from '@/i18n';
 
 type Phase = 'capture' | 'edit';
 type CaptureMode = 'type' | 'normal' | 'boomerang' | 'handsfree' | 'audio' | 'live';
+
+/**
+ * How long each video mode records.
+ *
+ * Named because the numbers appear twice — once to cap the recording, once to
+ * drive the progress ring — and two literals that must agree is one that will
+ * eventually not.
+ */
+const BOOMERANG_SECONDS = 3;
+const HANDSFREE_SECONDS = 15;
 type EditTool = 'text' | 'sticker' | 'draw' | 'music' | null;
 type StickerKind = 'poll' | 'question' | 'mention' | null;
 
@@ -111,8 +124,41 @@ export default function CreateStoryScreen() {
   const audioStart = useRef(0);
   const publishLock = useRef(false);
 
+  /**
+   * The camera itself.
+   *
+   * There was none. `cameraFeed` was a dark rectangle with a grain overlay and
+   * an icon in the middle, and pressing the shutter handed off to the system
+   * camera app — so the viewfinder showed nothing, and flipping the lens did
+   * nothing at all for video, because launchCameraAsync was called without
+   * cameraType on that path.
+   */
+  const cameraRef = useRef<CameraView>(null);
+  const isVideoMode = captureMode === 'boomerang' || captureMode === 'handsfree';
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const [camReady, setCamReady] = useState(false);
+  const [zoom, setZoom] = useState(0);
+
   const shutterScale = useSharedValue(1);
   const shutterStyle = useAnimatedStyle(() => ({ transform: [{ scale: shutterScale.value }] }));
+
+  /**
+   * Pinch to zoom.
+   *
+   * expo-camera takes zoom as 0–1 rather than a lens factor, so the gesture's
+   * scale is folded in as a delta from where the pinch started. Clamped, or a
+   * fast pinch drives it past the end and the next one starts from nowhere.
+   */
+  const zoomStart = useSharedValue(0);
+  const pinch = Gesture.Pinch()
+    .onStart(() => {
+      zoomStart.value = zoom;
+    })
+    .onUpdate((e) => {
+      const next = Math.min(1, Math.max(0, zoomStart.value + (e.scale - 1) * 0.35));
+      runOnJS(setZoom)(next);
+    });
 
   useEffect(() => {
     setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {});
@@ -243,33 +289,52 @@ export default function CreateStoryScreen() {
     }
 
     const wantsVideo = captureMode === 'boomerang' || captureMode === 'handsfree';
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      await pickFromLibrary();
-      return;
+
+    // Permission is asked here rather than on mount: someone who opens the
+    // composer to type a text story should not be met with a camera prompt.
+    if (!camPerm?.granted) {
+      const granted = (await requestCamPerm())?.granted;
+      if (!granted) {
+        await pickFromLibrary();
+        return;
+      }
+    }
+    if (wantsVideo && !micPerm?.granted) {
+      // A silent video is worth more than no video, so a refused microphone
+      // does not stop the recording — it just records without sound.
+      await requestMicPerm();
     }
 
+    const cam = cameraRef.current;
+    if (!cam) return;
+
     if (wantsVideo) {
+      // Tap to start, tap to stop. That is what "handsfree" always meant, and
+      // it was never true: the old path handed off to the system camera, which
+      // has its own button and its own idea of how long a recording lasts.
+      if (recording) {
+        cam.stopRecording();
+        return;
+      }
       setRecording(true);
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['videos'],
-        videoMaxDuration: captureMode === 'boomerang' ? 3 : 15,
-        quality: 0.85,
-      });
-      setRecording(false);
-      if (!result.canceled && result.assets[0]) {
-        enterEdit({ uri: result.assets[0].uri, video: true });
+      try {
+        const clip = await cam.recordAsync({
+          maxDuration: captureMode === 'boomerang' ? BOOMERANG_SECONDS : HANDSFREE_SECONDS,
+        });
+        if (clip?.uri) enterEdit({ uri: clip.uri, video: true });
+      } catch {
+        appAlert(t('stories.capture_failed_title'), t('stories.capture_failed_body'));
+      } finally {
+        setRecording(false);
       }
       return;
     }
 
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.9,
-      cameraType: frontCamera ? ImagePicker.CameraType.front : ImagePicker.CameraType.back,
-    });
-    if (!result.canceled && result.assets[0]) {
-      enterEdit({ uri: result.assets[0].uri });
+    try {
+      const shot = await cam.takePictureAsync({ quality: 0.9, skipProcessing: false });
+      if (shot?.uri) enterEdit({ uri: shot.uri });
+    } catch {
+      appAlert(t('stories.capture_failed_title'), t('stories.capture_failed_body'));
     }
   };
 
@@ -290,8 +355,8 @@ export default function CreateStoryScreen() {
   const resolveDurationSec = (kind: string): number => {
     if (kind === 'audio') return Math.min(30, Math.max(5, audioSec || 5));
     if (kind === 'video') {
-      if (captureMode === 'boomerang') return 3;
-      if (captureMode === 'handsfree') return 15;
+      if (captureMode === 'boomerang') return BOOMERANG_SECONDS;
+      if (captureMode === 'handsfree') return HANDSFREE_SECONDS;
       return 10;
     }
     if (kind === 'poll' || kind === 'question') return 8;
@@ -373,8 +438,40 @@ export default function CreateStoryScreen() {
     return (
       <View style={styles.root}>
         <StatusBar style="light" />
+        <GestureDetector gesture={pinch}>
         <View style={[styles.cameraFeed, captureMode === 'audio' && styles.audioFeed]}>
-          <View style={styles.viewfinderGrain} />
+          {/*
+            The real preview.
+            
+            What was here was `backgroundColor: '#0A0B0F'` and a grain overlay:
+            a picture of a camera. The shutter handed off to the system camera
+            app, so nothing you saw before pressing it came from a lens.
+            
+            Not mounted in audio mode — there is nothing to look at, and
+            holding the camera open would spend battery and keep the lens
+            busy for a recording that only wants the microphone.
+          */}
+          {captureMode !== 'audio' && camPerm?.granted ? (
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              facing={frontCamera ? 'front' : 'back'}
+              /* `flash` was state nothing read — the button toggled its own
+                 icon and no light came on. A photo fires the flash; a video
+                 needs the torch, which is a different thing to the hardware
+                 and the same thing to the person pressing it. */
+              flash={flash ? 'on' : 'off'}
+              enableTorch={flash && isVideoMode && !frontCamera}
+              zoom={zoom}
+              mode={
+                captureMode === 'boomerang' || captureMode === 'handsfree'
+                  ? 'video'
+                  : 'picture'
+              }
+              onCameraReady={() => setCamReady(true)}
+            />
+          ) : null}
+          <View style={styles.viewfinderGrain} pointerEvents="none" />
           {captureMode === 'audio' || audioRecording ? (
             <View style={styles.audioCenter}>
               <View style={[styles.audioOrb, audioRecording && styles.audioOrbLive]}>
@@ -391,7 +488,12 @@ export default function CreateStoryScreen() {
               <Waveform live={audioRecording} />
             </View>
           ) : (
-            <View style={styles.viewfinderHint}>
+            <View style={styles.viewfinderHint} pointerEvents="none">
+              {/* Only while there is nothing to see: no permission yet, or the
+                  lens still warming up. Over a live preview it would be noise
+                  on top of the picture. */}
+              {camPerm?.granted && camReady ? null : (
+                <>
               <Ionicons
                 name={frontCamera ? 'person-outline' : 'camera-outline'}
                 size={36}
@@ -400,9 +502,12 @@ export default function CreateStoryScreen() {
               <Text style={styles.viewfinderHintText}>
                 {recording ? t('stories.recording') : t('stories.tap_to_capture')}
               </Text>
+                </>
+              )}
             </View>
           )}
         </View>
+        </GestureDetector>
 
         <SafeAreaView style={styles.captureChrome} edges={['top']} pointerEvents="box-none">
           <View style={[styles.topBar, { paddingTop: Spacing.xs }]}>
@@ -425,10 +530,16 @@ export default function CreateStoryScreen() {
             </View>
           </View>
 
+          {/* Both side tools were drawn with no onPress at all — two buttons
+              that did nothing at any point. Filters land in the next change;
+              until they do, saying so beats a tap into silence. */}
           {captureMode !== 'audio' ? (
             <View style={[styles.sideRail, { top: insets.top + 72 }]}>
-              <SideTool icon="sparkles-outline" label={t('stories.effects')} />
-              <SideTool icon="color-filter-outline" label={t('stories.filters')} />
+              <SideTool
+                icon="color-filter-outline"
+                label={t('stories.filters')}
+                onPress={() => appAlert(t('stories.filters'), t('stories.filters_soon'))}
+              />
             </View>
           ) : null}
         </SafeAreaView>

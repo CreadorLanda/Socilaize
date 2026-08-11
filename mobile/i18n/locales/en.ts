@@ -829,6 +829,10 @@ export default {
     both_revealed: 'Both agreed — you know each other now.',
   },
   stories: {
+    filters_soon: 'Filters are coming in the next update.',
+    capture_failed_title: 'Could not capture',
+    capture_failed_body: 'The camera did not return anything. Try again.',
+    torch: 'Flash',
     delete_comment_title: 'Delete comment?',
     delete_comment_body: 'It will be removed for everyone.',
     remove_comment_title: 'Remove this comment?',

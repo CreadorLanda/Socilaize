@@ -83,7 +83,15 @@
       ],
       "@config-plugins/react-native-webrtc",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Yo uses the camera so you can take photos and record video for your stories and chats.",
+          "microphonePermission": "Yo uses the microphone so your videos and voice notes have sound.",
+          "recordAudioAndroid": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
