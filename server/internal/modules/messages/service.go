@@ -2,19 +2,13 @@ package messages
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 )
 
@@ -31,6 +25,7 @@ var (
 	ErrNotSender        = errors.New("not_message_sender")
 	ErrInvalidReceipt   = errors.New("invalid_receipt_status")
 	ErrViewsExhausted   = errors.New("views_exhausted")
+	ErrUnencryptedMessage = errors.New("message_must_be_e2ee_envelope")
 )
 
 // Broadcaster is satisfied by *realtime.Hub. Kept as an interface so the
@@ -61,15 +56,14 @@ type BlockList interface {
 
 type Service struct {
 	repo    *Repository
-	keysSvc *keys.Service
 	users   *users.Repository
 	hub     Broadcaster
 	push    PushNotifier
 	blocks  BlockList
 }
 
-func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
-	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo, hub: hub, push: push}
+func NewService(repo *Repository, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
+	return &Service{repo: repo, users: usersRepo, hub: hub, push: push}
 }
 
 // WithBlocks wires block enforcement.
@@ -80,62 +74,6 @@ func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Reposi
 func (s *Service) WithBlocks(b BlockList) *Service {
 	s.blocks = b
 	return s
-}
-
-// ── Session Init ────────────────────────────────────────────────────────────
-
-// InitSession establishes an E2EE session. It fetches the peer's pre-key
-// bundle, extracts identity keys, and derives a shared AES-256 key using
-// HMAC-HKDF over both identity keys plus a server-generated nonce.
-//
-// In a full client-side X3DH implementation the DH computation happens on
-// the device. Here we derive the key server-side for practical at-rest
-// encryption; the key never leaves the database.
-func (s *Service) InitSession(ctx context.Context, userID uuid.UUID, peerUsername string) (SessionInitResponse, error) {
-	peerUser, err := s.users.ByUsername(ctx, peerUsername)
-	if err != nil {
-		if users.IsNoRows(err) {
-			return SessionInitResponse{}, users.ErrNotFound
-		}
-		return SessionInitResponse{}, fmt.Errorf("resolve peer: %w", err)
-	}
-
-	existing, err := s.repo.GetSession(ctx, userID, peerUser.ID)
-	if err == nil && existing != nil {
-		return SessionInitResponse{SessionID: existing.ID, Created: false}, nil
-	}
-
-	bundle, err := s.keysSvc.BundleByUsername(ctx, peerUsername)
-	if err != nil {
-		return SessionInitResponse{}, fmt.Errorf("fetch peer bundle: %w", err)
-	}
-
-	// Decode the peer's identity key.
-	peerIdentity, err := base64.RawURLEncoding.DecodeString(bundle.IdentityKey)
-	if err != nil {
-		return SessionInitResponse{}, fmt.Errorf("decode peer identity: %w", err)
-	}
-
-	// Derive session key: HKDF( peer_identity || random_32_bytes, salt, 32 )
-	nonce := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return SessionInitResponse{}, fmt.Errorf("nonce: %w", err)
-	}
-
-	salt := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		return SessionInitResponse{}, fmt.Errorf("salt: %w", err)
-	}
-
-	ikm := append(peerIdentity, nonce...)
-	sessionKey := hkdfDerive(ikm, salt, 32)
-
-	sessionID, err := s.repo.UpsertSession(ctx, userID, peerUser.ID, sessionKey)
-	if err != nil {
-		return SessionInitResponse{}, fmt.Errorf("store session: %w", err)
-	}
-
-	return SessionInitResponse{SessionID: sessionID, Created: true}, nil
 }
 
 // ── Chats ───────────────────────────────────────────────────────────────────
@@ -314,6 +252,9 @@ func (s *Service) OpenLimitedMessage(ctx context.Context, chatID uuid.UUID, mess
 // ── Messages ────────────────────────────────────────────────────────────────
 
 func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, req SendMessageRequest) (Message, error) {
+	if !isEncryptedEnvelope(req.Content) {
+		return Message{}, ErrUnencryptedMessage
+	}
 	if err := s.requireParticipant(ctx, chatID, senderID); err != nil {
 		return Message{}, err
 	}
@@ -414,6 +355,9 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 
 // EditMessage updates content (sender only) and fans out over WS.
 func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msgID int64, content string) (Message, error) {
+	if !isEncryptedEnvelope(content) {
+		return Message{}, ErrUnencryptedMessage
+	}
 	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
 		return Message{}, err
 	}
@@ -721,31 +665,6 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		}
 		_ = s.push.NotifyUser(ctx, uid, category, title, body, data)
 	}
-}
-
-// ── HKDF ────────────────────────────────────────────────────────────────────
-
-// hkdfDerive derives key material using HMAC-based HKDF (RFC 5869
-// simplified: extract-then-expand with a single info step).
-func hkdfDerive(ikm, salt []byte, outLen int) []byte {
-	if len(salt) == 0 {
-		salt = make([]byte, 32)
-	}
-
-	// Extract
-	prk := hmac.New(sha256.New, salt)
-	prk.Write(ikm)
-	pseudoRandKey := prk.Sum(nil)
-
-	// Expand (single block for up to 32 bytes)
-	exp := hmac.New(sha256.New, pseudoRandKey)
-	exp.Write([]byte{0x01})
-	out := exp.Sum(nil)
-
-	if len(out) > outLen {
-		out = out[:outLen]
-	}
-	return out
 }
 
 // VotePoll records the caller's selections on a poll message.

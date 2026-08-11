@@ -13,9 +13,9 @@
 
 ---
 
-## Ponta-a-ponta (Signal Protocol)
+## Ponta-a-ponta (implementação própria no cliente)
 
-Usamos libsignal — o mesmo protocolo por trás do Signal e do WhatsApp — exposto por bindings Go no servidor (apenas para gestão de pre-key bundles) e pelas bibliotecas móveis oficiais no cliente (onde acontecem cifrar/decifrar).
+O cliente usa uma construção própria baseada em X25519/TweetNaCl. O servidor publica bundles públicos e transporta envelopes opacos; não usa libsignal e não possui chave privada capaz de decifrar o conteúdo.
 
 ### Chaves
 
@@ -24,13 +24,13 @@ Usamos libsignal — o mesmo protocolo por trás do Signal e do WhatsApp — exp
 | Identity key            | Longa, por dispositivo       | Fixa a identidade, assina signed pre-keys                         |
 | Signed pre-key          | Rotada a cada 7 dias         | Autentica o dispositivo, incluída em X3DH                         |
 | One-time pre-keys       | Em batches, uso único        | Submetidas em lotes; consumidas no início de sessão               |
-| Session keys            | Por chat                     | Derivadas por X3DH, rotacionadas via Double Ratchet               |
+| Session roots           | Por peer                     | Derivadas localmente pela construção própria X25519               |
 | Sender keys             | Por grupo                    | Usadas no fan-out de grupos após distribuição pairwise da chave   |
 
 ### Fluxos
 
 - **X3DH** faz a primeira combinação de chaves quando dois dispositivos comunicam pela primeira vez.
-- **Double Ratchet** rotaciona chaves de sessão a cada troca, dando forward secrecy e post-compromise security.
+- O cliente usa contadores e derivação simples de chaves de mensagem; isto não é Double Ratchet e não deve ser descrito como oferecendo as garantias de forward secrecy ou post-compromise security do Signal.
 - **Sender Keys** tornam mensagens de grupo eficientes: o emissor partilha uma Sender Key com cada membro por canais pairwise, depois cifra cada mensagem de grupo uma vez.
 
 ### O que o servidor guarda
@@ -92,7 +92,7 @@ O servidor nunca tem:
 | Identity key (dispositivo) | Vida do dispositivo                |
 | Signed pre-key             | A cada 7 dias                      |
 | One-time pre-keys          | Consumidas continuamente; cliente repõe quando baixo |
-| Session keys               | A cada mensagem (Double Ratchet)   |
+| Message keys              | Derivadas por contador no cliente   |
 | Refresh tokens             | A cada uso                         |
 | Server KEK (Vault/KMS)     | Anualmente, ou em incidente        |
 | Backup KEK                 | Anualmente                         |

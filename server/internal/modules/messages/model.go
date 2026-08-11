@@ -192,23 +192,6 @@ type Reaction struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ── Session ─────────────────────────────────────────────────────────────────
-
-// SessionInitRequest starts an E2EE session with a peer. The client
-// provides the peer's username; the server fetches their pre-key bundle,
-// performs X3DH, and stores a derived AES-256 key.
-type SessionInitRequest struct {
-	PeerUsername string `json:"peer_username" binding:"required"`
-	DeviceID     string `json:"device_id" binding:"required"`
-}
-
-// SessionInitResponse tells the client whether the session was newly
-// created or already existed.
-type SessionInitResponse struct {
-	SessionID uuid.UUID `json:"session_id"`
-	Created   bool      `json:"created"`
-}
-
 // ── Requests / Responses ────────────────────────────────────────────────────
 
 type CreateChatRequest struct {
@@ -282,14 +265,6 @@ type messageRow struct {
 	CreatedAt   time.Time
 	EditedAt    *time.Time
 	DeletedAt   *time.Time
-}
-
-type sessionRow struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	PeerID     uuid.UUID
-	SessionKey []byte // 32-byte AES-256 key
-	CreatedAt  time.Time
 }
 
 // PollTally is the vote state of one poll, as the server can see it: counts

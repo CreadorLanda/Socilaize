@@ -18,7 +18,7 @@
 ```
    Mobile / Web client
    ├─ SQLite (SQLCipher, encrypted)   ← full chat history, on device
-   └─ libsignal                       ← E2E sessions
+   └─ client crypto (TweetNaCl/X25519) ← E2EE envelopes
             │
             │  HTTPS / WSS (TLS 1.3, certificate pinning)
             ▼
@@ -45,7 +45,7 @@
 
 ### Mobile client
 - Holds the full chat history in **SQLite (SQLCipher)**.
-- Uses **libsignal** for X3DH + Double Ratchet sessions; group chats use Sender Keys.
+- Uses a custom client-side X25519/TweetNaCl construction; groups use Sender Keys. It is not libsignal or Double Ratchet.
 - Talks to the API over HTTPS for request/response and WSS for real-time.
 - Stores the database key in the **OS keychain** (iOS Keychain / Android Keystore); optional biometric unlock on launch.
 
@@ -74,11 +74,11 @@
 
 ## Request lifecycle (text message, native chat)
 
-1. Client A composes a message, encrypts to each recipient device with libsignal, produces N ciphertext envelopes.
+1. Client A composes a message and produces an opaque ciphertext envelope locally.
 2. Client A `POST /messages` with the envelopes + addressing metadata.
 3. Controller validates auth → Service persists envelopes in Postgres → enqueues delivery on `q:messages.deliver`.
 4. Workers fan envelopes out: push WS frames to online recipients via Redis pub/sub, schedule push notifications for offline ones.
-5. Client B receives the envelope over WS, decrypts with libsignal, persists to its local SQLite, acks.
+5. Client B receives the envelope over WS, decrypts locally, persists to its local SQLite, and acks.
 6. Server deletes the envelope (or expires it after a short TTL if no ack).
 
 The server never sees plaintext.

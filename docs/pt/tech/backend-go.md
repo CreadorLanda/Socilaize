@@ -16,7 +16,7 @@
 | Migrações      | `golang-migrate/migrate`                  | Um `.sql` por mudança                   |
 | Validação      | `go-playground/validator/v10`             | Por struct tags                         |
 | Auth           | JWT (`golang-jwt/jwt/v5`) + refresh       | Access curto, refresh rotativo          |
-| E2E            | libsignal (CGO) **ou** `crossle/libsignal-protocol-go` | Decisão no PR `backend/auth` |
+| E2E            | Envelopes opacos X25519/TweetNaCl gerados no cliente | Sem chaves de sessão no servidor |
 | Object storage | Compatível S3 (MinIO em dev)              | Envelope encryption server-side         |
 | Logging        | `rs/zerolog`                              | JSON em prod, console em dev            |
 | Telemetria     | OpenTelemetry (traces + métricas)         |                                         |

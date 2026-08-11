@@ -12,9 +12,9 @@
 
 ---
 
-## End-to-end (Signal Protocol)
+## End-to-end (custom client implementation)
 
-We use libsignal — the same protocol behind Signal and WhatsApp — exposed through Go bindings on the server (only for pre-key bundle handling) and through the official mobile libraries on the client (where actual encryption / decryption happens).
+The client uses a custom X25519/TweetNaCl construction. The server publishes public bundles and transports opaque envelopes; it does not use libsignal and has no private key capable of decrypting message content.
 
 ### Keys
 
@@ -23,13 +23,13 @@ We use libsignal — the same protocol behind Signal and WhatsApp — exposed th
 | Identity key            | Long-lived per device | Pins the device identity, signs signed pre-keys                  |
 | Signed pre-key          | Rotated every 7 days  | Authenticates the device, included in X3DH                       |
 | One-time pre-keys       | Batched, single-use   | Uploaded in batches; consumed at session start                   |
-| Session keys            | Per chat              | Derived by X3DH, ratcheted via Double Ratchet                    |
+| Session roots           | Per peer              | Derived locally by the custom X25519 construction                 |
 | Sender keys             | Per group             | Used for fan-out in groups after pairwise key distribution       |
 
 ### Flows
 
 - **X3DH** does the initial key agreement when two devices first message each other.
-- **Double Ratchet** rotates session keys on every exchange, giving forward secrecy and post-compromise security.
+- The client uses counters and simple message-key derivation; this is not Double Ratchet and must not be described as providing Signal's forward-secrecy or post-compromise guarantees.
 - **Sender Keys** make group messages efficient: the sender shares a Sender Key with each member over pairwise channels, then encrypts each group message once.
 
 ### What the server stores
@@ -89,7 +89,7 @@ The server never holds:
 - Bridge data lives in separate tables and goes through a separate code path.
 - Session blobs are envelope-encrypted at rest.
 - The link flow forces the user to acknowledge the trade-off before completing the link.
-- Native Socialize chats are *not* affected — their Signal sessions remain end-to-end.
+- Native Socialize chats use the same client-generated opaque envelopes; no server-side Signal session exists.
 
 ---
 
@@ -100,7 +100,7 @@ The server never holds:
 | Identity key (device)      | Lifetime of the device             |
 | Signed pre-key             | Every 7 days                       |
 | One-time pre-keys          | Continuously consumed; client tops up when low |
-| Session keys               | Every message (Double Ratchet)     |
+| Message keys              | Counter-derived by the client       |
 | Refresh tokens             | On every use                       |
 | Server KEK (Vault/KMS)     | Annually, or on incident           |
 | Backup KEK                 | Annually                           |

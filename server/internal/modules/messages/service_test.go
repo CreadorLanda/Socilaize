@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/blocks"
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/keys"
 	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
 	"github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
 )
@@ -56,8 +55,7 @@ func createTestUser(t *testing.T, pool *pgxpool.Pool, username string) uuid.UUID
 
 func newTestService(pool *pgxpool.Pool) *Service {
 	usersRepo := users.NewRepository(pool)
-	keysSvc := keys.NewService(keys.NewRepository(pool), usersRepo)
-	return NewService(NewRepository(pool, ""), keysSvc, usersRepo, nil, nil).
+	return NewService(NewRepository(pool, ""), usersRepo, nil, nil).
 		WithBlocks(blocks.NewRepo(pool))
 }
 

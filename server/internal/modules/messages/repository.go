@@ -54,41 +54,6 @@ func (r *Repository) decrypt(stored string) string {
 	return dec
 }
 
-// ── Sessions ────────────────────────────────────────────────────────────────
-
-func (r *Repository) GetSession(ctx context.Context, userID, peerID uuid.UUID) (*sessionRow, error) {
-	const q = `
-		SELECT id, user_id, peer_id, session_key, created_at
-		FROM sessions
-		WHERE user_id = $1 AND peer_id = $2
-		ORDER BY created_at DESC
-		LIMIT 1
-	`
-	row := r.db.QueryRow(ctx, q, userID, peerID)
-	var s sessionRow
-	if err := row.Scan(&s.ID, &s.UserID, &s.PeerID, &s.SessionKey, &s.CreatedAt); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-func (r *Repository) UpsertSession(ctx context.Context, userID, peerID uuid.UUID, key []byte) (uuid.UUID, error) {
-	const q = `
-		INSERT INTO sessions (user_id, device_id, peer_id, peer_device_id, session_key)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (user_id, device_id, peer_id, peer_device_id)
-		DO UPDATE SET session_key = EXCLUDED.session_key, created_at = NOW()
-		RETURNING id
-	`
-	var id uuid.UUID
-	err := r.db.QueryRow(ctx, q,
-		userID, uuid.Nil, // device_id: single-device for now
-		peerID, uuid.Nil, // peer_device_id: single-device for now
-		key,
-	).Scan(&id)
-	return id, err
-}
-
 // ── Chats ───────────────────────────────────────────────────────────────────
 
 func (r *Repository) CreateChat(ctx context.Context, chatType ChatType, createdBy uuid.UUID, peerIDs []uuid.UUID, status ChatStatus) (uuid.UUID, error) {
