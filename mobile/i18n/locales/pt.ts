@@ -830,6 +830,10 @@ export default {
     both_revealed: 'Os dois aceitaram — já se conhecem.',
   },
   stories: {
+    filters_soon: 'Os filtros chegam na próxima atualização.',
+    capture_failed_title: 'Não foi possível capturar',
+    capture_failed_body: 'A câmara não devolveu nada. Tenta outra vez.',
+    torch: 'Flash',
     delete_comment_title: 'Eliminar comentário?',
     delete_comment_body: 'Será removido para toda a gente.',
     remove_comment_title: 'Remover este comentário?',
