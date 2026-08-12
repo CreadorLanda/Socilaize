@@ -274,6 +274,14 @@ func TestVoteOnAnotherUsersPoll(t *testing.T) {
 		t.Fatalf("AcceptChat: %v", err)
 	}
 
+	game, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
+		Content:     testDirectEnvelope(`{"kind":"game","game":"truth-or-dare"}`),
+		MessageType: MsgGame,
+	})
+	if err != nil || game.MessageType != MsgGame {
+		t.Fatalf("SendMessage(game): message=%+v err=%v", game, err)
+	}
+
 	// Alice posts the poll; the body stays opaque to the server.
 	poll, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
 		Content:     testDirectEnvelope(`{"kind":"poll","question":"?","options":[{"id":"o0"},{"id":"o1"}]}`),

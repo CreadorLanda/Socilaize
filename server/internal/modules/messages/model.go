@@ -109,6 +109,7 @@ const (
 	MsgEvent    MessageType = "event"
 	MsgSystem   MessageType = "system"
 	MsgReply    MessageType = "reply"
+	MsgGame     MessageType = "game"
 	// MsgCall is the row a call leaves in the conversation. Its content is
 	// the call id, and the client resolves the outcome from the call log —
 	// the outcome changes after the message is written, so it cannot be

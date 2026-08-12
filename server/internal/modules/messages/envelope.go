@@ -106,7 +106,7 @@ func envelopeError(content string) error {
 func userSendableMessageType(t MessageType) bool {
 	switch t {
 	case MsgText, MsgImage, MsgVideo, MsgAudio, MsgDocument, MsgSticker,
-		MsgLocation, MsgContact, MsgPoll, MsgEvent, MsgReply:
+		MsgLocation, MsgContact, MsgPoll, MsgEvent, MsgReply, MsgGame:
 		return true
 	default:
 		return false

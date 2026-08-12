@@ -82,7 +82,7 @@ func TestValidateEnvelopeForChat(t *testing.T) {
 }
 
 func TestUserSendableMessageType(t *testing.T) {
-	for _, typ := range []MessageType{MsgText, MsgImage, MsgVideo, MsgAudio, MsgDocument, MsgSticker, MsgLocation, MsgContact, MsgPoll, MsgEvent, MsgReply} {
+	for _, typ := range []MessageType{MsgText, MsgImage, MsgVideo, MsgAudio, MsgDocument, MsgSticker, MsgLocation, MsgContact, MsgPoll, MsgEvent, MsgReply, MsgGame} {
 		if !userSendableMessageType(typ) {
 			t.Errorf("%q should be user-sendable", typ)
 		}
