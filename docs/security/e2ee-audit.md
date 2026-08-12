@@ -31,8 +31,11 @@ and random values, then persisted it in a table called `sessions`.
 
 That table is also the authentication refresh-token table. It must not be
 dropped. Migration `0040` removes only legacy E2EE columns if they exist and
-leaves auth columns and rows intact. Its down migration deliberately does not
-recreate key storage.
+leaves auth columns and rows intact. Its down migration is a documented no-op:
+the normal `0001 -> ... -> 0039` sequence never added those columns, because
+`0006` used `CREATE TABLE IF NOT EXISTS` against the already-existing auth
+table. Rollback therefore restores the real pre-0040 schema without recreating
+dead key storage.
 
 ## Properties present and absent
 
@@ -55,8 +58,11 @@ The server still has an at-rest `MESSAGE_KEY` layer. It is not an E2EE key and
 does not give the server the client root key, but it must never be described as
 the E2EE mechanism. Existing historical plaintext rows, previews, logs, media,
 link previews, and non-message notification categories require separate data
-classification. The user-generated message endpoint rejects content that is
-not a structurally valid E2EE envelope. Server-generated control rows, such as
+classification. The user-generated message endpoint authorizes the participant
+first, then rejects content that is not a structurally valid E2EE envelope.
+Direct chats accept only `soc1.` and groups accept only `soc1g.`; for groups,
+`s` must equal the authenticated sender UUID. The server validates structure
+only and does not verify a MAC. Server-generated control rows, such as
 disappearing-message notices and call traces, use a separate explicit path and
 contain control metadata rather than user conversation plaintext. Human review
 must decide how historical plaintext is quarantined or migrated.
