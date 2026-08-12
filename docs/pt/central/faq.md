@@ -1,6 +1,6 @@
 # ❓ FAQ
 
-**O que é Socialize?**
+**O que é Yo?**
 Mensageiro open-source, customizável e focado em privacidade.
 
 **É gratuito?**

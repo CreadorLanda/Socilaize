@@ -1,6 +1,6 @@
 # Yo 💬
 
-> An open-source messenger, encrypted on the device.
+> The freedom of a modded messenger, without having to trust a stranger's APK.
 
 ![Yo](./assets/banner.png)
 
@@ -9,6 +9,42 @@
 [![Version](https://img.shields.io/badge/version-0.1.0--alpha-red)](https://github.com/CreadorLanda/Socilaize)
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/)
 [![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2054-blue)](https://reactnative.dev/)
+
+---
+
+## Why this exists
+
+Anyone who used GB WhatsApp, WhatsApp Plus or FM WhatsApp knows the feeling.
+You could freeze your last seen. Read a message without the ticks turning blue.
+Keep something the sender deleted. Lock a single conversation. Change how the
+whole thing looked. Anyone who was on MSN with Messenger Plus! remembers nudges,
+winks, and sounds that fired when a particular person typed your name.
+
+The official apps could have shipped every one of those. They chose not to, and
+they still choose not to. So people went and installed a modified APK from a
+forum.
+
+**And paid for it.** Those mods are closed source. You install a binary nobody
+can read, from a stranger, and hand it every message you will ever send. Some
+of them shipped spyware outright. Others were fine until an update was not. You
+cannot check, because the source was never there to check. Messenger Plus! came
+bundled with adware for years. WhatsApp bans the accounts that use the mods,
+which tells you nothing about whether the mod was safe — only that it was
+unauthorised.
+
+The features were never the problem. **The deal was.** You had to choose
+between an app that respected you and an app that let you do things.
+
+Yo is that choice removed. Ghost mode, freeze last seen, anti-delete, chat lock,
+themes, nudges — the features people install sketchy APKs to get — built into a
+messenger whose source you can read, whose messages are encrypted on your
+device, and which will never ship analytics, telemetry or tracking of any kind.
+
+That last part is a rule, not a mood. [CONTRIBUTING.md](./CONTRIBUTING.md#security-rules)
+rejects any pull request that adds one, and says so before anyone writes a line.
+
+Not everything on that list exists yet — the [issues](https://github.com/CreadorLanda/Socilaize/issues)
+say honestly which do.
 
 ---
 
@@ -121,6 +157,16 @@ without turning the chat into a group, live broadcasts.
 **Privacy** — per-chat lock with a code, last-seen and photo visibility,
 read receipts, directional blocking, account deletion that actually deletes.
 
+Of the mod features named at the top, **chat lock** is the one that already
+works. Ghost mode and freeze last seen are
+[#122](https://github.com/CreadorLanda/Socilaize/issues/122), app lock is
+[#121](https://github.com/CreadorLanda/Socilaize/issues/121), anti-delete is
+[#123](https://github.com/CreadorLanda/Socilaize/issues/123), nudges and winks
+are [#126](https://github.com/CreadorLanda/Socilaize/issues/126), and themes
+that survive a restart are
+[#114](https://github.com/CreadorLanda/Socilaize/issues/114). None of them is
+done, and the issues say so rather than this page pretending otherwise.
+
 ---
 
 ## Roadmap
@@ -167,8 +213,15 @@ codebase, you need the commercial licence. See
 
 ## Philosophy
 
-Messengers got restrictive. Yo exists to give people freedom, control and
-customisation — without lying to them about what it protects.
+The mods were right about what people wanted and wrong about what it should
+cost them.
+
+Yo is not a clone of WhatsApp and not a clone of the mods. It is the argument
+those mods were making — that a messenger should bend to the person using it —
+carried out by someone willing to show the source.
+
+Freedom, control and customisation. Without lying to you about what is
+protected, and without asking you to install a binary you cannot read.
 
 ---
 

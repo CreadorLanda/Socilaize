@@ -1,6 +1,6 @@
 # 🌟 Recursos Sociais
 
-> Documentação completa dos recursos sociais do Socialize.
+> Documentação completa dos recursos sociais do Yo.
 
 ---
 
