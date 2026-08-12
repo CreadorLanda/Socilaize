@@ -79,10 +79,10 @@ func TestDirectChatFriendRequestFlow(t *testing.T) {
 		t.Fatalf("status = %q, want %q", chat.Status, ChatStatusPending)
 	}
 
-	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "hi"}); err != nil {
+	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("hi")}); err != nil {
 		t.Fatalf("first message while pending: %v", err)
 	}
-	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "hi again"}); !errors.Is(err, ErrPendingChatLimit) {
+	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("hi again")}); !errors.Is(err, ErrPendingChatLimit) {
 		t.Fatalf("expected pending_chat_limit on second message, got %v", err)
 	}
 
@@ -102,11 +102,11 @@ func TestDirectChatFriendRequestFlow(t *testing.T) {
 	// Regression guard: before the fix, the 1-message cap applied forever,
 	// not just while pending — active chats must allow unlimited messages.
 	for i := 0; i < 3; i++ {
-		if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "after accept"}); err != nil {
+		if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("after accept")}); err != nil {
 			t.Fatalf("message %d from alice after accept: %v", i, err)
 		}
 	}
-	if _, err := svc.SendMessage(ctx, chat.ID, bob, SendMessageRequest{Content: "reply"}); err != nil {
+	if _, err := svc.SendMessage(ctx, chat.ID, bob, SendMessageRequest{Content: testDirectEnvelope("reply")}); err != nil {
 		t.Fatalf("bob's reply after accept: %v", err)
 	}
 }
@@ -131,7 +131,7 @@ func TestBlockedChatRejectsMessages(t *testing.T) {
 	if err := blocks.NewRepo(pool).Block(ctx, bob, alice); err != nil {
 		t.Fatalf("Block: %v", err)
 	}
-	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "hello?"}); !errors.Is(err, ErrChatBlocked) {
+	if _, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("hello?")}); !errors.Is(err, ErrChatBlocked) {
 		t.Fatalf("expected chat_blocked, got %v", err)
 	}
 }
@@ -187,11 +187,11 @@ func TestListMessagesCarriesReceiptCounts(t *testing.T) {
 		t.Fatalf("AcceptChat: %v", err)
 	}
 
-	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "read this"})
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("read this")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	untouched, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "ignore this"})
+	untouched, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("ignore this")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestVoteOnAnotherUsersPoll(t *testing.T) {
 
 	// Alice posts the poll; the body stays opaque to the server.
 	poll, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
-		Content:     `{"kind":"poll","question":"?","options":[{"id":"o0"},{"id":"o1"}]}`,
+		Content:     testDirectEnvelope(`{"kind":"poll","question":"?","options":[{"id":"o0"},{"id":"o1"}]}`),
 		MessageType: MsgPoll,
 	})
 	if err != nil {
@@ -284,8 +284,8 @@ func TestVoteOnAnotherUsersPoll(t *testing.T) {
 	}
 
 	// The regression: editing someone else's message must still be refused.
-	if _, err := svc.EditMessage(ctx, chat.ID, bob, poll.ID, "hijacked"); err == nil {
-		t.Fatal("bob was allowed to edit alice's message — the old vote path")
+	if _, err := svc.EditMessage(ctx, chat.ID, bob, poll.ID, "hijacked"); !errors.Is(err, ErrNotSender) {
+		t.Fatalf("non-owner edit error = %v, want %v", err, ErrNotSender)
 	}
 
 	// But voting must succeed.
@@ -389,7 +389,7 @@ func TestForwardCountCannotBeLaundered(t *testing.T) {
 	}
 
 	// Written here, not forwarded.
-	fresh, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "original"})
+	fresh, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("original")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestForwardCountCannotBeLaundered(t *testing.T) {
 	// Forwarding something that had already made one hop makes two.
 	one := 1
 	fwd, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
-		Content: "passed along", ForwardCount: &one,
+		Content: testDirectEnvelope("passed along"), ForwardCount: &one,
 	})
 	if err != nil {
 		t.Fatalf("SendMessage(forward): %v", err)
@@ -414,7 +414,7 @@ func TestForwardCountCannotBeLaundered(t *testing.T) {
 	// a message says it was written here.
 	zero := 0
 	firstHop, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
-		Content: "from a channel", ForwardCount: &zero,
+		Content: testDirectEnvelope("from a channel"), ForwardCount: &zero,
 	})
 	if err != nil {
 		t.Fatalf("SendMessage(zero): %v", err)
@@ -427,7 +427,7 @@ func TestForwardCountCannotBeLaundered(t *testing.T) {
 	// "forwarded many times" label.
 	many := 6
 	heavy, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
-		Content: "chain letter", ForwardCount: &many,
+		Content: testDirectEnvelope("chain letter"), ForwardCount: &many,
 	})
 	if err != nil {
 		t.Fatalf("SendMessage(many): %v", err)
@@ -459,7 +459,7 @@ func TestReadReceiptsAreReciprocal(t *testing.T) {
 		t.Fatalf("AcceptChat: %v", err)
 	}
 
-	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "olá"})
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("olá")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestReadReceiptsAreReciprocal(t *testing.T) {
 	}
 
 	// And Alice's own reads stop being recorded as reads.
-	fromBob, err := svc.SendMessage(ctx, chat.ID, bob, SendMessageRequest{Content: "e tu"})
+	fromBob, err := svc.SendMessage(ctx, chat.ID, bob, SendMessageRequest{Content: testDirectEnvelope("e tu")})
 	if err != nil {
 		t.Fatalf("SendMessage(bob): %v", err)
 	}
@@ -557,7 +557,7 @@ func TestDisappearingStartsOnRead(t *testing.T) {
 		t.Fatalf("SetDisappearing: %v", err)
 	}
 
-	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "efémera"})
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("efémera")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -632,11 +632,11 @@ func TestExpiredMessagesAreHiddenThenSwept(t *testing.T) {
 	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
 		t.Fatalf("AcceptChat: %v", err)
 	}
-	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "ida"})
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("ida")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	keep, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "fica"})
+	keep, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("fica")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -795,7 +795,7 @@ func TestLimitedViewSurvivesReload(t *testing.T) {
 
 	once := 1
 	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{
-		Content: "for your eyes only", ViewLimit: &once,
+		Content: testDirectEnvelope("for your eyes only"), ViewLimit: &once,
 	})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
@@ -876,7 +876,7 @@ func TestReactionsSurviveReload(t *testing.T) {
 	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
 		t.Fatalf("AcceptChat: %v", err)
 	}
-	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "olá"})
+	sent, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("olá")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}

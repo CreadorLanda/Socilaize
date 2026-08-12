@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -65,6 +67,47 @@ func validateEnvelope(content string) bool {
 		return h.Version == 1 && h.Identity != "" && h.Counter >= 0
 	case *groupEnvelopeHeader:
 		return h.Version == 1 && h.Sender != "" && h.Epoch >= 0 && h.Counter >= 0
+	default:
+		return false
+	}
+}
+
+func validateEnvelopeForChat(content string, senderID uuid.UUID, chatType ChatType) bool {
+	if chatType == ChatDirect && !strings.HasPrefix(content, directEnvelopePrefix) {
+		return false
+	}
+	if chatType == ChatGroup && !strings.HasPrefix(content, groupEnvelopePrefix) {
+		return false
+	}
+	if !validateEnvelope(content) {
+		return false
+	}
+	if chatType != ChatGroup {
+		return true
+	}
+	parts := strings.Split(strings.TrimPrefix(content, groupEnvelopePrefix), ".")
+	if len(parts) != 2 {
+		return false
+	}
+	var header groupEnvelopeHeader
+	if b, err := base64.RawURLEncoding.DecodeString(parts[0]); err != nil || json.Unmarshal(b, &header) != nil {
+		return false
+	}
+	return header.Sender == senderID.String()
+}
+
+func envelopeError(content string) error {
+	if strings.HasPrefix(content, directEnvelopePrefix) || strings.HasPrefix(content, groupEnvelopePrefix) {
+		return ErrInvalidEnvelopeChat
+	}
+	return ErrUnencryptedMessage
+}
+
+func userSendableMessageType(t MessageType) bool {
+	switch t {
+	case MsgText, MsgImage, MsgVideo, MsgAudio, MsgDocument, MsgSticker,
+		MsgLocation, MsgContact, MsgPoll, MsgEvent, MsgReply:
+		return true
 	default:
 		return false
 	}

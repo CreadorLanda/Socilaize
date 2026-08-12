@@ -12,18 +12,20 @@ import (
 )
 
 var (
-	ErrChatNotFound     = errors.New("chat_not_found")
-	ErrNotParticipant   = errors.New("not_participant")
-	ErrChatBlocked      = errors.New("chat_blocked")
-	ErrPendingChatLimit = errors.New("pending_chat_limit")
-	ErrCannotAcceptOwn  = errors.New("cannot_accept_own_request")
-	ErrChatNotPending   = errors.New("chat_not_pending")
-	ErrMessageNotFound  = errors.New("message_not_found")
-	ErrInvalidReport    = errors.New("invalid_report")
-	ErrNotSender        = errors.New("not_message_sender")
-	ErrInvalidReceipt   = errors.New("invalid_receipt_status")
-	ErrViewsExhausted   = errors.New("views_exhausted")
-	ErrUnencryptedMessage = errors.New("message_must_be_e2ee_envelope")
+	ErrChatNotFound        = errors.New("chat_not_found")
+	ErrNotParticipant      = errors.New("not_participant")
+	ErrChatBlocked         = errors.New("chat_blocked")
+	ErrPendingChatLimit    = errors.New("pending_chat_limit")
+	ErrCannotAcceptOwn     = errors.New("cannot_accept_own_request")
+	ErrChatNotPending      = errors.New("chat_not_pending")
+	ErrMessageNotFound     = errors.New("message_not_found")
+	ErrInvalidReport       = errors.New("invalid_report")
+	ErrNotSender           = errors.New("not_message_sender")
+	ErrInvalidReceipt      = errors.New("invalid_receipt_status")
+	ErrViewsExhausted      = errors.New("views_exhausted")
+	ErrUnencryptedMessage  = errors.New("message_must_be_e2ee_envelope")
+	ErrInvalidMessageType  = errors.New("invalid_message_type")
+	ErrInvalidEnvelopeChat = errors.New("invalid_e2ee_envelope_for_chat")
 )
 
 // Broadcaster is satisfied by *realtime.Hub. Kept as an interface so the
@@ -53,11 +55,11 @@ type BlockList interface {
 }
 
 type Service struct {
-	repo    *Repository
-	users   *users.Repository
-	hub     Broadcaster
-	push    PushNotifier
-	blocks  BlockList
+	repo   *Repository
+	users  *users.Repository
+	hub    Broadcaster
+	push   PushNotifier
+	blocks BlockList
 }
 
 func NewService(repo *Repository, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
@@ -250,9 +252,6 @@ func (s *Service) OpenLimitedMessage(ctx context.Context, chatID uuid.UUID, mess
 // ── Messages ────────────────────────────────────────────────────────────────
 
 func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, req SendMessageRequest) (Message, error) {
-	if !validateEnvelope(req.Content) {
-		return Message{}, ErrUnencryptedMessage
-	}
 	if err := s.requireParticipant(ctx, chatID, senderID); err != nil {
 		return Message{}, err
 	}
@@ -265,6 +264,10 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Message{}, ErrChatNotFound
 		}
+		return Message{}, err
+	}
+	chat, err := s.repo.GetChat(ctx, chatID)
+	if err != nil {
 		return Message{}, err
 	}
 	// A block stops a one-to-one conversation and nothing else.
@@ -299,6 +302,12 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 		if count >= 1 {
 			return Message{}, ErrPendingChatLimit
 		}
+	}
+	if !userSendableMessageType(msgType) {
+		return Message{}, ErrInvalidMessageType
+	}
+	if !validateEnvelopeForChat(req.Content, senderID, chat.Type) {
+		return Message{}, envelopeError(req.Content)
 	}
 	// One more hop than the client claims, and never fewer than zero. Taking
 	// the number at face value would let a client reset a chain that has been
@@ -353,9 +362,6 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 
 // EditMessage updates content (sender only) and fans out over WS.
 func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msgID int64, content string) (Message, error) {
-	if !validateEnvelope(content) {
-		return Message{}, ErrUnencryptedMessage
-	}
 	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
 		return Message{}, err
 	}
@@ -373,6 +379,16 @@ func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msg
 	// edit what it wrote. The comparison failing is the correct answer.
 	if existing.SenderID == nil || *existing.SenderID != userID {
 		return Message{}, ErrNotSender
+	}
+	if existing.MessageType == MsgSystem || existing.MessageType == MsgCall {
+		return Message{}, ErrInvalidMessageType
+	}
+	chat, err := s.repo.GetChat(ctx, chatID)
+	if err != nil {
+		return Message{}, err
+	}
+	if !validateEnvelopeForChat(content, userID, chat.Type) {
+		return Message{}, envelopeError(content)
 	}
 	if err := s.repo.EditMessage(ctx, chatID, userID, msgID, content); err != nil {
 		return Message{}, err
@@ -645,8 +661,13 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		"sender_avatar": msg.SenderAvatar,
 		// Only a structurally valid envelope is safe to forward to a device.
 		// Invalid or historical rows must never become notification plaintext.
-		"content":       func() string { if encrypted { return msg.Content }; return "" }(),
-		"encrypted":     boolStr(encrypted),
+		"content": func() string {
+			if encrypted {
+				return msg.Content
+			}
+			return ""
+		}(),
+		"encrypted": boolStr(encrypted),
 	}
 	for _, uid := range ids {
 		if uid == senderID {
