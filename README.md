@@ -6,7 +6,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](./LICENSE)
 [![Commercial licence](https://img.shields.io/badge/Commercial-available-green.svg)](./LICENSING.md)
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha-red)](https://github.com/CreadorLanda/Socilaize)
+[![Version](https://img.shields.io/badge/version-0.1.0--alpha-red)](https://github.com/CreadorLanda/yo)
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/)
 [![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2054-blue)](https://reactnative.dev/)
 
@@ -43,7 +43,7 @@ device, and which will never ship analytics, telemetry or tracking of any kind.
 That last part is a rule, not a mood. [CONTRIBUTING.md](./CONTRIBUTING.md#security-rules)
 rejects any pull request that adds one, and says so before anyone writes a line.
 
-Not everything on that list exists yet — the [issues](https://github.com/CreadorLanda/Socilaize/issues)
+Not everything on that list exists yet — the [issues](https://github.com/CreadorLanda/yo/issues)
 say honestly which do.
 
 ---
@@ -55,9 +55,9 @@ ciphertext it cannot read. Groups, channels, stories, voice and video calls,
 stickers, and a game to play in a group chat.
 
 It is **alpha**. Android works end to end. iOS does not have push yet
-([#116](https://github.com/CreadorLanda/Socilaize/issues/116)). Some screens are
+([#116](https://github.com/CreadorLanda/yo/issues/116)). Some screens are
 built on top of nothing real, and those are labelled
-[`mock`](https://github.com/CreadorLanda/Socilaize/labels/mock) in the issues
+[`mock`](https://github.com/CreadorLanda/yo/labels/mock) in the issues
 rather than described as finished here.
 
 ---
@@ -67,8 +67,8 @@ rather than described as finished here.
 Requires [Bun](https://bun.sh), [Go 1.26+](https://go.dev), and Docker.
 
 ```bash
-git clone https://github.com/CreadorLanda/Socilaize.git
-cd Socilaize
+git clone https://github.com/CreadorLanda/yo.git
+cd yo
 
 # Server: Postgres, Redis and LiveKit
 cd server/deploy/docker && docker compose up -d
@@ -89,7 +89,7 @@ The app needs a development build, not Expo Go — it uses native modules
 ## Structure
 
 ```
-Socilaize/
+yo/
 ├── mobile/     React Native + Expo app
 ├── server/     Go API, WebSocket hub, push worker
 ├── docs/       Architecture, security, design system
@@ -159,12 +159,12 @@ read receipts, directional blocking, account deletion that actually deletes.
 
 Of the mod features named at the top, **chat lock** is the one that already
 works. Ghost mode and freeze last seen are
-[#122](https://github.com/CreadorLanda/Socilaize/issues/122), app lock is
-[#121](https://github.com/CreadorLanda/Socilaize/issues/121), anti-delete is
-[#123](https://github.com/CreadorLanda/Socilaize/issues/123), nudges and winks
-are [#126](https://github.com/CreadorLanda/Socilaize/issues/126), and themes
+[#122](https://github.com/CreadorLanda/yo/issues/122), app lock is
+[#121](https://github.com/CreadorLanda/yo/issues/121), anti-delete is
+[#123](https://github.com/CreadorLanda/yo/issues/123), nudges and winks
+are [#126](https://github.com/CreadorLanda/yo/issues/126), and themes
 that survive a restart are
-[#114](https://github.com/CreadorLanda/Socilaize/issues/114). None of them is
+[#114](https://github.com/CreadorLanda/yo/issues/114). None of them is
 done, and the issues say so rather than this page pretending otherwise.
 
 ---
@@ -178,9 +178,9 @@ done, and the issues say so rather than this page pretending otherwise.
 | 3 | Offline outbox, themes that persist, iOS | in progress |
 | 4 | Communities, badges, AI, mini apps | planned |
 
-Everything planned is an [issue](https://github.com/CreadorLanda/Socilaize/issues).
+Everything planned is an [issue](https://github.com/CreadorLanda/yo/issues).
 What blocks a first release is labelled
-[`mvp`](https://github.com/CreadorLanda/Socilaize/labels/mvp).
+[`mvp`](https://github.com/CreadorLanda/yo/labels/mvp).
 
 ---
 
@@ -191,7 +191,7 @@ Pull requests go to **`dev`**, never to `main`. Read
 you agree to by opening a pull request, and the security rules that get code
 rejected.
 
-Start with a [`good first issue`](https://github.com/CreadorLanda/Socilaize/labels/good%20first%20issue).
+Start with a [`good first issue`](https://github.com/CreadorLanda/yo/labels/good%20first%20issue).
 They are picked so the answer already exists somewhere in the codebase.
 
 ---

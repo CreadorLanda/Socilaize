@@ -11,6 +11,18 @@ import { splitStatements } from './split';
  * only place that key is used; everything downstream deals in plain rows.
  */
 
+/**
+ * Deliberately still `socialize.db`, after the project was renamed to Yo.
+ *
+ * This filename is the address of every message already on someone's phone.
+ * Changing it does not rename the file — it opens a new, empty database and
+ * silently abandons the old one. Every conversation the person had would
+ * vanish on update, with the data still sitting on disk where nothing looks
+ * for it.
+ *
+ * A rename is possible, but it is a migration — open the old name, copy, then
+ * delete — not a string edit. Not worth doing for tidiness.
+ */
 const DB_NAME = 'socialize.db';
 
 let db: DB | null = null;

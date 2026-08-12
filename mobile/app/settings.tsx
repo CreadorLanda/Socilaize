@@ -460,7 +460,13 @@ export default function SettingsScreen() {
           <Row
             icon="document-text-outline"
             label={t('settings.about_terms')}
-            onPress={() => Linking.openURL('https://socialize.app/terms')}
+            /* socialize.app has never existed, so this row opened a dead
+               link. The policy is real and lives in the repository. */
+            onPress={() =>
+              Linking.openURL(
+                'https://github.com/CreadorLanda/yo/blob/main/docs/security/privacy-policy.md',
+              )
+            }
             last
           />
         </Group>

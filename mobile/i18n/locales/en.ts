@@ -68,7 +68,7 @@ export default {
       subtitle: 'Your username is how people can find and message you on Yo, even without your number.',
       label: 'Username',
       placeholder: 'alexlanda',
-      hint_available: 'socialize.app/@{{username}} is available',
+      hint_available: '@{{username}} is available',
       hint_default: '3–20 lowercase letters, numbers, or underscores.',
       error_invalid: 'Use 3–20 lowercase letters, numbers, or underscores.',
       error_taken: 'This username is already taken.',

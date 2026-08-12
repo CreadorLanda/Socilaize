@@ -68,7 +68,7 @@ export default {
       subtitle: 'O teu username é como as pessoas te encontram e contactam no Yo, mesmo sem o teu número.',
       label: 'Nome de utilizador',
       placeholder: 'alexlanda',
-      hint_available: 'socialize.app/@{{username}} está disponível',
+      hint_available: '@{{username}} está disponível',
       hint_default: '3–20 letras minúsculas, números ou underscores.',
       error_invalid: 'Usa 3–20 letras minúsculas, números ou underscores.',
       error_taken: 'Este nome de utilizador já está em uso.',

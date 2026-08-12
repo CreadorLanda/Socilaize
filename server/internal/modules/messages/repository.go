@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/CreadorLanda/Socilaize/server/internal/crypto"
+	"github.com/CreadorLanda/yo/server/internal/crypto"
 )
 
 type Repository struct {
