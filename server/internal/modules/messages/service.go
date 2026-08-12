@@ -275,15 +275,12 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 	// Groups are deliberately untouched: a group is a place with other people
 	// in it, and one member's decision about another is not a reason to take
 	// their conversation away. The app tells you who in the room you blocked.
-	if s.blocks != nil {
-		chat, err := s.repo.GetChat(ctx, chatID)
-		if err == nil && chat != nil && chat.Type == ChatDirect {
-			peer, err := s.repo.PeerUser(ctx, chatID, senderID)
-			if err == nil && peer != nil {
-				blocked, err := s.blocks.EitherWay(ctx, senderID, peer.ID)
-				if err == nil && blocked {
-					return Message{}, ErrChatBlocked
-				}
+	if s.blocks != nil && chat.Type == ChatDirect {
+		peer, err := s.repo.PeerUser(ctx, chatID, senderID)
+		if err == nil && peer != nil {
+			blocked, err := s.blocks.EitherWay(ctx, senderID, peer.ID)
+			if err == nil && blocked {
+				return Message{}, ErrChatBlocked
 			}
 		}
 	}
