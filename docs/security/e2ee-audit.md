@@ -55,6 +55,8 @@ The server still has an at-rest `MESSAGE_KEY` layer. It is not an E2EE key and
 does not give the server the client root key, but it must never be described as
 the E2EE mechanism. Existing historical plaintext rows, previews, logs, media,
 link previews, and non-message notification categories require separate data
-classification. The API now rejects new direct/group message content that is
-not an E2EE envelope; human review must decide how historical plaintext is
-quarantined or migrated.
+classification. The user-generated message endpoint rejects content that is
+not a structurally valid E2EE envelope. Server-generated control rows, such as
+disappearing-message notices and call traces, use a separate explicit path and
+contain control metadata rather than user conversation plaintext. Human review
+must decide how historical plaintext is quarantined or migrated.

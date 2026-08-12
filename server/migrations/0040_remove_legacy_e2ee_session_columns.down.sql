@@ -1,5 +1,6 @@
--- Rollback is intentionally non-destructive. The removed columns were
--- legacy server-side E2EE material and are not recreated, because restoring
--- them would reintroduce an insecure capability. Restore from a database
--- backup only if an external legacy consumer is proven to require them.
-SELECT 1;
+-- Restore the legacy nullable shape only. Existing authentication rows remain
+-- valid, and no value is fabricated. Runtime code does not use these fields.
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS peer_id UUID,
+    ADD COLUMN IF NOT EXISTS peer_device_id UUID,
+    ADD COLUMN IF NOT EXISTS session_key BYTEA;

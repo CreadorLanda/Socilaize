@@ -1,8 +1,7 @@
 // Package messages implements native E2E-encrypted messaging for Socialize.
 //
-// Message content is encrypted with AES-256-GCM at rest using a session
-// key derived via X3DH between sender and recipient. The X3DH pre-key
-// infrastructure lives in internal/modules/keys.
+// Message content is an opaque client-generated E2EE envelope. The repository
+// may apply an independent at-rest encryption layer; it is not an E2EE key.
 package messages
 
 import (

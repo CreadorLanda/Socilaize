@@ -19,6 +19,9 @@ derivação simples de chaves de mensagem. Forward secrecy, post-compromise
 security, mensagens fora de ordem, verificação criptográfica de identidade e
 consistência multi-device continuam sem garantia equivalente ao Signal.
 
-Mensagens novas sem envelope E2EE são rejeitadas. Dados históricos, previews,
-media, link previews e notificações fora do fluxo de mensagens ainda exigem
-revisão humana específica.
+O endpoint de mensagens criadas pelo utilizador rejeita conteúdo que não seja
+um envelope E2EE estruturalmente válido. Linhas de controlo criadas pelo
+servidor, como avisos de mensagens efémeras e traces de chamadas, usam um
+caminho separado e não devem ser tratadas como mensagens E2EE do utilizador.
+Dados históricos, previews, media, link previews e notificações fora do fluxo
+de mensagens ainda exigem revisão humana específica.

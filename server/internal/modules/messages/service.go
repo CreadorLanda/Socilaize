@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,7 +13,6 @@ import (
 
 var (
 	ErrChatNotFound     = errors.New("chat_not_found")
-	ErrNoSession        = errors.New("no_e2ee_session")
 	ErrNotParticipant   = errors.New("not_participant")
 	ErrChatBlocked      = errors.New("chat_blocked")
 	ErrPendingChatLimit = errors.New("pending_chat_limit")
@@ -252,7 +250,7 @@ func (s *Service) OpenLimitedMessage(ctx context.Context, chatID uuid.UUID, mess
 // ── Messages ────────────────────────────────────────────────────────────────
 
 func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, req SendMessageRequest) (Message, error) {
-	if !isEncryptedEnvelope(req.Content) {
+	if !validateEnvelope(req.Content) {
 		return Message{}, ErrUnencryptedMessage
 	}
 	if err := s.requireParticipant(ctx, chatID, senderID); err != nil {
@@ -355,7 +353,7 @@ func (s *Service) ListMessages(ctx context.Context, chatID, userID uuid.UUID, li
 
 // EditMessage updates content (sender only) and fans out over WS.
 func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msgID int64, content string) (Message, error) {
-	if !isEncryptedEnvelope(content) {
+	if !validateEnvelope(content) {
 		return Message{}, ErrUnencryptedMessage
 	}
 	if err := s.requireParticipant(ctx, chatID, userID); err != nil {
@@ -645,7 +643,9 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		"sender_id":     uuidStr(msg.SenderID),
 		"sender_name":   msg.SenderName,
 		"sender_avatar": msg.SenderAvatar,
-		"content":       msg.Content,
+		// Only a structurally valid envelope is safe to forward to a device.
+		// Invalid or historical rows must never become notification plaintext.
+		"content":       func() string { if encrypted { return msg.Content }; return "" }(),
 		"encrypted":     boolStr(encrypted),
 	}
 	for _, uid := range ids {
@@ -762,7 +762,7 @@ func (s *Service) ReportChat(ctx context.Context, chatID, userID uuid.UUID, reas
 // isEncryptedEnvelope reports whether the content is an E2EE payload the
 // server cannot read. Both prefixes: pairwise messages and group ones.
 func isEncryptedEnvelope(content string) bool {
-	return strings.HasPrefix(content, "soc1.") || strings.HasPrefix(content, "soc1g.")
+	return validateEnvelope(content)
 }
 
 // uuidStr renders an optional id, empty when there is nobody to name.
