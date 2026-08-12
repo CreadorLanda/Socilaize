@@ -1,7 +1,13 @@
 # Contributing to Yo
 
-Yo is a messenger. People will keep private things in it. That shapes every
-rule below — where code lands, what gets rejected, and what gets you banned.
+Yo exists because modded messengers gave people features the official apps
+refused to, and charged for it in privacy — closed-source APKs from strangers,
+some with spyware in them, all of them unreadable.
+
+That is the whole point of this project, and it is why the rules below are
+strict about a narrow set of things. Yo has to be the app people can install
+*instead of* the sketchy APK. It only earns that by being readable, and by
+never shipping the thing the mods shipped.
 
 ## Branches
 
@@ -78,7 +84,9 @@ account blocked from the repository, without discussion.
 - Code that exfiltrates data — sending user content, keys, tokens, contacts,
   location or telemetry anywhere the user did not ask for.
 - Spyware, analytics or tracking of any kind, including "anonymous" metrics.
-  This project ships none, and that is deliberate.
+  Not "none that identifies people" — none. This is the exact thing Yo exists
+  to be an alternative to, and a pull request adding it misunderstands the
+  project badly enough that it will not be discussed.
 - Backdoors, hidden accounts, debug flags that bypass authentication, or
   anything that weakens encryption "temporarily".
 - Obfuscated or minified code, encoded blobs, or anything whose behaviour is
