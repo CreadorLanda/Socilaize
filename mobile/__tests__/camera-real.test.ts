@@ -129,3 +129,33 @@ test('as permissoes estao declaradas a mao, porque o pacote nao traz plugin', as
   expect(plist.UIBackgroundModes).toContain('audio');
   expect(app.expo.android.permissions).toContain('android.permission.CAMERA');
 });
+
+/**
+ * The camera crashed on open.
+ *
+ * `react-native-worklets-core` ships a babel plugin and nothing registers it
+ * automatically. Expo falls back to `babel-preset-expo` when a project has no
+ * babel config, which carries Reanimated's plugin — so everything looked fine.
+ * But without the worklets plugin the `'worklet'` directive in a frame
+ * processor is an ordinary string in an ordinary function, and VisionCamera
+ * hands that to a thread that cannot run it.
+ */
+test('o plugin dos worklets esta registado no babel', async () => {
+  const babel = await Bun.file('babel.config.js').text();
+  expect(babel).toContain('react-native-worklets-core/plugin');
+  expect(babel).toContain('babel-preset-expo');
+});
+
+test('o preset do babel e uma dependencia declarada', async () => {
+  // It resolved from a transitive install before, which works until the
+  // package that pulled it in changes its own dependencies.
+  const pkg = JSON.parse(await Bun.file('package.json').text());
+  expect(pkg.dependencies['babel-preset-expo']).toBeTruthy();
+});
+
+test('o audio so e pedido a camara quando ha permissao', () => {
+  // Configuring a video output with audio the app has no permission for makes
+  // the whole session fail to configure — no preview, and on some devices it
+  // takes the app with it.
+  expect(camera).toContain('enableAudio: micGranted');
+});
