@@ -11,8 +11,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
 
-	"github.com/CreadorLanda/Socilaize/server/internal/config"
-	"github.com/CreadorLanda/Socilaize/server/internal/server"
+	"github.com/CreadorLanda/yo/server/internal/config"
+	"github.com/CreadorLanda/yo/server/internal/server"
 )
 
 func main() {

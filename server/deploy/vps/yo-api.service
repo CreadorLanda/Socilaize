@@ -1,0 +1,36 @@
+# The unit that actually runs in production.
+#
+# This file used to describe a different deployment entirely — a `socialize`
+# user, /opt/socialize/server/bin/api, an .env beside it. None of that is what
+# is running, so anyone deploying from this repository got something other than
+# the thing being maintained. It now matches the live unit.
+#
+# Install:
+#   sudo cp yo-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now yo-api
+
+[Unit]
+Description=Yo API
+After=network-online.target docker.service
+Wants=network-online.target
+# Postgres, Redis and LiveKit run as containers, so Docker has to be up first.
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/yo
+EnvironmentFile=/opt/yo/.env
+ExecStart=/opt/yo/yo-api
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Uploaded media lives here, so it is the one path the service may write to.
+ReadWritePaths=/opt/yo/data
+StateDirectory=yo
+
+[Install]
+WantedBy=multi-user.target

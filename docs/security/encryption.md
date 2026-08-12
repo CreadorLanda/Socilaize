@@ -61,7 +61,7 @@ No independent review has been done. The construction was written for this
 project. If you need the properties Signal gives you, use Signal — this is an
 honest messenger, not an equivalent one.
 
-Improving this is [tracked work](https://github.com/CreadorLanda/Socilaize/issues),
+Improving this is [tracked work](https://github.com/CreadorLanda/yo/issues),
 not a settled state.
 
 ## At rest

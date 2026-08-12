@@ -32,7 +32,7 @@ Issues labelled [`good first issue`][gfi] are picked so that the answer already
 exists somewhere in the codebase. Say so in a comment before you start, so two
 people do not build the same thing.
 
-[gfi]: https://github.com/CreadorLanda/Socilaize/labels/good%20first%20issue
+[gfi]: https://github.com/CreadorLanda/yo/labels/good%20first%20issue
 
 ## One issue, one pull request
 

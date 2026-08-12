@@ -40,7 +40,7 @@ yarn-error.*
 # grants send access to the project's push notifications, and a key that
 # reaches a public repository is burnt — rotating it is the only fix.
 #
-# The real copy lives outside the repository entirely (~/.config/socialize/),
+# The real copy lives outside the repository entirely (~/.config/yo/),
 # referenced by path from .env. These patterns are the second line of defence,
 # for the next time one gets dropped in here by accident.
 *-firebase-adminsdk-*.json

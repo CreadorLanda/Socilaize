@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/CreadorLanda/Socilaize/server/internal/config"
-	"github.com/CreadorLanda/Socilaize/server/internal/platform/tokens"
+	"github.com/CreadorLanda/yo/server/internal/config"
+	"github.com/CreadorLanda/yo/server/internal/platform/tokens"
 )
 
 // Sentinel errors translated to HTTP status by the controller.

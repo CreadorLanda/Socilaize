@@ -164,7 +164,10 @@ export default function UsernameScreen() {
                 ]}
                 numberOfLines={1}
               >
-                socialize.app/
+                {/* Was `socialize.app/`, a site that has never existed. The
+                    screen was showing someone the web address of their new
+                    profile page, and there was no page. */}
+                @
               </Text>
               <Text
                 style={[

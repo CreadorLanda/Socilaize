@@ -455,7 +455,7 @@ export const CURRENT_USER: UserProfile = {
   avatarUri: dicebear('avataaars', 'you', 'EEF2FF'),
   bio: 'Building communication tools for everyone. Open-source advocate, coffee-driven, shipping in public.',
   location: 'Luanda, Angola',
-  link: 'socialize.app/@alexlanda',
+  link: 'yo.alexandrelanda.com/@alexlanda',
   stats: { chats: 48, stories: 6, contacts: 213 },
 };
 
