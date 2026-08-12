@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CreadorLanda/Socilaize/server/internal/crypto"
+	"github.com/CreadorLanda/yo/server/internal/crypto"
 )
 
 // 64 hex chars = 32 bytes = AES-256 key.

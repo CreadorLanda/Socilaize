@@ -1,4 +1,4 @@
-module github.com/CreadorLanda/Socilaize/server
+module github.com/CreadorLanda/yo/server
 
 go 1.26
 

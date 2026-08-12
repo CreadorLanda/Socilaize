@@ -3,7 +3,7 @@
 > Documentação completa da plataforma de mensagens Yo.
 
 > Os documentos descrevem intenção tanto como estado. Onde uma funcionalidade está
-> planeada e não construída, as [issues](https://github.com/CreadorLanda/Socilaize/issues) mandam.
+> planeada e não construída, as [issues](https://github.com/CreadorLanda/yo/issues) mandam.
 
 ## 📚 Índice
 

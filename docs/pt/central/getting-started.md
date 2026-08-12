@@ -13,8 +13,8 @@
 ## Início Rápido
 
 ```bash
-git clone https://github.com/CreadorLanda/Socilaize.git
-cd Socilaize
+git clone https://github.com/CreadorLanda/yo.git
+cd yo
 npm install
 npm run dev
 ```

@@ -63,7 +63,7 @@ Não houve revisão independente. A construção foi escrita para este projeto. 
 precisas das propriedades que o Signal dá, usa o Signal — isto é um messenger
 honesto, não um equivalente.
 
-Melhorar isto é [trabalho em aberto](https://github.com/CreadorLanda/Socilaize/issues),
+Melhorar isto é [trabalho em aberto](https://github.com/CreadorLanda/yo/issues),
 não um estado assente.
 
 ## Em repouso

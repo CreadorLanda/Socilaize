@@ -17,7 +17,10 @@ export function useProfile() {
     username: user?.username ?? '',
     bio: user?.bio ?? '',
     avatarUri: user?.avatar_uri ?? '',
-    link: `socialize.app/@${user?.username ?? ''}`,
+    // Just the handle. It used to read `socialize.app/@name`, which looked
+    // like a web address for a site that has never existed — someone could
+    // reasonably have typed it into a browser, or given it to a friend.
+    link: user?.username ? `@${user.username}` : '',
   };
 }
 

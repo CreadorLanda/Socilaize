@@ -56,7 +56,7 @@ unpurchasable. Their entire value is that money cannot get them.
 
 ## 3. Theme marketplace
 
-[Themes](https://github.com/CreadorLanda/Socilaize/issues/114) are the most
+[Themes](https://github.com/CreadorLanda/yo/issues/114) are the most
 requested customisation and the thing mod users cared about most. A marketplace
 where creators sell themes and the platform takes a cut is a natural fit.
 
@@ -68,7 +68,7 @@ Conditions for it to be honest:
 - Nothing about which themes you install leaves your device beyond what a
   purchase requires.
 
-Note that the current marketplace is [fiction](https://github.com/CreadorLanda/Socilaize/issues/114)
+Note that the current marketplace is [fiction](https://github.com/CreadorLanda/yo/issues/114)
 — eight hardcoded packs with invented download counts. It cannot be monetised
 until it is real, and inventing numbers on a store people pay into is a
 different kind of problem from inventing them in a demo.
@@ -107,9 +107,9 @@ in a pricing table, the project has become the thing it replaced.
 1. **Commercial licences** — already possible, zero product work.
 2. **Hosting** — needs no new code, only an offer and an operator.
 3. **Badges** — needs the badges backend, which does not exist yet
-   ([#26](https://github.com/CreadorLanda/Socilaize/issues/26)).
+   ([#26](https://github.com/CreadorLanda/yo/issues/26)).
 4. **Theme marketplace** — needs themes to persist first
-   ([#114](https://github.com/CreadorLanda/Socilaize/issues/114)), then a real
+   ([#114](https://github.com/CreadorLanda/yo/issues/114)), then a real
    store, then payments.
 
 None of it matters before there are users. This document exists so the answer
