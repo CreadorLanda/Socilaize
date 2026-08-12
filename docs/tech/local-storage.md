@@ -2,7 +2,7 @@
 
 > Messages live on the user's device. The server is a relay for ciphertext, not a store of conversations.
 
-This is the WhatsApp approach, applied to Socialize: the source of truth for a user's chats is **their device's SQLite database**, encrypted at rest with SQLCipher and unlocked by a key held in the OS keychain.
+This is the WhatsApp approach, applied to Yo: the source of truth for a user's chats is **their device's SQLite database**, encrypted at rest with SQLCipher and unlocked by a key held in the OS keychain.
 
 ---
 
@@ -154,7 +154,7 @@ While the app is connected:
 
 1. Server enqueues an envelope addressed to a device.
 2. Realtime hub pushes a WS frame with the envelope.
-3. Client decrypts (libsignal), persists into `messages`, acks back.
+3. Client decrypts (TweetNaCl), persists into `messages`, acks back.
 4. Server removes the envelope (or expires it after a short TTL).
 
 ### Pull (reconnect / catch-up)
@@ -164,7 +164,7 @@ On reconnect, the client calls `GET /messages/since?cursor=<last_known>` to drai
 ### Send
 
 1. App writes the message into `messages` with `status='sent'` and `created_at=now` (optimistic).
-2. libsignal encrypts to each recipient device; client `POST /messages` with the envelopes.
+2. the client encrypts to each recipient device; client `POST /messages` with the envelopes.
 3. Server acks → client updates `status='delivered'` on read receipts.
 4. On failure (network, decrypt error), `status='failed'`; the user can retry from the UI.
 
@@ -177,7 +177,7 @@ On reconnect, the client calls `GET /messages/since?cursor=<last_known>` to drai
 ## Backups (opt-in)
 
 - Periodic full-database snapshot, encrypted with a key derived from a user passphrase (Argon2id) plus a per-backup salt.
-- Uploaded to the user's cloud (iCloud / Drive) — never to Socialize servers.
+- Uploaded to the user's cloud (iCloud / Drive) — never to Yo servers.
 - Restore is an explicit flow that asks for the passphrase, never automatic.
 - The OS-keychain DB key is **not** included; backups carry their own envelope.
 
@@ -185,7 +185,7 @@ On reconnect, the client calls `GET /messages/since?cursor=<last_known>` to drai
 
 ## Cache budget & cleanup
 
-- Media files are cached under `Library/Caches/socialize/`. The user can clear cache from Settings → Storage.
+- Media files are cached under `Library/Caches/yo/`. The user can clear cache from Settings → Storage.
 - Message text rows are never auto-deleted; only attachments are pruned.
 - Optional retention policy per chat (e.g. delete after 30 days) — implemented as a periodic local sweep.
 

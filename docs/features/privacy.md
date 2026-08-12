@@ -1,6 +1,6 @@
 # 🔒 Privacy
 
-> Complete documentation for Socialize privacy features.
+> Complete documentation for Yo privacy features.
 
 ---
 
@@ -138,7 +138,7 @@ interface AntiDeleteConfig {
 
 | Option | Who Can See |
 |--------|------------|
-| **Everyone** | All Socialize users |
+| **Everyone** | All Yo users |
 | **My contacts** | Only saved contacts |
 | **Nobody** | Completely hidden |
 | **Custom** | Select specific contacts |

@@ -20,7 +20,7 @@ See [deployment.md](./deployment.md) for the full deployment story. This page is
 - GitHub Actions on every PR into `backend/base` and `main`.
 - Unit + integration tests via `testcontainers` (real Postgres + Redis spun up per run).
 - Build artefacts: a single static Go binary for `linux/arm64` (target Oracle Ampere) and `linux/amd64` (target generic VPS).
-- Deploy: a small workflow `scp`s the binary to the VPS and triggers `systemctl restart socialize-api`.
+- Deploy: a small workflow `scp`s the binary to the VPS and triggers `systemctl restart yo-api`.
 
 ## Local development
 

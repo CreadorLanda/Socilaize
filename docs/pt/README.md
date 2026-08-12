@@ -1,6 +1,9 @@
-# Documentação Socialize
+# Documentação Yo
 
-> Documentação completa da plataforma de mensagens Socialize.
+> Documentação completa da plataforma de mensagens Yo.
+
+> Os documentos descrevem intenção tanto como estado. Onde uma funcionalidade está
+> planeada e não construída, as [issues](https://github.com/CreadorLanda/Socilaize/issues) mandam.
 
 ## 📚 Índice
 
@@ -30,6 +33,12 @@
 - [Política de Privacidade](./security/privacy-policy.md)
 - [Boas Práticas](./security/best-practices.md)
 - [Auditoria](./security/audit.md)
+
+### Negócio
+- [Monetização](../business/monetization.md)
+
+### Decisões
+- [0001 — Sem ponte para o WhatsApp](../decisions/0001-no-whatsapp-bridge.md)
 
 ### Roadmap
 - [Roadmap Geral](./roadmap/roadmap.md)

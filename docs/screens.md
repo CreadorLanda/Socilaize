@@ -1,6 +1,6 @@
-# 🖥️ Socialize Screens
+# 🖥️ Yo Screens
 
-> Complete overview of all screens in Socialize messaging app.
+> Complete overview of all screens in Yo messaging app.
 
 ---
 

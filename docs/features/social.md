@@ -1,6 +1,6 @@
 # 🌟 Social Features
 
-> Complete documentation for Socialize social features.
+> Complete documentation for Yo social features.
 
 ---
 
@@ -280,9 +280,9 @@ GET /api/users/:id/stories
     {
       "id": "story_uuid",
       "user_id": "user_uuid",
-      "content_url": "https://cdn.socialize.app/stories/...",
+      "content_url": "https://cdn.yo.alexandrelanda.com/stories/...",
       "content_type": "video",
-      "thumbnail_url": "https://cdn.socialize.app/thumbs/...",
+      "thumbnail_url": "https://cdn.yo.alexandrelanda.com/thumbs/...",
       "duration": "15s",
       "visible_until": "2026-05-15T12:00:00Z",
       "visibility": "contacts",

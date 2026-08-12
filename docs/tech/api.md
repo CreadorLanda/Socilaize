@@ -1,13 +1,13 @@
 # 📡 API Specifications
 
-> Complete REST API documentation for Socialize.
+> Complete REST API documentation for Yo.
 
 ---
 
 ## Base URL
 
 ```
-Production: https://api.socialize.app
+Production: https://yo.alexandrelanda.com
 Development: http://localhost:3000
 ```
 
@@ -171,7 +171,7 @@ Authorization: Bearer <token>
   "username": "johndoe",
   "username_discoverable": true,
   "display_name": "John Doe",
-  "avatar_url": "https://cdn.socialize.app/avatars/abc.jpg",
+  "avatar_url": "https://cdn.yo.alexandrelanda.com/avatars/abc.jpg",
   "bio": "Hello! 👋",
   "status": "online",
   "last_seen_at": "2026-05-14T12:00:00Z"
@@ -196,7 +196,7 @@ Content-Type: application/json
 {
   "display_name": "John Doe",
   "bio": "Software developer",
-  "avatar_url": "https://cdn.socialize.app/avatars/new.jpg"
+  "avatar_url": "https://cdn.yo.alexandrelanda.com/avatars/new.jpg"
 }
 ```
 
@@ -207,7 +207,7 @@ Content-Type: application/json
   "id": "uuid",
   "display_name": "John Doe",
   "bio": "Software developer",
-  "avatar_url": "https://cdn.socialize.app/avatars/new.jpg"
+  "avatar_url": "https://cdn.yo.alexandrelanda.com/avatars/new.jpg"
 }
 ```
 
@@ -269,7 +269,7 @@ Authorization: Bearer <token>
       "id": "uuid",
       "username": "johndoe",
       "display_name": "John Doe",
-      "avatar_url": "https://cdn.socialize.app/avatars/abc.jpg",
+      "avatar_url": "https://cdn.yo.alexandrelanda.com/avatars/abc.jpg",
       "username_discoverable": true
     },
     {
@@ -314,7 +314,7 @@ Content-Type: application/json
   "name": "Family Group",
   "description": "Family chat",
   "participants": ["user_uuid_2", "user_uuid_3"],
-  "avatar_url": "https://cdn.socialize.app/groups/family.jpg"
+  "avatar_url": "https://cdn.yo.alexandrelanda.com/groups/family.jpg"
 }
 ```
 
@@ -398,9 +398,9 @@ Content-Type: application/json
 
 ```json
 {
-  "content": "https://cdn.socialize.app/media/abc.jpg",
+  "content": "https://cdn.yo.alexandrelanda.com/media/abc.jpg",
   "content_type": "image",
-  "thumbnail": "https://cdn.socialize.app/thumbs/abc.jpg"
+  "thumbnail": "https://cdn.yo.alexandrelanda.com/thumbs/abc.jpg"
 }
 ```
 
@@ -504,7 +504,7 @@ Content-Type: application/json
 
 ```javascript
 // WebSocket URL
-const ws = new WebSocket('wss://api.socialize.app/ws?token=YOUR_TOKEN');
+const ws = new WebSocket('wss://yo.alexandrelanda.com/ws?token=YOUR_TOKEN');
 ```
 
 #### Events

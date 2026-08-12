@@ -2,7 +2,7 @@
 
 > Onde cada peça de dados vive, e porquê.
 
-O Socialize divide os dados por três stores com garantias diferentes:
+O Yo divide os dados por três stores com garantias diferentes:
 
 | Store        | Onde         | O que guarda                                          | Encriptação        |
 |--------------|--------------|--------------------------------------------------------|--------------------|
@@ -201,7 +201,6 @@ CREATE TABLE user_badges (
 | `presence:{user_id}`     | string   | 60 s   | Online / heartbeat                       |
 | `typing:{chat_id}`       | set      | 5 s    | Utilizadores a escrever                  |
 | `rl:{ip}:{action}`       | counter  | janela | Rate limit                               |
-| `bridge:{user_id}:lock`  | string   | lease  | Pin a um worker da ponte                 |
 
 ### Streams (filas)
 
@@ -210,8 +209,6 @@ CREATE TABLE user_badges (
 | `q:messages.deliver`    | Controller messages   | Workers de tempo real    |
 | `q:push.send`           | Notifications svc     | Workers de push (FCM/APNs) |
 | `q:media.process`       | Controller media      | Workers de média         |
-| `q:bridge.inbound`      | Processos da ponte    | Workers de tempo real    |
-| `q:bridge.outbound`     | Controller messages   | Workers da ponte         |
 
 ### Pub/sub
 

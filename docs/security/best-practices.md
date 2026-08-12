@@ -7,4 +7,4 @@
 - Insecure Design
 
 ## Report Vulnerabilities
-security@socialize.app
+security@yo.alexandrelanda.com

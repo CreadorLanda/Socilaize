@@ -94,7 +94,6 @@
 👤 Contato
 📄 Documento
 🎭 Sticker
-🌉 Bridge
 ```
 
 ---
