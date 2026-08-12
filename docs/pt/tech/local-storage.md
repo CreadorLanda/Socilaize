@@ -2,7 +2,7 @@
 
 > As mensagens vivem no dispositivo do utilizador. O servidor é um relay de ciphertext, não um arquivo de conversas.
 
-Esta é a abordagem WhatsApp aplicada ao Socialize: a fonte da verdade para as conversas do utilizador é a **SQLite do dispositivo**, cifrada em repouso por SQLCipher e desbloqueada por uma chave guardada na keychain do sistema.
+Esta é a abordagem WhatsApp aplicada ao Yo: a fonte da verdade para as conversas do utilizador é a **SQLite do dispositivo**, cifrada em repouso por SQLCipher e desbloqueada por uma chave guardada na keychain do sistema.
 
 ---
 
@@ -154,7 +154,7 @@ Enquanto a app está conectada:
 
 1. Servidor enfileira um envelope para um dispositivo.
 2. Hub realtime empurra um frame WS com o envelope.
-3. Cliente decifra (libsignal), persiste em `messages`, ack.
+3. Cliente decifra (TweetNaCl), persiste em `messages`, ack.
 4. Servidor remove o envelope (ou expira após TTL curto).
 
 ### Pull (reconexão / catch-up)
@@ -164,7 +164,7 @@ Na reconexão, o cliente chama `GET /messages/since?cursor=<last_known>` para dr
 ### Envio
 
 1. App escreve a mensagem em `messages` com `status='sent'` e `created_at=now` (otimista).
-2. libsignal cifra para cada dispositivo destinatário; cliente `POST /messages` com os envelopes.
+2. o cliente cifra para cada dispositivo destinatário; cliente `POST /messages` com os envelopes.
 3. Servidor faz ack → cliente atualiza `status='delivered'` em recibos.
 4. Em falha (rede, erro de decifrar), `status='failed'`; utilizador pode tentar novamente pela UI.
 
@@ -177,7 +177,7 @@ Na reconexão, o cliente chama `GET /messages/since?cursor=<last_known>` para dr
 ## Backups (opt-in)
 
 - Snapshot periódico completo da BD, cifrado com chave derivada de uma passphrase do utilizador (Argon2id) + salt por backup.
-- Carregado para a cloud do utilizador (iCloud / Drive) — nunca para o servidor Socialize.
+- Carregado para a cloud do utilizador (iCloud / Drive) — nunca para o servidor Yo.
 - Restauro é um fluxo explícito que pede a passphrase, nunca automático.
 - A chave DB da keychain **não** está incluída; backups carregam o seu próprio envelope.
 
@@ -185,7 +185,7 @@ Na reconexão, o cliente chama `GET /messages/since?cursor=<last_known>` para dr
 
 ## Orçamento de cache & limpeza
 
-- Ficheiros de média são cacheados em `Library/Caches/socialize/`. Utilizador pode limpar em Definições → Armazenamento.
+- Ficheiros de média são cacheados em `Library/Caches/yo/`. Utilizador pode limpar em Definições → Armazenamento.
 - Linhas de texto nunca são apagadas automaticamente; só anexos são podados.
 - Política opcional de retenção por chat (e.g. apagar após 30 dias) — varrimento periódico local.
 

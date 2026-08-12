@@ -1,6 +1,6 @@
-# 🖥️ Telas do Socialize
+# 🖥️ Telas do Yo
 
-> Visão geral completa de todas as telas do app Socialize.
+> Visão geral completa de todas as telas do app Yo.
 
 ---
 

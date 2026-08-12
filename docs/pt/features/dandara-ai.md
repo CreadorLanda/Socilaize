@@ -1,6 +1,6 @@
 # 🤖 Dandara AI
 
-> Documentação completa da Dandara AI - assistente de IA do Socialize.
+> Documentação completa da Dandara AI - assistente de IA do Yo.
 
 ---
 

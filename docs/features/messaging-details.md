@@ -146,7 +146,6 @@ POST /api/stickers/export
 👤 Contact
 📄 Document
 🎭 Sticker
-🌉 Bridge
 ```
 
 ---

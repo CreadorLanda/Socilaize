@@ -65,7 +65,7 @@ If Oracle Free isn't available in your region (Ampere capacity is spotty), any o
 
 Notes:
 - **Use port 6543 (the pooler), not 5432 (direct).** Direct connections cap out fast.
-- **Never put the URL in git.** Lives only in `/opt/socialize/server/.env` on the VPS, mode `600`.
+- **Never put the URL in git.** Lives only in `/opt/yo/server/.env` on the VPS, mode `600`.
 
 ---
 
@@ -109,12 +109,12 @@ sudo apt install -y caddy
 sudo systemctl enable --now caddy
 ```
 
-### 2.4 The Socialize user + dirs
+### 2.4 The Yo user + dirs
 
 ```bash
-sudo useradd -r -s /usr/sbin/nologin -d /opt/socialize socialize
-sudo mkdir -p /opt/socialize/server/bin
-sudo chown -R socialize:socialize /opt/socialize
+sudo useradd -r -s /usr/sbin/nologin -d /opt/yo yo
+sudo mkdir -p /opt/yo/server/bin
+sudo chown -R yo:yo /opt/yo
 ```
 
 ---
@@ -122,8 +122,8 @@ sudo chown -R socialize:socialize /opt/socialize
 ## Step 3 — Redis on the VPS
 
 ```bash
-# (after cloning the repo to e.g. /opt/socialize/source)
-cd /opt/socialize/source/server
+# (after cloning the repo to e.g. /opt/yo/source)
+cd /opt/yo/source/server
 sudo docker compose -f deploy/docker/docker-compose.yml up -d redis
 ```
 
@@ -156,8 +156,8 @@ Use `GOARCH=amd64` if your VPS is x86. Oracle Ampere is `arm64`.
 scp bin/api-linux-arm64 ubuntu@<vps-ip>:/tmp/api
 scp .env                ubuntu@<vps-ip>:/tmp/.env   # generated locally with prod values
 ssh ubuntu@<vps-ip> '
-  sudo install -o socialize -g socialize -m 755 /tmp/api /opt/socialize/server/bin/api
-  sudo install -o socialize -g socialize -m 600 /tmp/.env /opt/socialize/server/.env
+  sudo install -o yo -g yo -m 755 /tmp/api /opt/yo/server/bin/api
+  sudo install -o yo -g yo -m 600 /tmp/.env /opt/yo/server/.env
   rm /tmp/api /tmp/.env
 '
 ```
@@ -165,16 +165,16 @@ ssh ubuntu@<vps-ip> '
 ### 4.3 systemd unit
 
 ```bash
-# repo file: deploy/vps/socialize-api.service
-sudo cp /opt/socialize/source/server/deploy/vps/socialize-api.service /etc/systemd/system/
+# repo file: deploy/vps/yo-api.service
+sudo cp /opt/yo/source/server/deploy/vps/yo-api.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now socialize-api
-sudo systemctl status socialize-api
+sudo systemctl enable --now yo-api
+sudo systemctl status yo-api
 ```
 
 ### 4.4 Caddy reverse proxy
 
-Edit `deploy/vps/Caddyfile` and replace `api.socialize.example` with your real domain.
+Edit `deploy/vps/Caddyfile` and replace `api.yo.example` with your real domain.
 
 ```bash
 sudo cp deploy/vps/Caddyfile /etc/caddy/Caddyfile
@@ -204,8 +204,8 @@ scp bin/api-linux-arm64 ubuntu@<vps-ip>:/tmp/api
 
 # vps
 ssh ubuntu@<vps-ip> '
-  sudo install -o socialize -g socialize -m 755 /tmp/api /opt/socialize/server/bin/api
-  sudo systemctl restart socialize-api
+  sudo install -o yo -g yo -m 755 /tmp/api /opt/yo/server/bin/api
+  sudo systemctl restart yo-api
 '
 ```
 
@@ -225,14 +225,14 @@ Once `backend/dev` is stable, a tiny GitHub Action does this on every merge to `
 |-----------------------|---------------------------------------------|--------------|
 | Postgres data         | **Supabase** (automatic)                    | Daily; PITR on Pro |
 | Redis                 | We accept loss on restart (ephemeral state) | n/a          |
-| `/opt/socialize/server/.env` | Manual — keep a copy in a password manager | on change    |
+| `/opt/yo/server/.env` | Manual — keep a copy in a password manager | on change    |
 
 Restore drill (do it once before you need it):
 1. Spin up a fresh Supabase project.
 2. In the old project: SQL editor → `pg_dump` via "Backups" tab → download.
 3. In the new project: `psql < dump.sql`.
 4. Update `POSTGRES_URL` on the VPS.
-5. `sudo systemctl restart socialize-api`.
+5. `sudo systemctl restart yo-api`.
 
 ---
 

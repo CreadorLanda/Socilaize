@@ -1,6 +1,6 @@
 # 🦦 Backend (Go, MVC)
 
-> A API do Socialize: um único binário Go, um Postgres, um Redis. Organizado como módulos MVC para que cada funcionalidade seja autocontida.
+> A API do Yo: um único binário Go, um Postgres, um Redis. Organizado como módulos MVC para que cada funcionalidade seja autocontida.
 
 ---
 
@@ -16,7 +16,7 @@
 | Migrações      | `golang-migrate/migrate`                  | Um `.sql` por mudança                   |
 | Validação      | `go-playground/validator/v10`             | Por struct tags                         |
 | Auth           | JWT (`golang-jwt/jwt/v5`) + refresh       | Access curto, refresh rotativo          |
-| E2E            | libsignal (CGO) **ou** `crossle/libsignal-protocol-go` | Decisão no PR `backend/auth` |
+| E2E            | TweetNaCl (CGO) **ou** `crossle/TweetNaCl-protocol-go` | Decisão no PR `backend/auth` |
 | Object storage | Compatível S3 (MinIO em dev)              | Envelope encryption server-side         |
 | Logging        | `rs/zerolog`                              | JSON em prod, console em dev            |
 | Telemetria     | OpenTelemetry (traces + métricas)         |                                         |
@@ -54,7 +54,7 @@ server/
 │   ├── platform/
 │   │   ├── postgres/            # pool + helpers
 │   │   ├── redis/               # cliente + helpers de streams
-│   │   ├── signal/              # wrapper libsignal
+│   │   ├── signal/              # wrapper TweetNaCl
 │   │   ├── crypto/              # envelope encryption, hashing
 │   │   ├── storage/             # cliente S3-compatível
 │   │   └── push/                # FCM + APNs
