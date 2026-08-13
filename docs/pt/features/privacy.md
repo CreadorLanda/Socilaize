@@ -1,6 +1,6 @@
 # 🔒 Privacidade
 
-> Documentação completa dos recursos de privacidade do Socialize.
+> Documentação completa dos recursos de privacidade do Yo.
 
 ---
 
@@ -65,7 +65,7 @@ Quando ativado, mensagens são preservadas mesmo quando o remetente tenta exclui
 
 | Opção | Quem Pode Ver |
 |--------|------------|
-| **Todos** | Todos os usuários Socialize |
+| **Todos** | Todos os usuários Yo |
 | **Meus contatos** | Apenas contatos salvos |
 | **Ninguém** | Completamente oculto |
 | **Personalizado** | Selecione contatos específicos |

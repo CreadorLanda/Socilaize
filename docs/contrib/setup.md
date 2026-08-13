@@ -7,8 +7,8 @@
 
 ## Quick Setup
 ```bash
-git clone https://github.com/socialize/socialize.git
-cd socialize
+git clone https://github.com/CreadorLanda/yo.git
+cd yo
 npm install
 npm run dev
 ```

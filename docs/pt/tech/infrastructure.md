@@ -20,7 +20,7 @@ Ver [deployment.md](./deployment.md) para a história completa. Esta página é 
 - GitHub Actions em cada PR para `backend/base` e `main`.
 - Testes unitários + integração via `testcontainers` (Postgres + Redis reais por run).
 - Artefactos de build: um binário Go estático para `linux/arm64` (alvo Oracle Ampere) e `linux/amd64` (alvo VPS genérica).
-- Deploy: um workflow pequeno faz `scp` do binário para a VPS e dispara `systemctl restart socialize-api`.
+- Deploy: um workflow pequeno faz `scp` do binário para a VPS e dispara `systemctl restart yo-api`.
 
 ## Desenvolvimento local
 

@@ -1,6 +1,6 @@
 # 💬 Messaging
 
-> Complete documentation for Socialize messaging features.
+> Complete documentation for Yo messaging features.
 
 ---
 

@@ -42,18 +42,26 @@ export const FilteredCamera = forwardRef<
   {
     front: boolean;
     filter: FilterId;
+    micGranted: boolean;
     video: boolean;
     torch: boolean;
     zoom: number;
     isActive: boolean;
     onReady?: () => void;
   }
->(function FilteredCamera({ front, filter, video, torch, zoom, isActive, onReady }, ref) {
+>(function FilteredCamera(
+  { front, filter, video, torch, zoom, isActive, micGranted, onReady },
+  ref,
+) {
   const device = useCameraDevice(front ? 'front' : 'back');
   const matrix = filterById(filter).matrix;
 
   const photoOutput = usePhotoOutput({ qualityPrioritization: 'quality' });
-  const videoOutput = useVideoOutput({ enableAudio: true });
+  // Audio only once the microphone is actually granted. Configuring a video
+  // output with audio the app has no permission for makes the whole camera
+  // session fail to configure — the preview never appears, and on some devices
+  // it takes the app with it. A silent recording is the graceful loss.
+  const videoOutput = useVideoOutput({ enableAudio: micGranted });
   const [recorder, setRecorder] = useState<Awaited<
     ReturnType<typeof videoOutput.createRecorder>
   > | null>(null);
@@ -123,8 +131,9 @@ export const FilteredCamera = forwardRef<
 
   if (!device) return <View style={styles.blank} />;
 
-  // The frame output is only attached when something consumes it. Attaching it
-  // always would run the camera through an extra buffer pool for a preview
+  // The frame output object is built on every render — a hook cannot be called
+  // conditionally — but it is only *attached* when a filter needs it. Handing
+  // it to the camera regardless would run an extra buffer pool for a preview
   // nobody is filtering.
   const outputs = matrix
     ? [photoOutput, videoOutput, frameOutput]

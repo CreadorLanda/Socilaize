@@ -2,7 +2,7 @@
 
 > Where each piece of data lives, and why.
 
-Socialize splits data across three stores with different guarantees:
+Yo splits data across three stores with different guarantees:
 
 | Store        | Where        | Holds                                              | Encryption       |
 |--------------|--------------|----------------------------------------------------|------------------|
@@ -201,7 +201,6 @@ CREATE TABLE user_badges (
 | `presence:{user_id}`     | string   | 60 s   | Online / last-seen heartbeat             |
 | `typing:{chat_id}`       | set      | 5 s    | Currently typing users                   |
 | `rl:{ip}:{action}`       | counter  | window | Rate limit windows                       |
-| `bridge:{user_id}:lock`  | string   | lease  | Pin a user to one bridge worker          |
 
 ### Streams (queues)
 
@@ -210,8 +209,6 @@ CREATE TABLE user_badges (
 | `q:messages.deliver`    | Messages controller | Realtime workers       |
 | `q:push.send`           | Notifications svc   | Push workers (FCM/APNs)|
 | `q:media.process`       | Media controller    | Media workers          |
-| `q:bridge.inbound`      | Bridge processes    | Realtime workers       |
-| `q:bridge.outbound`     | Messages controller | Bridge workers         |
 
 ### Pub/sub
 

@@ -5,22 +5,22 @@ Files in this directory are templates for the **hybrid topology** (Postgres on S
 | File                       | Purpose                                                       |
 |----------------------------|---------------------------------------------------------------|
 | `Caddyfile`                | Reverse proxy + automatic Let's Encrypt TLS, in front of the API |
-| `socialize-api.service`    | Hardened systemd unit for the Go binary                       |
+| `yo-api.service`    | Hardened systemd unit for the Go binary                       |
 
 Both files have inline comments explaining install steps. The minimum sequence on a fresh Ubuntu/Debian VPS is:
 
 ```bash
 # 1. System user + directories
-sudo useradd -r -s /usr/sbin/nologin -d /opt/socialize socialize
-sudo mkdir -p /opt/socialize/server/bin
-sudo chown -R socialize:socialize /opt/socialize
+sudo useradd -r -s /usr/sbin/nologin -d /opt/yo socialize
+sudo mkdir -p /opt/yo/bin
+sudo chown -R socialize:socialize /opt/yo
 
 # 2. Drop the API binary + .env
-sudo install -o socialize -g socialize -m 755 bin/api /opt/socialize/server/bin/api
-sudo install -o socialize -g socialize -m 600 .env   /opt/socialize/server/.env
+sudo install -o socialize -g socialize -m 755 bin/api /opt/yo/bin/api
+sudo install -o socialize -g socialize -m 600 .env   /opt/yo/.env
 
 # 3. Systemd
-sudo cp deploy/vps/socialize-api.service /etc/systemd/system/
+sudo cp deploy/vps/yo-api.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now socialize-api
 

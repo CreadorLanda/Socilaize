@@ -13,46 +13,58 @@
 
 ---
 
-## Ponta-a-ponta (implementação própria no cliente)
+## Ponta-a-ponta (X25519 / TweetNaCl próprio)
 
-O cliente usa uma construção própria baseada em X25519/TweetNaCl. O servidor publica bundles públicos e transporta envelopes opacos; não usa libsignal e não possui chave privada capaz de decifrar o conteúdo.
+> **Isto não é o Signal Protocol.** Uma versão anterior deste documento dizia
+> que era, e que o projeto usava `libsignal`. Nunca foi verdade — essa
+> biblioteca não aparece em manifesto nenhum, nem no cliente nem no servidor. O
+> que se segue descreve o que o código faz.
+
+A cifra acontece no dispositivo com [TweetNaCl](https://tweetnacl.js.org/)
+(`mobile/data/crypto/`). O servidor guarda texto cifrado e não tem material de
+chaves.
 
 ### Chaves
 
-| Tipo de chave           | Tempo de vida                | Função                                                            |
-|-------------------------|------------------------------|-------------------------------------------------------------------|
-| Identity key            | Longa, por dispositivo       | Fixa a identidade, assina signed pre-keys                         |
-| Signed pre-key          | Rotada a cada 7 dias         | Autentica o dispositivo, incluída em X3DH                         |
-| One-time pre-keys       | Em batches, uso único        | Submetidas em lotes; consumidas no início de sessão               |
-| Session roots           | Por peer                     | Derivadas localmente pela construção própria X25519               |
-| Sender keys             | Por grupo                    | Usadas no fan-out de grupos após distribuição pairwise da chave   |
+| Tipo               | Duração                  | Para quê                                     |
+|--------------------|--------------------------|----------------------------------------------|
+| Identity key       | Longa, por dispositivo   | Fixa a identidade do dispositivo             |
+| Signed pre-key     | Enviada por dispositivo  | Permite abrir sessão contigo offline         |
+| One-time pre-keys  | Em lote, uso único       | Consumidas ao abrir sessão                   |
+| Chave de grupo     | Por grupo e época        | Distribuição em leque após troca emparelhada |
 
-### Fluxos
+### Envelopes
 
-- **X3DH** faz a primeira combinação de chaves quando dois dispositivos comunicam pela primeira vez.
-- O cliente usa contadores e derivação simples de chaves de mensagem; isto não é Double Ratchet e não deve ser descrito como oferecendo as garantias de forward secrecy ou post-compromise security do Signal.
-- **Sender Keys** tornam mensagens de grupo eficientes: o emissor partilha uma Sender Key com cada membro por canais pairwise, depois cifra cada mensagem de grupo uma vez.
+Dois formatos, ambos `prefixo.cabeçalho.corpo` em base64url:
 
-### O que o servidor guarda
+- `soc1.` — direto. Cabeçalho com `v`, `ik` (identidade do remetente), `n`
+  (contador), mais campos de aperto de mão nas primeiras mensagens.
+- `soc1g.` — grupo. Cabeçalho com `v`, `s` (UUID do remetente), `e` (época), `n`.
 
-Só material **público** e envelopes *ciphertext* pendentes de entrega:
+O servidor valida **apenas a forma** — nunca abre o corpo, nunca deriva chave,
+nunca verifica MAC.
 
-- Identity keys públicas, signed pre-keys (com assinaturas), one-time pre-keys.
-- Envelopes de mensagens cifradas (tabela `message_envelopes`) — TTL curto, apagados no ack.
+### O que esta construção não te dá
 
-O servidor nunca tem:
+Dito com todas as letras, porque a versão anterior desta página prometia as três:
 
-- Chaves privadas (vivem nos dispositivos).
-- Mensagens em claro.
-- Média em claro.
+- **Não há Double Ratchet.** Há um contador monotónico a que o código chama
+  "simple ratchet". Ordena mensagens e deteta repetições. Não troca chave a
+  cada mensagem.
+- **Não há sigilo futuro** digno do nome. Comprometer a chave de longa duração
+  de um dispositivo expõe as mensagens passadas que esse dispositivo ainda
+  consegue decifrar.
+- **Não há segurança pós-compromisso.** Não existe mecanismo que cure uma
+  sessão depois de uma fuga de chave.
 
-### Verificação de identidade
+### Sem auditoria
 
-- Dispositivos expõem um número de segurança de 60 dígitos por parceiro de chat.
-- A UI mostra-o como cinco linhas de doze dígitos, com QR fallback para verificação presencial.
-- Aviso quando a identity key de um parceiro muda; o utilizador tem de confirmar antes de continuar.
+Não houve revisão independente. A construção foi escrita para este projeto. Se
+precisas das propriedades que o Signal dá, usa o Signal — isto é um messenger
+honesto, não um equivalente.
 
----
+Melhorar isto é [trabalho em aberto](https://github.com/CreadorLanda/yo/issues),
+não um estado assente.
 
 ## Em repouso
 
@@ -85,6 +97,17 @@ O servidor nunca tem:
 
 ---
 
+## Pontes
+
+Não há nenhuma, e não vai haver. Uma ponte tem de decifrar para traduzir, o que
+põe um servidor em posição de ler mensagens — a única coisa que este documento
+diz que nunca acontece.
+
+A ponte do WhatsApp rejeitada e o raciocínio completo estão em
+[decisions/0001](../../decisions/0001-no-whatsapp-bridge.md).
+
+---
+
 ## Rotação de chaves
 
 | Material                   | Rotação                            |
@@ -92,7 +115,7 @@ O servidor nunca tem:
 | Identity key (dispositivo) | Vida do dispositivo                |
 | Signed pre-key             | A cada 7 dias                      |
 | One-time pre-keys          | Consumidas continuamente; cliente repõe quando baixo |
-| Message keys              | Derivadas por contador no cliente   |
+| Session keys               | Não rodam por mensagem — ver acima |
 | Refresh tokens             | A cada uso                         |
 | Server KEK (Vault/KMS)     | Anualmente, ou em incidente        |
 | Backup KEK                 | Anualmente                         |

@@ -1,6 +1,6 @@
 # 💬 Mensagens
 
-> Documentação completa dos recursos de mensagens do Socialize.
+> Documentação completa dos recursos de mensagens do Yo.
 
 ---
 

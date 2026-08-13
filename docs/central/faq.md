@@ -1,6 +1,6 @@
 # ❓ FAQ
 
-**What is Socialize?**
+**What is Yo?**
 Open-source, customizable, privacy-focused messenger.
 
 **Is it free?**

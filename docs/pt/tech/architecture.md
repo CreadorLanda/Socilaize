@@ -1,6 +1,6 @@
 # 🏗️ Arquitetura
 
-> Como o Socialize é desenhado: uma plataforma de mensagens focada em segurança, com armazenamento no dispositivo e um servidor fino.
+> Como o Yo é desenhado: uma plataforma de mensagens focada em segurança, com armazenamento no dispositivo e um servidor fino.
 
 ---
 
@@ -18,12 +18,12 @@
 ```
    Cliente móvel / web
    ├─ SQLite (SQLCipher, encriptado)   ← histórico completo, no dispositivo
-   └─ libsignal                        ← sessões E2E
+   └─ TweetNaCl (X25519)               ← sessões E2E
             │
             │  HTTPS / WSS (TLS 1.3, pinning de certificado)
             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    API Socialize (Go)                       │
+│                    API Yo (Go)                       │
 │  ┌────────────┐  ┌────────────┐  ┌────────────────────────┐ │
 │  │ Controllers│→ │ Services   │→ │ Repositories           │ │
 │  │ (HTTP/WS)  │  │ (lógica)   │  │ (pgx → Postgres)       │ │
@@ -52,7 +52,7 @@
 
 ### Cliente móvel
 - Mantém o histórico completo em **SQLite (SQLCipher)**.
-- Usa **libsignal** para sessões X3DH + Double Ratchet; grupos usam Sender Keys.
+- Usa **TweetNaCl (X25519)** numa construção própria; grupos usam chave de remetente por época. Não é o Signal Protocol — ver [security/encryption](../security/encryption.md).
 - Fala com a API via HTTPS para pedido/resposta e WSS para tempo real.
 - A chave da base de dados fica na **keychain do sistema** (iOS Keychain / Android Keystore); desbloqueio biométrico opcional na abertura.
 
@@ -80,11 +80,11 @@
 
 ## Ciclo de vida de uma mensagem (texto, conversa nativa)
 
-1. Cliente A compõe a mensagem, cifra para cada dispositivo do destinatário com libsignal, produz N envelopes ciphertext.
+1. Cliente A compõe a mensagem, cifra para cada dispositivo do destinatário, produz N envelopes ciphertext.
 2. Cliente A faz `POST /messages` com os envelopes + metadados de endereçamento.
 3. Controller valida auth → Service guarda os envelopes em Postgres → enfileira entrega em `q:messages.deliver`.
 4. Workers fazem fan-out: empurram frames WS aos destinatários online via Redis pub/sub, agendam push para os offline.
-5. Cliente B recebe o envelope por WS, decifra com libsignal, persiste no seu SQLite local, faz ack.
+5. Cliente B recebe o envelope por WS, decifra com TweetNaCl, persiste no seu SQLite local, faz ack.
 6. Servidor apaga o envelope (ou expira por TTL curto se sem ack).
 
 O servidor nunca vê texto em claro.

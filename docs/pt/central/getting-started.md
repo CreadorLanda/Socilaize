@@ -1,6 +1,6 @@
 # 🚀 Primeiros Passos
 
-> Guia completo para começar com o Socialize.
+> Guia completo para começar com o Yo.
 
 ## Pré-requisitos
 
@@ -13,8 +13,8 @@
 ## Início Rápido
 
 ```bash
-git clone https://github.com/socialize/socialize.git
-cd socialize
+git clone https://github.com/CreadorLanda/yo.git
+cd yo
 npm install
 npm run dev
 ```
@@ -24,6 +24,6 @@ npm run dev
 Crie o arquivo `.env`:
 
 ```env
-DATABASE_URL=postgresql://user:pass@localhost:5432/socialize
+DATABASE_URL=postgresql://user:pass@localhost:5432/yo
 JWT_SECRET=sua_chave_secreta
 ```

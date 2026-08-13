@@ -1,4 +1,4 @@
-# Socialize — Design System
+# Yo — Design System
 
 > Single source of truth for visual language across mobile, web and desktop.
 

@@ -12,53 +12,64 @@
 
 ---
 
-## End-to-end (custom client implementation)
+## End-to-end (custom X25519 / TweetNaCl)
 
-The client uses a custom X25519/TweetNaCl construction. The server publishes public bundles and transports opaque envelopes; it does not use libsignal and has no private key capable of decrypting message content.
+> **This is not the Signal Protocol.** An earlier version of this document said
+> it was, and said the project used libsignal. Neither was ever true —
+> `libsignal` appears in no manifest, on the client or the server. What follows
+> describes what the code does.
+
+Encryption happens on the device with [TweetNaCl](https://tweetnacl.js.org/)
+(`mobile/data/crypto/`). The server stores ciphertext and holds no key
+material.
 
 ### Keys
 
-| Key type                | Lifetime              | Purpose                                                          |
-|-------------------------|-----------------------|------------------------------------------------------------------|
-| Identity key            | Long-lived per device | Pins the device identity, signs signed pre-keys                  |
-| Signed pre-key          | Rotated every 7 days  | Authenticates the device, included in X3DH                       |
-| One-time pre-keys       | Batched, single-use   | Uploaded in batches; consumed at session start                   |
-| Session roots           | Per peer              | Derived locally by the custom X25519 construction                 |
-| Sender keys             | Per group             | Used for fan-out in groups after pairwise key distribution       |
+| Key type          | Lifetime              | Purpose                                        |
+|-------------------|-----------------------|------------------------------------------------|
+| Identity key      | Long-lived per device | Pins the device identity                       |
+| Signed pre-key    | Uploaded per device   | Lets a peer start a session while you are offline |
+| One-time pre-keys | Batched, single-use   | Consumed at session start                      |
+| Group sender key  | Per group, per epoch  | Fan-out after pairwise distribution            |
 
-### Flows
+### Envelopes
 
-- **X3DH** does the initial key agreement when two devices first message each other.
-- The client uses counters and simple message-key derivation; this is not Double Ratchet and must not be described as providing Signal's forward-secrecy or post-compromise guarantees.
-- **Sender Keys** make group messages efficient: the sender shares a Sender Key with each member over pairwise channels, then encrypts each group message once.
+Two wire formats, both `prefix.header.body` with base64url parts:
 
-### What the server stores
+- `soc1.` — direct. Header carries `v`, `ik` (sender identity), `n` (counter),
+  plus handshake fields on the first messages.
+- `soc1g.` — group. Header carries `v`, `s` (sender UUID), `e` (epoch), `n`.
 
-Only **public** material and *ciphertext* envelopes pending delivery:
+The server validates the **shape only** — it never opens the body, derives a
+key, or checks a MAC.
 
-- Public identity keys, signed pre-keys (with signatures), one-time pre-keys.
-- Encrypted message envelopes (`message_envelopes` table) — short TTL, deleted on ack.
+### What this construction does not give you
 
-The server never holds:
+Stated plainly, because the previous version of this page claimed all three:
 
-- Private keys (those live on devices).
-- Plaintext messages.
-- Plaintext media.
+- **No Double Ratchet.** There is a monotonic send counter the code calls a
+  "simple ratchet". It orders messages and detects replays. It does not rekey
+  per message.
+- **No forward secrecy** worth the name. Compromising a device's long-term key
+  exposes past messages that device can still decrypt.
+- **No post-compromise security.** There is no mechanism that heals a session
+  after a key leak.
 
-### Identity verification
+### Not audited
 
-- Devices expose a 60-digit safety number per chat partner.
-- The UI shows it as five rows of twelve digits, with a QR fallback for in-person verification.
-- A flag is raised when a partner's identity key changes; the user must acknowledge before continuing the conversation.
+No independent review has been done. The construction was written for this
+project. If you need the properties Signal gives you, use Signal — this is an
+honest messenger, not an equivalent one.
 
----
+Improving this is [tracked work](https://github.com/CreadorLanda/yo/issues),
+not a settled state.
 
 ## At rest
 
 ### On the server
 
 - Postgres data files: full-disk encryption on the host (LUKS / cloud-managed encryption at rest).
-- Sensitive columns (push tokens, bridge session blobs, refresh tokens): envelope-encrypted at the application layer with a Key Encryption Key held in KMS / Vault. Tables don't see plaintext.
+- Sensitive columns (push tokens, refresh tokens): envelope-encrypted at the application layer with a Key Encryption Key held in KMS / Vault. Tables don't see plaintext.
 - Object storage: every media file gets a per-file Data Encryption Key, wrapped by the KEK. The DEK is stored alongside the object metadata; loss of the KEK makes the storage unreadable.
 - Backups: encrypted with a separate backup KEK, rotated independently.
 
@@ -84,12 +95,14 @@ The server never holds:
 
 ---
 
-## Bridges and E2E trade-offs
+## Bridges
 
-- Bridge data lives in separate tables and goes through a separate code path.
-- Session blobs are envelope-encrypted at rest.
-- The link flow forces the user to acknowledge the trade-off before completing the link.
-- Native Socialize chats use the same client-generated opaque envelopes; no server-side Signal session exists.
+There are none, and there will not be. A bridge has to decrypt to translate,
+which puts a server in a position to read messages — the one thing this
+document says never happens.
+
+The rejected WhatsApp bridge and the full reasoning are in
+[decisions/0001](../decisions/0001-no-whatsapp-bridge.md).
 
 ---
 
@@ -100,7 +113,7 @@ The server never holds:
 | Identity key (device)      | Lifetime of the device             |
 | Signed pre-key             | Every 7 days                       |
 | One-time pre-keys          | Continuously consumed; client tops up when low |
-| Message keys              | Counter-derived by the client       |
+| Session keys               | Not rotated per message — see above |
 | Refresh tokens             | On every use                       |
 | Server KEK (Vault/KMS)     | Annually, or on incident           |
 | Backup KEK                 | Annually                           |

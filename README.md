@@ -1,229 +1,231 @@
-# Socialize 💬
+# Yo 💬
 
-> The next generation open-source messaging platform.
+> The freedom of a modded messenger, without having to trust a stranger's APK.
 
-![Socialize](./assets/banner.png)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-0.0.1--alpha-red)](https://github.com/socialize/socialize)
-[![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20Android%20%7C%20Web%20%7C%20Desktop-blue)](https://github.com/socialize/socialize)
-[![Go](https://img.shields.io/badge/Go-1.21-blue)](https://go.dev/)
-[![ReactNative](https://img.shields.io/badge/React%20Native-0.74-blue)](https://reactnative.dev/)
-[![Discord](https://img.shields.io/discord/123456789012345678?logo=discord)](https://discord.gg/socialize)
-[![OpenSource](https://img.shields.io/badge/OpenSource-Hell%20Yeah!-green)](https://github.com/socialize/socialize)
+![Yo](./assets/banner.png)
 
----
-
-## 🌟 Why Socialize?
-
-Socialize is a modern, highly customizable, privacy-focused messenger inspired by the freedom users love in chat mods — but rebuilt from scratch with security, performance, and innovation in mind.
-
-Unlike traditional messaging apps, Socialize combines:
-- 💬 Messaging
-- 🤖 Artificial Intelligence
-- 🎨 Customization
-- 🌐 Communities
-- ⚙️ Automation
-- 🔒 Privacy
-- 🎮 Mini Apps
-- ✨ Modern UI/UX
-
-Into one unified platform.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](./LICENSE)
+[![Commercial licence](https://img.shields.io/badge/Commercial-available-green.svg)](./LICENSING.md)
+[![Version](https://img.shields.io/badge/version-0.1.0--alpha-red)](https://github.com/CreadorLanda/yo)
+[![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/)
+[![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2054-blue)](https://reactnative.dev/)
 
 ---
 
-## 🌍 Vision
+## Why this exists
 
-> Build the most customizable and innovative messenger ever made.
+Anyone who used GB WhatsApp, WhatsApp Plus or FM WhatsApp knows the feeling.
+You could freeze your last seen. Read a message without the ticks turning blue.
+Keep something the sender deleted. Lock a single conversation. Change how the
+whole thing looked. Anyone who was on MSN with Messenger Plus! remembers nudges,
+winks, and sounds that fired when a particular person typed your name.
 
-Socialize is not a clone.
-It's a fully original open-source communication ecosystem.
+The official apps could have shipped every one of those. They chose not to, and
+they still choose not to. So people went and installed a modified APK from a
+forum.
+
+**And paid for it.** Those mods are closed source. You install a binary nobody
+can read, from a stranger, and hand it every message you will ever send. Some
+of them shipped spyware outright. Others were fine until an update was not. You
+cannot check, because the source was never there to check. Messenger Plus! came
+bundled with adware for years. WhatsApp bans the accounts that use the mods,
+which tells you nothing about whether the mod was safe — only that it was
+unauthorised.
+
+The features were never the problem. **The deal was.** You had to choose
+between an app that respected you and an app that let you do things.
+
+Yo is that choice removed. Ghost mode, freeze last seen, anti-delete, chat lock,
+themes, nudges — the features people install sketchy APKs to get — built into a
+messenger whose source you can read, whose messages are encrypted on your
+device, and which will never ship analytics, telemetry or tracking of any kind.
+
+That last part is a rule, not a mood. [CONTRIBUTING.md](./CONTRIBUTING.md#security-rules)
+rejects any pull request that adds one, and says so before anyone writes a line.
+
+Not everything on that list exists yet — the [issues](https://github.com/CreadorLanda/yo/issues)
+say honestly which do.
 
 ---
 
-## ⚡ Quick Start
+## What it is
+
+A messenger where messages are encrypted on your device and the server stores
+ciphertext it cannot read. Groups, channels, stories, voice and video calls,
+stickers, and a game to play in a group chat.
+
+It is **alpha**. Android works end to end. iOS does not have push yet
+([#116](https://github.com/CreadorLanda/yo/issues/116)). Some screens are
+built on top of nothing real, and those are labelled
+[`mock`](https://github.com/CreadorLanda/yo/labels/mock) in the issues
+rather than described as finished here.
+
+---
+
+## Quick start
+
+Requires [Bun](https://bun.sh), [Go 1.26+](https://go.dev), and Docker.
 
 ```bash
-# Clone the repository
-git clone https://github.com/socialize/socialize.git
+git clone https://github.com/CreadorLanda/yo.git
+cd yo
 
-# Enter the directory
-cd socialize
+# Server: Postgres, Redis and LiveKit
+cd server/deploy/docker && docker compose up -d
+cd ../.. && migrate -path migrations -database "$POSTGRES_URL" up
+go run ./cmd/api
 
-# Install dependencies
-npm install
+# Mobile
+cd ../mobile
+bun install
+bunx expo start
+```
 
-# Run the development server
-npm run dev
+The app needs a development build, not Expo Go — it uses native modules
+(SQLCipher, WebRTC, VisionCamera, Skia) that Expo Go does not carry.
+
+---
+
+## Structure
+
+```
+yo/
+├── mobile/     React Native + Expo app
+├── server/     Go API, WebSocket hub, push worker
+├── docs/       Architecture, security, design system
+├── scripts/
+└── assets/
 ```
 
 ---
 
-## 🏗️ Tech Stack
+## Stack
 
-| Layer | Technology |
-|-------|------------|
-| **Mobile** | React Native + Expo + TypeScript + Reanimated |
-| **Backend** | Go + Gin/Echo + gRPC |
-| **Database** | PostgreSQL + MongoDB + Redis |
-| **Real-Time** | WebSockets + WebRTC |
-| **AI** | Dandara AI |
-
----
-
-## 📱 Planned Platforms
-
-- ✅ Android
-- ✅ iOS
-- ✅ Web
-- ✅ Desktop (Windows, macOS, Linux)
+| Layer | What |
+|---|---|
+| Mobile | React Native, Expo SDK 54, TypeScript, Reanimated, Skia |
+| Server | Go, Gin |
+| Storage | PostgreSQL, Redis |
+| Local storage | SQLite via SQLCipher |
+| Real time | WebSockets |
+| Calls | WebRTC via LiveKit |
+| Push | FCM |
 
 ---
 
-## 🔒 Security & Privacy
+## Security
 
-Socialize prioritizes:
-- 🔐 End-to-end encryption (E2E)
-- 🛡️ Transparency
-- 🔏 Real privacy
-- 📋 Open source for verification
+Messages are encrypted on the device with X25519 / TweetNaCl. The server holds
+ciphertext and cannot read it. Push notifications carry no readable content —
+the device decrypts and builds the notification locally.
 
-We do NOT support:
-- Spyware
-- Malware
-- Hidden tracking
-- Abusive data collection
+There is **no analytics, no telemetry, and no third-party tracking** anywhere in
+the app. That is a rule, not a current state:
+[CONTRIBUTING.md](./CONTRIBUTING.md#security-rules) rejects any pull request
+that adds one.
 
----
+**Stated plainly**, because a messenger that oversells its security is worse
+than one that admits its limits:
 
-## 🤝 How to Contribute
+- The crypto is a **custom construction**, not the Signal Protocol. No Double
+  Ratchet. **No independent audit.**
+- Media, link previews and message metadata sit outside the encryption scheme.
+- Forward secrecy is not meaningfully implemented yet.
 
-Pull requests are welcome!
-
-Please read our [Contribution Guide](./CONTRIBUTING.md) before contributing.
-
----
-
-## 📂 Project Structure
-
-```bash
-socialize/
-│
-├── apps/
-│   ├── mobile/      # React Native app
-│   ├── web/       # Web app
-│   └── desktop/   # Desktop app
-│
-├── server/        # Go microservices
-│
-├── packages/     # Shared packages
-│   ├── ui/
-│   ├── shared/
-│   ├── config/
-│   └── themes/
-│
-├── docs/         # Documentation
-├── assets/
-└── README.md
-```
+See [SECURITY.md](./SECURITY.md) to report something.
 
 ---
 
-## 🔥 Main Features
+## What works today
 
-### 💬 Messaging
-- Real-time chat
-- Groups and channels
-- Communities
-- Voice notes
-- HD media sharing
-- Reactions
-- Message editing
-- Message scheduling
+**Messaging** — direct and group chats, channels, replies, reactions, editing,
+scheduling, disappearing messages, view-once, polls, forwarding, archive, pin,
+mute, search, blocking.
 
-### 🔒 Privacy
-- Ghost mode
-- Anti-delete messages
-- App lock
-- Chat lock
-- Biometric authentication
-- Freeze last seen
+**Media** — photos, video, voice notes, documents, location, stickers
+(including `.wastickers` import), an editor with crop, draw and text, and
+filters that are baked into the file rather than shown over it.
 
-### 🎨 Customization
-- Dynamic themes
-- Custom fonts
-- Custom icons
-- Bubble styles
-- AMOLED mode
-- Animated themes
-- Glassmorphism support
+**Stories** — photo, video, text and audio, with polls and questions,
+close-friends and custom audiences, anonymous posting, viewers and replies.
 
-### 🤖 Artificial Intelligence
-- Dandara AI assistant
-- Smart replies
-- Chat summarization
-- Real-time translation
-- AI-generated messages
-- Voice-to-text AI
-- AI moderation
+**Calls** — one to one and group, audio and video, adding people to a call
+without turning the chat into a group, live broadcasts.
 
-### 🎮 Fun Features (MSN-style)
-- Nudges
-- Winks
-- Display pictures
-- Custom emojis
-- Integrated games
+**Games** — Truth or Dare, playable in a group.
+
+**Privacy** — per-chat lock with a code, last-seen and photo visibility,
+read receipts, directional blocking, account deletion that actually deletes.
+
+Of the mod features named at the top, **chat lock** is the one that already
+works. Ghost mode and freeze last seen are
+[#122](https://github.com/CreadorLanda/yo/issues/122), app lock is
+[#121](https://github.com/CreadorLanda/yo/issues/121), anti-delete is
+[#123](https://github.com/CreadorLanda/yo/issues/123), nudges and winks
+are [#126](https://github.com/CreadorLanda/yo/issues/126), and themes
+that survive a restart are
+[#114](https://github.com/CreadorLanda/yo/issues/114). None of them is
+done, and the issues say so rather than this page pretending otherwise.
 
 ---
 
-## 🧭 Roadmap
+## Roadmap
 
-| Phase | Focus |
-|------|-------|
-| **Phase 1** | Messaging core, authentication, real-time chat |
-| **Phase 2** | Communities, voice/video calls, AI, cloud sync |
-| **Phase 3** | Theme store, mini apps, plugins, desktop app |
+| Phase | Focus | State |
+|---|---|---|
+| 1 | Messaging core, auth, real-time, E2EE | done |
+| 2 | Calls, stories, channels, lives, games | done |
+| 3 | Offline outbox, themes that persist, iOS | in progress |
+| 4 | Communities, badges, AI, mini apps | planned |
 
----
-
-## 📄 License
-
-This project is licensed under the MIT license - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🧠 Philosophy
-
-Modern messaging apps became restrictive.
-
-Socialize exists to give users:
-- Freedom
-- Control
-- Customization
-- Innovation
-
-Without sacrificing security.
+Everything planned is an [issue](https://github.com/CreadorLanda/yo/issues).
+What blocks a first release is labelled
+[`mvp`](https://github.com/CreadorLanda/yo/labels/mvp).
 
 ---
 
-## 🌐 Links & Resources
+## Contributing
 
-| Resource | Link |
-|----------|------|
-| 📖 Documentation | [docs.socialize.app](https://docs.socialize.app) |
-| 💬 Discord | [discord.gg/socialize](https://discord.gg/socialize) |
-| 🐦 Twitter | [@socialize_app](https://twitter.com/socialize_app) |
-| 🐙 GitHub | [github.com/socialize/socialize](https://github.com/socialize/socialize) |
+Pull requests go to **`dev`**, never to `main`. Read
+[CONTRIBUTING.md](./CONTRIBUTING.md) first — it covers the branch flow, the CLA
+you agree to by opening a pull request, and the security rules that get code
+rejected.
+
+Start with a [`good first issue`](https://github.com/CreadorLanda/yo/labels/good%20first%20issue).
+They are picked so the answer already exists somewhere in the codebase.
 
 ---
 
-## 🙏 Acknowledgments
+## Licence
 
-Special thanks to the open-source community that makes this project possible.
+Dual-licensed. **[AGPL-3.0](./LICENSE)** for everyone, and a **commercial
+licence** for anyone who wants to keep their source closed.
+
+The AGPL does not stop you selling Yo or building a business on it. What it
+asks is that the source stays open — including when you run a modified version
+as a network service, which is why this is AGPL and not GPL.
+
+If you want to ship something closed, or take parts of Yo into a proprietary
+codebase, you need the commercial licence. See
+[LICENSING.md](./LICENSING.md) for how to ask.
+
+---
+
+## Philosophy
+
+The mods were right about what people wanted and wrong about what it should
+cost them.
+
+Yo is not a clone of WhatsApp and not a clone of the mods. It is the argument
+those mods were making — that a messenger should bend to the person using it —
+carried out by someone willing to show the source.
+
+Freedom, control and customisation. Without lying to you about what is
+protected, and without asking you to install a binary you cannot read.
 
 ---
 
 <p align="center">
-  <strong>🔥 Socialize</strong><br>
-  <em>More than messaging.<br>
-  A communication ecosystem.</em>
+  <strong>Yo</strong><br>
+  <em>More than messaging.</em>
 </p>

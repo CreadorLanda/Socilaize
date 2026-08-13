@@ -477,6 +477,7 @@ export default function CreateStoryScreen() {
                  preview is the picture, not an approximation of it. */
               filter={filter}
               video={isVideoMode}
+              micGranted={!!hasMic}
               /* `flash` was state nothing read — the button toggled its own
                  icon and no light came on. */
               torch={flash}

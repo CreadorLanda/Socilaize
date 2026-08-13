@@ -1,6 +1,9 @@
-# Socialize Documentation
+# Yo Documentation
 
-> Complete documentation for the Socialize messaging platform.
+> Complete documentation for the Yo messaging platform.
+
+> Documents describe intent as well as state. Where a feature is planned rather than
+> built, the [issues](https://github.com/CreadorLanda/yo/issues) are the source of truth.
 
 ## 📚 Table of Contents
 
@@ -31,6 +34,12 @@
 - [Best Practices](./security/best-practices.md)
 - [Audit & Compliance](./security/audit.md)
 
+### Business
+- [Monetization](./business/monetization.md)
+
+### Decisions
+- [0001 — No WhatsApp bridge](./decisions/0001-no-whatsapp-bridge.md)
+
 ### Roadmap
 - [Master Roadmap](./roadmap/roadmap.md)
 - [v1.0.0](./roadmap/v1.0.0.md)
@@ -48,6 +57,6 @@
 
 | Resource | Link |
 |----------|------|
-| Website | [socialize.app](https://socialize.app) |
-| Discord | [discord.gg/socialize](https://discord.gg/socialize) |
-| GitHub | [github.com/socialize/socialize](https://github.com/socialize/socialize) |
+| Website | [yo.alexandrelanda.com](https://yo.alexandrelanda.com) |
+| Discord | [github.com/CreadorLanda/yo/discussions](https://github.com/CreadorLanda/yo/discussions) |
+| GitHub | [github.com/CreadorLanda/yo](https://github.com/CreadorLanda/yo) |

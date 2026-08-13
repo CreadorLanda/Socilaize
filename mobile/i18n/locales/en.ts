@@ -19,6 +19,9 @@ export default {
     cta_restore: 'Restore',
   },
   common: {
+    back: 'Back',
+    close: 'Close',
+    send: 'Send',
     delete: 'Delete',
     save: 'Save',
     done: 'Done',
@@ -65,7 +68,7 @@ export default {
       subtitle: 'Your username is how people can find and message you on Yo, even without your number.',
       label: 'Username',
       placeholder: 'alexlanda',
-      hint_available: 'socialize.app/@{{username}} is available',
+      hint_available: '@{{username}} is available',
       hint_default: '3–20 lowercase letters, numbers, or underscores.',
       error_invalid: 'Use 3–20 lowercase letters, numbers, or underscores.',
       error_taken: 'This username is already taken.',
@@ -789,6 +792,7 @@ export default {
     title: 'Filters',
   },
   call: {
+    unmute: 'Unmute',
     no_answer_title: 'No answer',
     no_answer_body: 'They did not pick up.',
     drop_e2ee_title: 'Adding someone removes the extra encryption',
@@ -841,6 +845,7 @@ export default {
     both_revealed: 'Both agreed — you know each other now.',
   },
   stories: {
+    creator_need_name: 'Add a name to your profile first.',
     filters_soon: 'Filters are coming in the next update.',
     capture_failed_title: 'Could not capture',
     capture_failed_body: 'The camera did not return anything. Try again.',
@@ -991,6 +996,7 @@ export default {
     anonymous_author: 'Anonymous',
   },
   profile: {
+    link_label: 'Link',
     title: 'Profile',
     edit: 'Edit Profile',
     share: 'Share Profile',

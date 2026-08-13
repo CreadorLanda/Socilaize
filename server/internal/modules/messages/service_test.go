@@ -10,9 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/blocks"
-	"github.com/CreadorLanda/Socilaize/server/internal/modules/users"
-	"github.com/CreadorLanda/Socilaize/server/internal/platform/postgres"
+	"github.com/CreadorLanda/yo/server/internal/modules/blocks"
+	"github.com/CreadorLanda/yo/server/internal/modules/keys"
+	"github.com/CreadorLanda/yo/server/internal/modules/users"
+	"github.com/CreadorLanda/yo/server/internal/platform/postgres"
 )
 
 // testDB connects to a Postgres instance that already has the schema
