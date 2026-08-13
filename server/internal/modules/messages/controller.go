@@ -24,21 +24,6 @@ func NewController(svc *Service, hub *realtime.Hub, jwtSecret []byte) *Controlle
 	return &Controller{svc: svc, hub: hub, secret: jwtSecret}
 }
 
-// PostSessionInit — POST /sessions/init
-func (c *Controller) PostSessionInit(ctx *gin.Context) {
-	var req SessionInitRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
-		return
-	}
-	res, err := c.svc.InitSession(ctx.Request.Context(), middleware.UserIDFrom(ctx), req.PeerUsername)
-	if err != nil {
-		writeErr(ctx, err)
-		return
-	}
-	ctx.JSON(http.StatusOK, res)
-}
-
 // PostChat — POST /chats
 func (c *Controller) PostChat(ctx *gin.Context) {
 	var req CreateChatRequest
@@ -415,7 +400,8 @@ func writeErr(ctx *gin.Context, err error) {
 	case errors.Is(err, ErrPendingChatLimit), errors.Is(err, ErrChatNotPending):
 		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrInvalidReceipt), errors.Is(err, ErrInvalidReport),
-		errors.Is(err, ErrInvalidTTL):
+		errors.Is(err, ErrInvalidTTL), errors.Is(err, ErrUnencryptedMessage),
+		errors.Is(err, ErrInvalidMessageType), errors.Is(err, ErrInvalidEnvelopeChat):
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})

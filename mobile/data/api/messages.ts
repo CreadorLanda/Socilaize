@@ -88,11 +88,6 @@ export interface MessageDTO {
   poll_votes?: PollTally;
 }
 
-export interface SessionInitResponse {
-  session_id: string;
-  created: boolean;
-}
-
 export type ReceiptStatus = 'delivered' | 'read';
 
 export interface ReactionDTO {
@@ -107,14 +102,6 @@ export interface RealtimeEvent {
   type: string;
   chat_id?: string;
   payload?: unknown;
-}
-
-/** Initialize an E2EE session with a peer */
-export function initSession(peerUsername: string) {
-  return api.post<SessionInitResponse>('/api/sessions/init', {
-    peer_username: peerUsername,
-    device_id: 'default',
-  });
 }
 
 /** Create a direct chat with a user */

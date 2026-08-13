@@ -8,9 +8,6 @@ import "github.com/gin-gonic/gin"
 // WebSocket is registered on the public api group via RegisterWS because
 // the upgrade handshake often carries the JWT in a query param.
 func Register(rg *gin.RouterGroup, c *Controller) {
-	// Session init — E2EE key exchange.
-	rg.POST("/sessions/init", c.PostSessionInit)
-
 	// Chats
 	rg.POST("/chats", c.PostChat)
 	rg.GET("/chats", c.GetChats)

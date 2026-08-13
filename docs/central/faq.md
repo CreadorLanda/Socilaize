@@ -10,7 +10,9 @@ Yes, completely open-source and free.
 Android, iOS, Web, Desktop.
 
 **E2E Encryption?**
-Yes, using Signal protocol.
+Yes. The current implementation uses a custom client-side
+X25519/TweetNaCl design. It is not the Signal Protocol or Double Ratchet and
+remains subject to cryptographic audit.
 
 **How to contribute?**
 See [Contribution Guide](../CONTRIBUTING.md).

@@ -30,7 +30,7 @@ func TestHistoryVisibilityIsEnforced(t *testing.T) {
 		t.Fatalf("AcceptChat: %v", err)
 	}
 
-	before, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "said before carol arrived"})
+	before, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("said before carol arrived")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestHistoryVisibilityIsEnforced(t *testing.T) {
 		t.Fatalf("add carol: %v", err)
 	}
 
-	after, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "said after"})
+	after, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("said after")})
 	if err != nil {
 		t.Fatalf("SendMessage after: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestSharedHistoryStaysVisible(t *testing.T) {
 	if _, err := svc.AcceptChat(ctx, chat.ID, bob); err != nil {
 		t.Fatalf("AcceptChat: %v", err)
 	}
-	old, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: "older than dave"})
+	old, err := svc.SendMessage(ctx, chat.ID, alice, SendMessageRequest{Content: testDirectEnvelope("older than dave")})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}

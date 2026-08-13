@@ -125,7 +125,7 @@ func New(cfg config.Config) (*Server, error) {
 		users: usersRepo, chats: msgRepo,
 	}))
 
-	msgSvc := messages.NewService(msgRepo, keysSvc, usersRepo, hub, notifSvc).
+	msgSvc := messages.NewService(msgRepo, usersRepo, hub, notifSvc).
 		WithBlocks(blocksRepo)
 	msgCtl := messages.NewController(msgSvc, hub, []byte(cfg.JWT.Secret))
 	messages.Register(authed, msgCtl)
