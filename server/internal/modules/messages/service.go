@@ -2,14 +2,8 @@ package messages
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -19,18 +13,20 @@ import (
 )
 
 var (
-	ErrChatNotFound     = errors.New("chat_not_found")
-	ErrNoSession        = errors.New("no_e2ee_session")
-	ErrNotParticipant   = errors.New("not_participant")
-	ErrChatBlocked      = errors.New("chat_blocked")
-	ErrPendingChatLimit = errors.New("pending_chat_limit")
-	ErrCannotAcceptOwn  = errors.New("cannot_accept_own_request")
-	ErrChatNotPending   = errors.New("chat_not_pending")
-	ErrMessageNotFound  = errors.New("message_not_found")
-	ErrInvalidReport    = errors.New("invalid_report")
-	ErrNotSender        = errors.New("not_message_sender")
-	ErrInvalidReceipt   = errors.New("invalid_receipt_status")
-	ErrViewsExhausted   = errors.New("views_exhausted")
+	ErrChatNotFound        = errors.New("chat_not_found")
+	ErrNotParticipant      = errors.New("not_participant")
+	ErrChatBlocked         = errors.New("chat_blocked")
+	ErrPendingChatLimit    = errors.New("pending_chat_limit")
+	ErrCannotAcceptOwn     = errors.New("cannot_accept_own_request")
+	ErrChatNotPending      = errors.New("chat_not_pending")
+	ErrMessageNotFound     = errors.New("message_not_found")
+	ErrInvalidReport       = errors.New("invalid_report")
+	ErrNotSender           = errors.New("not_message_sender")
+	ErrInvalidReceipt      = errors.New("invalid_receipt_status")
+	ErrViewsExhausted      = errors.New("views_exhausted")
+	ErrUnencryptedMessage  = errors.New("message_must_be_e2ee_envelope")
+	ErrInvalidMessageType  = errors.New("invalid_message_type")
+	ErrInvalidEnvelopeChat = errors.New("invalid_e2ee_envelope_for_chat")
 )
 
 // Broadcaster is satisfied by *realtime.Hub. Kept as an interface so the
@@ -60,16 +56,15 @@ type BlockList interface {
 }
 
 type Service struct {
-	repo    *Repository
-	keysSvc *keys.Service
-	users   *users.Repository
-	hub     Broadcaster
-	push    PushNotifier
-	blocks  BlockList
+	repo   *Repository
+	users  *users.Repository
+	hub    Broadcaster
+	push   PushNotifier
+	blocks BlockList
 }
 
-func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
-	return &Service{repo: repo, keysSvc: keysSvc, users: usersRepo, hub: hub, push: push}
+func NewService(repo *Repository, usersRepo *users.Repository, hub Broadcaster, push PushNotifier) *Service {
+	return &Service{repo: repo, users: usersRepo, hub: hub, push: push}
 }
 
 // WithBlocks wires block enforcement.
@@ -80,62 +75,6 @@ func NewService(repo *Repository, keysSvc *keys.Service, usersRepo *users.Reposi
 func (s *Service) WithBlocks(b BlockList) *Service {
 	s.blocks = b
 	return s
-}
-
-// ── Session Init ────────────────────────────────────────────────────────────
-
-// InitSession establishes an E2EE session. It fetches the peer's pre-key
-// bundle, extracts identity keys, and derives a shared AES-256 key using
-// HMAC-HKDF over both identity keys plus a server-generated nonce.
-//
-// In a full client-side X3DH implementation the DH computation happens on
-// the device. Here we derive the key server-side for practical at-rest
-// encryption; the key never leaves the database.
-func (s *Service) InitSession(ctx context.Context, userID uuid.UUID, peerUsername string) (SessionInitResponse, error) {
-	peerUser, err := s.users.ByUsername(ctx, peerUsername)
-	if err != nil {
-		if users.IsNoRows(err) {
-			return SessionInitResponse{}, users.ErrNotFound
-		}
-		return SessionInitResponse{}, fmt.Errorf("resolve peer: %w", err)
-	}
-
-	existing, err := s.repo.GetSession(ctx, userID, peerUser.ID)
-	if err == nil && existing != nil {
-		return SessionInitResponse{SessionID: existing.ID, Created: false}, nil
-	}
-
-	bundle, err := s.keysSvc.BundleByUsername(ctx, peerUsername)
-	if err != nil {
-		return SessionInitResponse{}, fmt.Errorf("fetch peer bundle: %w", err)
-	}
-
-	// Decode the peer's identity key.
-	peerIdentity, err := base64.RawURLEncoding.DecodeString(bundle.IdentityKey)
-	if err != nil {
-		return SessionInitResponse{}, fmt.Errorf("decode peer identity: %w", err)
-	}
-
-	// Derive session key: HKDF( peer_identity || random_32_bytes, salt, 32 )
-	nonce := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return SessionInitResponse{}, fmt.Errorf("nonce: %w", err)
-	}
-
-	salt := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		return SessionInitResponse{}, fmt.Errorf("salt: %w", err)
-	}
-
-	ikm := append(peerIdentity, nonce...)
-	sessionKey := hkdfDerive(ikm, salt, 32)
-
-	sessionID, err := s.repo.UpsertSession(ctx, userID, peerUser.ID, sessionKey)
-	if err != nil {
-		return SessionInitResponse{}, fmt.Errorf("store session: %w", err)
-	}
-
-	return SessionInitResponse{SessionID: sessionID, Created: true}, nil
 }
 
 // ── Chats ───────────────────────────────────────────────────────────────────
@@ -328,20 +267,21 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 		}
 		return Message{}, err
 	}
+	chat, err := s.repo.GetChat(ctx, chatID)
+	if err != nil {
+		return Message{}, err
+	}
 	// A block stops a one-to-one conversation and nothing else.
 	//
 	// Groups are deliberately untouched: a group is a place with other people
 	// in it, and one member's decision about another is not a reason to take
 	// their conversation away. The app tells you who in the room you blocked.
-	if s.blocks != nil {
-		chat, err := s.repo.GetChat(ctx, chatID)
-		if err == nil && chat != nil && chat.Type == ChatDirect {
-			peer, err := s.repo.PeerUser(ctx, chatID, senderID)
-			if err == nil && peer != nil {
-				blocked, err := s.blocks.EitherWay(ctx, senderID, peer.ID)
-				if err == nil && blocked {
-					return Message{}, ErrChatBlocked
-				}
+	if s.blocks != nil && chat.Type == ChatDirect {
+		peer, err := s.repo.PeerUser(ctx, chatID, senderID)
+		if err == nil && peer != nil {
+			blocked, err := s.blocks.EitherWay(ctx, senderID, peer.ID)
+			if err == nil && blocked {
+				return Message{}, ErrChatBlocked
 			}
 		}
 	}
@@ -360,6 +300,12 @@ func (s *Service) SendMessage(ctx context.Context, chatID, senderID uuid.UUID, r
 		if count >= 1 {
 			return Message{}, ErrPendingChatLimit
 		}
+	}
+	if !userSendableMessageType(msgType) {
+		return Message{}, ErrInvalidMessageType
+	}
+	if !validateEnvelopeForChat(req.Content, senderID, chat.Type) {
+		return Message{}, envelopeError(req.Content)
 	}
 	// One more hop than the client claims, and never fewer than zero. Taking
 	// the number at face value would let a client reset a chain that has been
@@ -431,6 +377,16 @@ func (s *Service) EditMessage(ctx context.Context, chatID, userID uuid.UUID, msg
 	// edit what it wrote. The comparison failing is the correct answer.
 	if existing.SenderID == nil || *existing.SenderID != userID {
 		return Message{}, ErrNotSender
+	}
+	if existing.MessageType == MsgSystem || existing.MessageType == MsgCall {
+		return Message{}, ErrInvalidMessageType
+	}
+	chat, err := s.repo.GetChat(ctx, chatID)
+	if err != nil {
+		return Message{}, err
+	}
+	if !validateEnvelopeForChat(content, userID, chat.Type) {
+		return Message{}, envelopeError(content)
 	}
 	if err := s.repo.EditMessage(ctx, chatID, userID, msgID, content); err != nil {
 		return Message{}, err
@@ -701,8 +657,15 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		"sender_id":     uuidStr(msg.SenderID),
 		"sender_name":   msg.SenderName,
 		"sender_avatar": msg.SenderAvatar,
-		"content":       msg.Content,
-		"encrypted":     boolStr(encrypted),
+		// Only a structurally valid envelope is safe to forward to a device.
+		// Invalid or historical rows must never become notification plaintext.
+		"content": func() string {
+			if encrypted {
+				return msg.Content
+			}
+			return ""
+		}(),
+		"encrypted": boolStr(encrypted),
 	}
 	for _, uid := range ids {
 		if uid == senderID {
@@ -721,31 +684,6 @@ func (s *Service) notifyOffline(ctx context.Context, chatID, senderID uuid.UUID,
 		}
 		_ = s.push.NotifyUser(ctx, uid, category, title, body, data)
 	}
-}
-
-// ── HKDF ────────────────────────────────────────────────────────────────────
-
-// hkdfDerive derives key material using HMAC-based HKDF (RFC 5869
-// simplified: extract-then-expand with a single info step).
-func hkdfDerive(ikm, salt []byte, outLen int) []byte {
-	if len(salt) == 0 {
-		salt = make([]byte, 32)
-	}
-
-	// Extract
-	prk := hmac.New(sha256.New, salt)
-	prk.Write(ikm)
-	pseudoRandKey := prk.Sum(nil)
-
-	// Expand (single block for up to 32 bytes)
-	exp := hmac.New(sha256.New, pseudoRandKey)
-	exp.Write([]byte{0x01})
-	out := exp.Sum(nil)
-
-	if len(out) > outLen {
-		out = out[:outLen]
-	}
-	return out
 }
 
 // VotePoll records the caller's selections on a poll message.
@@ -843,7 +781,7 @@ func (s *Service) ReportChat(ctx context.Context, chatID, userID uuid.UUID, reas
 // isEncryptedEnvelope reports whether the content is an E2EE payload the
 // server cannot read. Both prefixes: pairwise messages and group ones.
 func isEncryptedEnvelope(content string) bool {
-	return strings.HasPrefix(content, "soc1.") || strings.HasPrefix(content, "soc1g.")
+	return validateEnvelope(content)
 }
 
 // uuidStr renders an optional id, empty when there is nobody to name.

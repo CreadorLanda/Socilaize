@@ -1,8 +1,7 @@
 // Package messages implements native E2E-encrypted messaging for Socialize.
 //
-// Message content is encrypted with AES-256-GCM at rest using a session
-// key derived via X3DH between sender and recipient. The X3DH pre-key
-// infrastructure lives in internal/modules/keys.
+// Message content is an opaque client-generated E2EE envelope. The repository
+// may apply an independent at-rest encryption layer; it is not an E2EE key.
 package messages
 
 import (
@@ -110,6 +109,7 @@ const (
 	MsgEvent    MessageType = "event"
 	MsgSystem   MessageType = "system"
 	MsgReply    MessageType = "reply"
+	MsgGame     MessageType = "game"
 	// MsgCall is the row a call leaves in the conversation. Its content is
 	// the call id, and the client resolves the outcome from the call log —
 	// the outcome changes after the message is written, so it cannot be
@@ -192,23 +192,6 @@ type Reaction struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ── Session ─────────────────────────────────────────────────────────────────
-
-// SessionInitRequest starts an E2EE session with a peer. The client
-// provides the peer's username; the server fetches their pre-key bundle,
-// performs X3DH, and stores a derived AES-256 key.
-type SessionInitRequest struct {
-	PeerUsername string `json:"peer_username" binding:"required"`
-	DeviceID     string `json:"device_id" binding:"required"`
-}
-
-// SessionInitResponse tells the client whether the session was newly
-// created or already existed.
-type SessionInitResponse struct {
-	SessionID uuid.UUID `json:"session_id"`
-	Created   bool      `json:"created"`
-}
-
 // ── Requests / Responses ────────────────────────────────────────────────────
 
 type CreateChatRequest struct {
@@ -282,14 +265,6 @@ type messageRow struct {
 	CreatedAt   time.Time
 	EditedAt    *time.Time
 	DeletedAt   *time.Time
-}
-
-type sessionRow struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	PeerID     uuid.UUID
-	SessionKey []byte // 32-byte AES-256 key
-	CreatedAt  time.Time
 }
 
 // PollTally is the vote state of one poll, as the server can see it: counts

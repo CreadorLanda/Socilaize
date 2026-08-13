@@ -1,0 +1,84 @@
+name: Backend security validation
+
+on:
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/backend-security.yml'
+  push:
+    branches: [audit/e2ee-server-session-removal]
+    paths:
+      - 'server/**'
+      - '.github/workflows/backend-security.yml'
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: socialize
+          POSTGRES_PASSWORD: socialize
+          POSTGRES_DB: socialize
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U socialize -d socialize"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    defaults:
+      run:
+        working-directory: server
+    env:
+      TEST_POSTGRES_URL: postgres://socialize:socialize@127.0.0.1:5432/socialize?sslmode=disable
+      POSTGRES_URL: postgres://socialize:socialize@127.0.0.1:5432/socialize?sslmode=disable
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JWT_SECRET: test-secret-that-is-long-enough-for-ci-validation
+      MESSAGE_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: server/go.sum
+      - name: Apply migrations through 0040
+        run: |
+          docker run --network host --rm \
+            -v "$GITHUB_WORKSPACE/server/migrations:/migrations:ro" \
+            migrate/migrate:v4.18.3 \
+            -path=/migrations -database "$TEST_POSTGRES_URL" up
+      - name: Verify migration down/up
+        run: |
+          docker run --network host --rm \
+            -v "$GITHUB_WORKSPACE/server/migrations:/migrations:ro" \
+            migrate/migrate:v4.18.3 \
+            -path=/migrations -database "$TEST_POSTGRES_URL" down 1
+          docker run --network host --rm \
+            -v "$GITHUB_WORKSPACE/server/migrations:/migrations:ro" \
+            migrate/migrate:v4.18.3 \
+            -path=/migrations -database "$TEST_POSTGRES_URL" up
+      - run: gofmt -d .
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./cmd/api
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun run lint
+      - run: bun test
