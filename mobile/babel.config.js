@@ -1,23 +1,20 @@
 /**
- * Babel, which this project did not have.
+ * Babel.
  *
- * Expo falls back to `babel-preset-expo` when there is no config, and that
- * carries the Reanimated plugin — so everything worked and nothing looked
- * missing. But `react-native-worklets-core` ships its own plugin and nothing
- * auto-registers it.
+ * This file exists only to make the preset explicit. `babel-preset-expo`
+ * already does the work that matters here: when `react-native-worklets` is
+ * present it adds `react-native-worklets/plugin` itself, which is what
+ * compiles the `'worklet'` directive in VisionCamera's frame processors.
  *
- * Without it the `'worklet'` directive in a frame processor is an ordinary
- * string in an ordinary function. VisionCamera then hands that function to the
- * frame thread, which cannot run it, and the app dies opening the camera.
- *
- * Order matters: the worklets plugin has to come before Reanimated's, and
- * Reanimated's has to be last of all. babel-preset-expo appends Reanimated
- * itself, so listing worklets here puts it in the right place.
+ * An earlier version of this file registered `react-native-worklets-core/plugin`
+ * instead. That was a different library with a similar name — the one
+ * VisionCamera used at v3/v4 — and registering its plugin fixed nothing while
+ * adding a second worklets transform over the same directives. The actual
+ * missing piece was the `react-native-vision-camera-worklets` package.
  */
 module.exports = function (api) {
   api.cache(true);
   return {
     presets: ['babel-preset-expo'],
-    plugins: [['react-native-worklets-core/plugin']],
   };
 };
