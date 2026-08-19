@@ -131,19 +131,41 @@ test('as permissoes estao declaradas a mao, porque o pacote nao traz plugin', as
 });
 
 /**
- * The camera crashed on open.
+ * The camera crashed on open, and the first fix was aimed at the wrong library.
  *
- * `react-native-worklets-core` ships a babel plugin and nothing registers it
- * automatically. Expo falls back to `babel-preset-expo` when a project has no
- * babel config, which carries Reanimated's plugin — so everything looked fine.
- * But without the worklets plugin the `'worklet'` directive in a frame
- * processor is an ordinary string in an ordinary function, and VisionCamera
- * hands that to a thread that cannot run it.
+ * VisionCamera 5 gets its worklet runtime from
+ * `react-native-vision-camera-worklets`, which bridges to
+ * `react-native-worklets`. Without that package installed,
+ * `VisionCameraWorkletsProxy` throws "Cannot use Frame Processors" — and it
+ * throws on every render, because `useFrameOutput` is a hook and runs whether
+ * or not a filter is picked. That is why the screen died on open.
+ *
+ * `react-native-worklets-core` is a different library with a similar name, the
+ * one VisionCamera used at v3/v4. Installing it and registering its babel
+ * plugin fixed nothing.
  */
-test('o plugin dos worklets esta registado no babel', async () => {
-  const babel = await Bun.file('babel.config.js').text();
-  expect(babel).toContain('react-native-worklets-core/plugin');
-  expect(babel).toContain('babel-preset-expo');
+test('a biblioteca de worklets do vision-camera esta instalada', async () => {
+  const pkg = JSON.parse(await Bun.file('package.json').text());
+  expect(pkg.dependencies['react-native-vision-camera-worklets']).toBeTruthy();
+  expect(pkg.dependencies['react-native-worklets']).toBeTruthy();
+});
+
+test('a biblioteca errada nao voltou', () => {
+  const pkg = require('../package.json');
+  expect(pkg.dependencies['react-native-worklets-core']).toBeUndefined();
+});
+
+test('o babel nao regista um transform de worklets duplicado', () => {
+  // babel-preset-expo adds react-native-worklets/plugin itself when the module
+  // is present. Registering another one puts two transforms over the same
+  // directives.
+  //
+  // Evaluated rather than read as text, so the comment in that file explaining
+  // the old mistake does not fail the test that guards against it.
+  const config = require('../babel.config.js')({ cache: () => {} });
+  expect(config.presets).toContain('babel-preset-expo');
+  const plugins = JSON.stringify(config.plugins ?? []);
+  expect(plugins).not.toContain('worklets');
 });
 
 test('o preset do babel e uma dependencia declarada', async () => {
