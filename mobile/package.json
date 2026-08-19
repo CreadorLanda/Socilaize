@@ -70,9 +70,9 @@
     "react-native-svg": "15.12.1",
     "react-native-view-shot": "4.0.3",
     "react-native-vision-camera": "^5.2.2",
+    "react-native-vision-camera-worklets": "^5.2.2",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.5.1",
-    "react-native-worklets-core": "^1.6.3",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
